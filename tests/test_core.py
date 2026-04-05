@@ -1,5 +1,5 @@
 import pytest
-from datetime import datetime
+from datetime import datetime, UTC
 from src.core import (
     InputPayload,
     UserInfo,
@@ -13,6 +13,7 @@ from src.core.intent_classifier import IntentClassifier
 from src.core.risk_evaluator import RiskEvaluator
 from src.memory import MemoryContext
 from src.agents import ContextAgent, DraftAgent, QAAgent
+from src.llm.client import LLMClient
 
 
 @pytest.fixture
@@ -20,7 +21,7 @@ def sample_payload():
     return InputPayload(
         request_id="test-123",
         source="ms_teams",
-        timestamp=datetime.utcnow().isoformat(),
+        timestamp=datetime.now(UTC).isoformat(),
         user=UserInfo(
             id="user-001",
             display_name="John Doe",
@@ -31,7 +32,7 @@ def sample_payload():
             message_id="msg-001",
         ),
         message=MessageInfo(
-            text="What is the company policy on remote work?",
+            text="How do I reset my password?",
         ),
     )
 
@@ -105,28 +106,31 @@ class TestContextAgent:
 
 
 class TestDraftAgent:
-    def test_generate_draft(self, sample_payload, sample_context):
+    @pytest.mark.asyncio
+    async def test_generate_draft(self, sample_payload, sample_context):
         agent = DraftAgent()
         context = {"conversation_history": [], "case_info": None}
         policy = {"guidelines_found": False, "relevant_policies": []}
         knowledge = {"facts": [], "patterns": []}
-        result = agent.generate(sample_payload, context, policy, knowledge)
+        result = await agent.generate(sample_payload, context, policy, knowledge)
         assert isinstance(result, str)
         assert len(result) > 0
 
 
 class TestQAAgent:
-    def test_validate_good_draft(self, sample_payload, sample_context):
+    @pytest.mark.asyncio
+    async def test_validate_good_draft(self, sample_payload, sample_context):
         agent = QAAgent()
         draft = "This is a comprehensive answer to your question about the policy."
-        result = agent.validate(draft, sample_payload, sample_context)
+        result = await agent.validate(draft, sample_payload, {}, None)
         assert result["confidence"] >= 0.7
         assert not result["needs_review"]
 
-    def test_validate_short_draft(self, sample_payload, sample_context):
+    @pytest.mark.asyncio
+    async def test_validate_short_draft(self, sample_payload, sample_context):
         agent = QAAgent()
         draft = "Short answer."
-        result = agent.validate(draft, sample_payload, sample_context)
+        result = await agent.validate(draft, sample_payload, {}, None)
         assert result["confidence"] < 0.7
         assert len(result["issues"]) > 0
 
@@ -140,3 +144,40 @@ class TestQAAgent:
         }
         result = agent.refine(validation, sample_payload)
         assert "review" in result.lower()
+
+
+@pytest.mark.asyncio
+async def test_supervisor_direct_path_uses_dynamic_confidence(sample_payload, sample_context):
+    from src.core.supervisor import Supervisor
+
+    class FakeLLM:
+        async def complete(self, system_prompt, user_message, context=None):
+            return "Dynamic answer", 0.91
+
+    async def fake_log_audit(*args, **kwargs):
+        return None
+
+    supervisor = Supervisor()
+    supervisor.set_llm(FakeLLM())
+    supervisor._log_audit = fake_log_audit
+
+    result = await supervisor.process(sample_payload, sample_context)
+    assert result.status == "completed"
+    assert result.confidence == 0.91
+    assert result.metadata["agents_used"] == ["draft"]
+
+
+@pytest.mark.asyncio
+async def test_llm_health_check_requires_initialized_client(monkeypatch):
+    client = LLMClient()
+    monkeypatch.setattr("src.llm.client.settings.openai_api_key", "test-key")
+    assert await client.health_check() is False
+
+
+@pytest.mark.asyncio
+async def test_llm_health_check_returns_true_when_initialized_and_probe_disabled(monkeypatch):
+    client = LLMClient()
+    monkeypatch.setattr("src.llm.client.settings.openai_api_key", "test-key")
+    monkeypatch.setattr("src.llm.client.settings.llm_healthcheck_enabled", False)
+    client._client = object()
+    assert await client.health_check() is True

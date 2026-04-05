@@ -59,7 +59,7 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.cors_allowed_origins if not settings.app_debug else ["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -103,7 +103,7 @@ async def readiness_check():
         metrics.record_error("redis_health", "health/ready")
 
     try:
-        if settings.openai_api_key:
+        if await llm_client.health_check():
             checks["llm"] = True
     except Exception as e:
         metrics.record_error("llm_health", "health/ready")

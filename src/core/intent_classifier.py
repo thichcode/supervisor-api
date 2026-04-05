@@ -1,4 +1,5 @@
-from src.core import InputPayload, IntentClassification, IntentType, MemoryContext
+from src.core import InputPayload, IntentClassification, IntentType
+from src.memory import MemoryContext
 import re
 
 
@@ -63,6 +64,9 @@ class IntentClassifier:
     def classify(self, payload: InputPayload, memory: MemoryContext) -> IntentClassification:
         text = payload.message.text.lower()
 
+        if payload.case and payload.case.case_id:
+            return IntentClassification(intent=IntentType.SUPPORT_CASE, confidence=0.85)
+
         scores = {}
         for intent, patterns in self.PATTERNS.items():
             score = 0
@@ -79,6 +83,12 @@ class IntentClassifier:
 
         if memory.case_memory:
             scores[IntentType.SUPPORT_CASE] += 1
+
+        if scores.get(IntentType.POLICY, 0) > 0:
+            scores[IntentType.POLICY] += 0.5
+
+        if scores.get(IntentType.SUPPORT_CASE, 0) > 0:
+            scores[IntentType.SUPPORT_CASE] += 0.5
 
         if not any(scores.values()):
             scores[IntentType.FAQ] = 0.5

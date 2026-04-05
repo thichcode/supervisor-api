@@ -5,7 +5,6 @@ from src.core import (
     RiskEvaluation,
     IntentType,
     RiskLevel,
-    MemoryContext,
 )
 from src.memory import MemoryContext as MemoryContextModel
 from src.agents import ContextAgent, PolicyAgent, KnowledgeAgent, DraftAgent, QAAgent
@@ -78,6 +77,7 @@ class Supervisor:
         start_time = time.time()
         agents_used = []
         decision = "direct"
+        final_confidence = 0.85
 
         intent = self._classify_intent(payload, memory)
         risk = self._evaluate_risk(payload, memory)
@@ -108,9 +108,10 @@ class Supervisor:
                     )
 
             answer = self.qa_agent.refine(validation, payload)
+            final_confidence = validation["confidence"]
         else:
             agents_used = ["draft"]
-            answer = await self._generate_direct_answer(payload, memory)
+            answer, final_confidence = await self._generate_direct_answer(payload, memory)
 
         processing_time_ms = int((time.time() - start_time) * 1000)
 
@@ -127,7 +128,7 @@ class Supervisor:
         return self._create_output(
             payload=payload,
             answer=answer,
-            confidence=0.85,
+            confidence=final_confidence,
             risk=risk,
             intent=intent,
             agents_used=agents_used,
@@ -145,19 +146,22 @@ class Supervisor:
         evaluator = RiskEvaluator()
         return evaluator.evaluate(payload, memory)
 
-    async def _generate_direct_answer(self, payload: InputPayload, memory: MemoryContextModel) -> str:
+    async def _generate_direct_answer(self, payload: InputPayload, memory: MemoryContextModel) -> tuple[str, float]:
         user_name = payload.user.display_name
         message = payload.message.text
 
         if self._llm:
-            answer, _ = await self._llm.complete(
+            answer, confidence = await self._llm.complete(
                 system_prompt="You are a helpful AI assistant. Provide a direct, concise answer.",
                 user_message=f"User {user_name} asks: {message}",
                 context=memory.to_dict(),
             )
-            return answer
+            return answer, confidence
 
-        return f"Hi {user_name}, regarding your question about \"{message[:100]}...\", I can help you with that. Please let me know if you need more details."
+        return (
+            f"Hi {user_name}, regarding your question about \"{message[:100]}...\", I can help you with that. Please let me know if you need more details.",
+            0.6,
+        )
 
     def _create_output(
         self,

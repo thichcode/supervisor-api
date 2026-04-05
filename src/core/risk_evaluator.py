@@ -1,5 +1,6 @@
-from src.core import InputPayload, RiskEvaluation, RiskLevel, MemoryContext
+from src.core import InputPayload, RiskEvaluation, RiskLevel
 from src.config import get_settings
+from src.memory import MemoryContext
 import re
 
 settings = get_settings()

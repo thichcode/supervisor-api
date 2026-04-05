@@ -1,6 +1,6 @@
 from .cache import RedisCache, redis_cache, get_redis
-from .repository import MemoryRepository, MemoryContext
-from .service import MemoryService
+from .repository import MemoryRepository
+from .service import MemoryService, MemoryContext
 
 __all__ = [
     "RedisCache",

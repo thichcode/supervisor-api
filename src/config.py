@@ -1,5 +1,6 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
+from typing import Literal
 
 
 class Settings(BaseSettings):
@@ -9,6 +10,8 @@ class Settings(BaseSettings):
     app_port: int = 8000
     app_debug: bool = False
     app_workers: int = 4
+    app_env: Literal["development", "staging", "production"] = "development"
+    cors_allowed_origins: list[str] = ["http://localhost:3000", "http://localhost:8000"]
 
     db_host: str = "localhost"
     db_port: int = 5432
@@ -40,11 +43,16 @@ class Settings(BaseSettings):
     llm_model: str = "gpt-4"
     llm_temperature: float = 0.7
     llm_max_tokens: int = 2000
+    llm_healthcheck_enabled: bool = False
 
     rate_limit_requests: int = 100
     rate_limit_window: int = 60
 
     log_level: str = "INFO"
+    executive_keywords: list[str] = ["ceo", "cto", "cfo", "director", "vp", "urgent", "asap"]
+    commitment_keywords: list[str] = ["cam kết", "đảm bảo", "chắc chắn", "sẽ làm", "hứa", "commit"]
+    financial_keywords: list[str] = ["financial", "finance", "budget", "quarterly", "doanh thu", "tài chính"]
+    legal_keywords: list[str] = ["legal", "contract", "compliance", "luật", "pháp lý", "hợp đồng"]
 
     @property
     def database_url(self) -> str:

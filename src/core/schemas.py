@@ -1,7 +1,11 @@
 from pydantic import BaseModel, Field
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, UTC
 from enum import Enum
+
+
+def utc_now() -> datetime:
+    return datetime.now(UTC)
 
 
 class IntentType(str, Enum):
@@ -50,7 +54,7 @@ class CaseInfo(BaseModel):
 
 class MessageInfo(BaseModel):
     text: str
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=utc_now)
 
 
 class InputPayload(BaseModel):
@@ -94,8 +98,8 @@ class MemoryItem(BaseModel):
     embedding: Optional[list[float]] = None
     confidence_score: float = Field(default=1.0, ge=0.0, le=1.0)
     ttl_at: Optional[datetime] = None
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
 
 
 class AuditLog(BaseModel):
@@ -107,4 +111,4 @@ class AuditLog(BaseModel):
     input_summary: str
     output_summary: str
     processing_time_ms: int
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utc_now)

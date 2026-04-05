@@ -1,5 +1,5 @@
-from src.core import InputPayload, MemoryContext
-from src.memory import MemoryContext as MemoryContextModel
+from src.core import InputPayload
+from src.memory import MemoryContext
 from src.llm import LLMClient
 from typing import Optional
 

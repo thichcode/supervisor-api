@@ -1,4 +1,4 @@
-from .schemas import (
+from .core.schemas import (
     InputPayload,
     OutputPayload,
     UserInfo,
@@ -7,7 +7,7 @@ from .schemas import (
     MessageInfo,
     IntentClassification,
     RiskEvaluation,
-    MemoryScope,
+    MemoryScopeType,
     MemoryItem,
     AuditLog,
 )
@@ -22,7 +22,7 @@ __all__ = [
     "MessageInfo",
     "IntentClassification",
     "RiskEvaluation",
-    "MemoryScope",
+    "MemoryScopeType",
     "MemoryItem",
     "AuditLog",
     "Settings",

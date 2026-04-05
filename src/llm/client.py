@@ -38,6 +38,28 @@ class LLMClient:
             await self._client.close()
             logger.info("LLM client closed")
 
+    @property
+    def is_initialized(self) -> bool:
+        return self._client is not None
+
+    async def health_check(self) -> bool:
+        if not settings.openai_api_key:
+            return False
+        if not self.is_initialized:
+            return False
+        if not settings.llm_healthcheck_enabled:
+            return True
+
+        try:
+            await self.complete(
+                system_prompt="Reply with OK only.",
+                user_message="healthcheck",
+            )
+            return True
+        except Exception as e:
+            logger.warning("LLM health check failed", error=str(e))
+            return False
+
     @retry(
         stop=stop_after_attempt(2),
         wait=wait_exponential(multiplier=1, min=1, max=10),

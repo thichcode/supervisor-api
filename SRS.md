@@ -2,6 +2,8 @@
 
 ## 1. Overview
 
+> **Implementation status note:** this SRS now reflects the current repo more closely after multiple stabilization fixes. The system is in a stronger staging-ready state, with packaging fixed, tests passing, and several production-hardening improvements completed. Estimated current production-readiness is **8/10**, not final production yet.
+
 ### 1.1 Objective
 Build an AI agent system that:
 - Receives requests from Microsoft Teams (via Power Automate → n8n)
@@ -85,7 +87,7 @@ Supervisor API
   "request_id": "string",
   "status": "completed|needs_review",
   "answer": "string",
-  "confidence": 0.85,
+  "confidence": 0.0,
   "risk_level": "low|medium|high",
   "metadata": {
     "intent": "",
@@ -139,6 +141,8 @@ Flags: legal, financial, vip, executive, commitment, high_priority_case
 - Retry 1 lần với exponential backoff
 - Timeout agent: 3-10s
 - Connection pooling for DB & Redis
+- Build/package install must work via `pip install .`
+- Readiness should validate DB, Redis, and LLM client availability
 
 ### Observability
 - Prometheus metrics endpoint
@@ -149,6 +153,25 @@ Flags: legal, financial, vip, executive, commitment, high_priority_case
 - Input sanitization (PII masking)
 - Webhook secret authentication
 - Rate limiting
+- Restrict CORS in non-debug environments
+
+## 8.1 Current Hardening Improvements
+
+- Fixed Python packaging/build with Hatch
+- Fixed test configuration and async test compatibility
+- Fixed runtime import/config blockers
+- Added dynamic confidence propagation in supervisor output
+- Added LLM client health-check support
+- Switched schema defaults toward timezone-aware datetime handling
+- Extended unit tests for supervisor direct path and LLM readiness behavior
+
+## 8.2 Remaining Gaps Before 9/10 Production Readiness
+
+- Integration tests for Postgres/Redis/API runtime
+- End-to-end deployment validation on Docker/Kubernetes
+- Unified config source of truth between `config/config.yaml` and `src/config.py`
+- More resilient DB/Redis/LLM failure-path handling and verification
+- Better Windows-compatible developer tooling in `Makefile`
 
 ## 8. Tech Stack
 

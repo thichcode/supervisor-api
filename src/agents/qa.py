@@ -1,4 +1,4 @@
-from src.core import InputPayload, MemoryContext
+from src.core import InputPayload
 from src.llm import LLMClient
 from typing import Optional
 
@@ -150,7 +150,9 @@ Return JSON:
         if not draft.strip():
             return f"Hi {user_name}, thank you for reaching out. I'm reviewing your request and will provide a detailed response shortly."
 
-        if len(issues) > 2:
+        if validation.get("needs_review"):
+            draft += "\n\n*Note: This response may need further review.*"
+        elif len(issues) > 2:
             draft += "\n\n*Note: This response may need further review.*"
 
         return draft
