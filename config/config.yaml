@@ -1,0 +1,38 @@
+app:
+  host: "0.0.0.0"
+  port: 8000
+  debug: false
+
+database:
+  host: "localhost"
+  port: 5432
+  name: "supervisor_db"
+  user: "postgres"
+  password: "${DB_PASSWORD}"
+  pool_size: 10
+
+redis:
+  host: "localhost"
+  port: 6379
+  db: 0
+  password: "${REDIS_PASSWORD}"
+
+webhook:
+  input_secret: "${WEBHOOK_INPUT_SECRET}"
+  output_url: "${POWER_AUTOMATE_WEBHOOK_URL}"
+  timeout: 30
+
+agents:
+  timeout: 3
+  retry: 1
+
+memory:
+  conversation_ttl: 86400
+  summary_ttl: 604800
+  max_tokens: 4000
+
+risk:
+  executive_keywords: ["ceo", "cto", "cfo", "director", "vp", "manager", "sếp", "giám đốc"]
+  commitment_keywords: ["cam kết", "đảm bảo", "chắc chắn", "sẽ làm", "hứa"]
+  financial_keywords: ["tiền", "thanh toán", "chi phí", "báo cáo tài chính"]
+  legal_keywords: ["hợp đồng", "pháp lý", "luật", "quy định"]

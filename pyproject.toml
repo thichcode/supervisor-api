@@ -1,0 +1,44 @@
+[project]
+name = "multiagent-supervisor"
+version = "0.1.0"
+description = "Multi-Agent Supervisor System with Long-term Memory"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.109.0",
+    "uvicorn[standard]>=0.27.0",
+    "pydantic>=2.5.0",
+    "pydantic-settings>=2.1.0",
+    "asyncpg>=0.29.0",
+    "redis>=5.0.0",
+    "sqlalchemy[asyncio]>=2.0.0",
+    "httpx>=0.26.0",
+    "structlog>=24.1.0",
+    "tenacity>=8.2.0",
+    "python-dotenv>=1.0.0",
+    "numpy>=1.26.0",
+    "openai>=1.12.0",
+    "litellm>=1.0.0",
+    "slowapi>=0.1.9",
+    "prometheus-client>=0.19.0",
+    "python-json-logger>=2.0.7",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "ruff>=0.2.0",
+    "mypy>=1.8.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.mypy]
+python_version = "3.11"
+strict = true

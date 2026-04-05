@@ -1,0 +1,64 @@
+version: '3.8'
+
+services:
+  supervisor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: supervisor-api
+    ports:
+      - "8000:8000"
+    environment:
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=supervisor_db
+      - DB_USER=postgres
+      - DB_PASSWORD=${DB_PASSWORD:-postgres}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - WEBHOOK_INPUT_SECRET=${WEBHOOK_INPUT_SECRET:-}
+      - POWER_AUTOMATE_WEBHOOK_URL=${POWER_AUTOMATE_WEBHOOK_URL:-}
+      - LOG_LEVEL=${LOG_LEVEL:-DEBUG}
+      - APP_DEBUG=true
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./src:/app/src:ro
+      - ./config:/app/config:ro
+    command: python -m uvicorn src.api:app --host 0.0.0.0 --port 8000 --reload
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: supervisor-postgres-dev
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=${DB_PASSWORD:-postgres}
+      - POSTGRES_DB=supervisor_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_dev_data:/var/lib/postgresql/data
+      - ./migrations/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: supervisor-redis-dev
+    command: redis-server --save "" --appendonly no
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_dev_data:/data
+
+volumes:
+  postgres_dev_data:
+  redis_dev_data:

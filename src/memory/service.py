@@ -1,0 +1,176 @@
+from typing import Optional
+from datetime import datetime, timedelta
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from src.core import InputPayload, MemoryScopeType, MemoryItem
+from src.memory.cache import RedisCache
+from src.memory.repository import MemoryRepository
+from src.config import get_settings
+
+settings = get_settings()
+
+
+class MemoryContext:
+    def __init__(
+        self,
+        conversation_summary: Optional[str] = None,
+        recent_messages: list[str] = None,
+        user_profile: Optional[dict] = None,
+        case_memory: Optional[dict] = None,
+        episodic_memory: list[dict] = None,
+    ):
+        self.conversation_summary = conversation_summary
+        self.recent_messages = recent_messages or []
+        self.user_profile = user_profile or {}
+        self.case_memory = case_memory or {}
+        self.episodic_memory = episodic_memory or []
+
+    def to_dict(self) -> dict:
+        return {
+            "conversation_summary": self.conversation_summary,
+            "recent_messages": self.recent_messages,
+            "user_profile": self.user_profile,
+            "case_memory": self.case_memory,
+            "episodic_memory": self.episodic_memory,
+        }
+
+    def get_context_text(self) -> str:
+        parts = []
+        if self.recent_messages:
+            parts.append("=== Recent Messages ===")
+            parts.extend(self.recent_messages[-5:])
+        if self.conversation_summary:
+            parts.append(f"\n=== Conversation Summary ===\n{self.conversation_summary}")
+        if self.user_profile:
+            parts.append(f"\n=== User Profile ===\n{self.user_profile.get('display_name', 'Unknown')}")
+            if self.user_profile.get("role"):
+                parts.append(f"Role: {self.user_profile['role']}")
+        if self.case_memory:
+            parts.append(f"\n=== Case Memory ===\n{self.case_memory.get('summary', 'No summary')}")
+        if self.episodic_memory:
+            parts.append("\n=== Learned Patterns ===")
+            for item in self.episodic_memory[:3]:
+                parts.append(f"- {item.get('content', '')}")
+        return "\n".join(parts)
+
+
+class MemoryService:
+    def __init__(self, session: AsyncSession, cache: RedisCache):
+        self.session = session
+        self.cache = cache
+        self.repo = MemoryRepository(session)
+
+    async def retrieve(self, payload: InputPayload) -> MemoryContext:
+        thread_id = payload.conversation.thread_id
+        user_id = payload.user.id
+        case_id = payload.case.case_id if payload.case else None
+
+        cached = await self.cache.get_json(f"memory:{thread_id}")
+        if cached:
+            return MemoryContext(**cached)
+
+        conversation_summary = await self.repo.get_conversation_summary(thread_id)
+        summary_text = conversation_summary.summary_text if conversation_summary else None
+
+        messages = await self.repo.get_recent_messages(thread_id, limit=10)
+        recent_messages = [m.message_text for m in messages]
+
+        user_profile_model = await self.repo.get_user_profile(user_id)
+        user_profile = None
+        if user_profile_model:
+            user_profile = {
+                "user_id": user_profile_model.user_id,
+                "display_name": user_profile_model.display_name,
+                "role": user_profile_model.role,
+                "team": user_profile_model.team,
+                "vip_flag": user_profile_model.vip_flag,
+                "preferences": user_profile_model.preferences,
+            }
+            if not user_profile_model.display_name:
+                user_profile["display_name"] = payload.user.display_name
+
+        case_memory_model = await self.repo.get_case_memory(case_id) if case_id else None
+        case_memory = None
+        if case_memory_model:
+            case_memory = {
+                "case_id": case_memory_model.case_id,
+                "status": case_memory_model.status,
+                "owner": case_memory_model.owner,
+                "summary": case_memory_model.summary,
+                "open_items": case_memory_model.open_items,
+                "priority": case_memory_model.priority,
+            }
+
+        episodic_items = await self.repo.get_memory_items(
+            MemoryScopeType.EPISODIC, "global", limit=5
+        )
+        episodic_memory = [
+            {"content": item.content, "confidence": item.confidence_score}
+            for item in episodic_items
+        ]
+
+        context = MemoryContext(
+            conversation_summary=summary_text,
+            recent_messages=recent_messages,
+            user_profile=user_profile,
+            case_memory=case_memory,
+            episodic_memory=episodic_memory,
+        )
+
+        await self.cache.set_json(
+            f"memory:{thread_id}",
+            context.to_dict(),
+            ttl=settings.memory_conversation_ttl,
+        )
+
+        return context
+
+    async def commit(
+        self,
+        payload: InputPayload,
+        new_context: Optional[str] = None,
+        case_state_changed: bool = False,
+        reusable_insight: Optional[str] = None,
+        user_preference_detected: Optional[str] = None,
+    ):
+        thread_id = payload.conversation.thread_id
+        user_id = payload.user.id
+        case_id = payload.case.case_id if payload.case else None
+
+        await self.repo.save_message(
+            request_id=payload.request_id,
+            user_id=user_id,
+            thread_id=thread_id,
+            message_text=payload.message.text,
+            direction="inbound",
+        )
+
+        if case_state_changed and case_id:
+            await self.repo.upsert_case_memory(case_id)
+
+        if new_context and thread_id:
+            existing_summary = await self.repo.get_conversation_summary(thread_id)
+            unresolved = existing_summary.unresolved_points if existing_summary else []
+            await self.repo.upsert_conversation_summary(
+                conversation_id=thread_id,
+                summary_text=new_context,
+                unresolved_points=unresolved,
+            )
+
+        if reusable_insight:
+            await self.repo.add_memory_item(
+                scope=MemoryScopeType.EPISODIC,
+                scope_id="global",
+                content=reusable_insight,
+                confidence_score=0.8,
+                ttl_at=datetime.utcnow() + timedelta(days=settings.memory_summary_ttl),
+            )
+
+        if user_preference_detected:
+            await self.repo.upsert_user_profile(
+                user_id=user_id,
+                display_name=payload.user.display_name,
+                preferences={"last_preference": user_preference_detected},
+            )
+
+        await self.cache.delete(f"memory:{thread_id}")

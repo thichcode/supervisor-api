@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: supervisor-secrets
+type: Opaque
+stringData:
+  db-user: "postgres"
+  db-password: "CHANGE_ME"
+  openai-api-key: "CHANGE_ME"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: supervisor-config
+data:
+  LOG_LEVEL: "INFO"
+  LLM_MODEL: "gpt-4"
+  LLM_TEMPERATURE: "0.7"
+  LLM_MAX_TOKENS: "2000"
+  AGENT_TIMEOUT: "10"
+  RATE_LIMIT_REQUESTS: "100"
+  RATE_LIMIT_WINDOW: "60"
