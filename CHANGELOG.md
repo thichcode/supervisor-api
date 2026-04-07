@@ -94,6 +94,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - N/A (initial production release)
 
+---
+
+## [Unreleased] - 2026-04-08
+
+### Added
+
+- **Canonical API entrypoint** (`src/api/app.py`)
+  - Introduced a stable FastAPI application module
+  - Reduced architectural ambiguity between `src/api.py` and `src/api/`
+
+- **MemPalace external memory integration (prototype v1-v7)**
+  - Added `src/memory/mempalace_adapter.py`
+  - Added optional external memory retrieval into `MemoryService.retrieve()`
+  - Added optional write-back for reusable insights and detected user preferences
+  - Added provider abstraction via `src/memory/providers.py`
+  - Added provider factory and injectable provider support in `MemoryService`
+  - Added external provider readiness/health participation in `/health/ready`
+  - Added timeout/retry/circuit-breaker protection for MemPalace provider operations
+  - Added mapping policy for supervisor-api domain → MemPalace wing/room resolution
+  - Added multi-backend registry support with null provider and JSON file-based provider
+  - Added backend routing policy to choose providers dynamically by request shape
+
+- **External memory observability**
+  - Added `supervisor_external_memory_operations_total`
+  - Added structured logs for MemPalace search, write, and health-check flows
+
+- **Documentation**
+  - Added `CONFIGURATION_GUIDE.md`
+  - Added `PRODUCT_SCORECARD.md`
+  - Added CI workflow in `.github/workflows/ci.yml`
+
+### Changed
+
+- Updated project metadata to `version = "1.0.0"` in `pyproject.toml`
+- README now documents:
+  - canonical app entrypoint
+  - external memory env vars
+  - multi-backend provider registry
+  - backend routing heuristics
+  - external memory metrics
+  - current readiness score and scorecard links
+- `MemoryContext` now supports `external_memory`
+
+### Fixed
+
+- Fixed circular import/module shadowing between `src/api.py` and `src/api/`
+- Fixed incorrect `logging.Record` annotation to `logging.LogRecord`
+- Fixed circuit breaker state transition timing behavior
+- Fixed JWT fallback behavior when `PyJWT` is unavailable
+- Fixed role/scope dependency factory behavior to avoid coroutine misuse
+- Fixed webhook secret behavior causing unexpected 500s in tests
+- Fixed deprecated UTC timestamp usage in logging and memory modules
+
+### Testing
+
+- Expanded test coverage for MemPalace adapter, resilience, mapping, provider injection, provider registry, and provider routing behavior
+- Current validated test status: `68 passed`
+
 ### Deprecated
 
 - N/A

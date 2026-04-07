@@ -5,8 +5,10 @@ Authentication and Authorization Layer
 - API key authentication
 - Role-based access control (RBAC)
 """
+import base64
 import hashlib
 import hmac
+import json
 import time
 from typing import Optional, List, Callable
 from dataclasses import dataclass
@@ -28,6 +30,15 @@ from src.config import get_settings
 
 settings = get_settings()
 logger = structlog.get_logger()
+
+
+def _b64url_encode(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode("utf-8")
+
+
+def _b64url_decode(data: str) -> bytes:
+    padding = "=" * (-len(data) % 4)
+    return base64.urlsafe_b64decode(data + padding)
 
 
 class AuthMethod(Enum):
@@ -80,13 +91,12 @@ class JWTAuth:
     
     def verify(self, token: str) -> AuthResult:
         """Verify and decode JWT token"""
-        if not JWT_AVAILABLE:
-            logger.error("PyJWT not installed")
-            return AuthResult(False, AuthMethod.JWT, error="JWT library not available")
-        
         if not token:
             return AuthResult(False, AuthMethod.JWT, error="Token is required")
-        
+
+        if not JWT_AVAILABLE:
+            return self._verify_without_pyjwt(token)
+
         try:
             # Choose key based on algorithm
             key = self._public_key if self.algorithm.startswith("RS") else self.secret
@@ -123,6 +133,50 @@ class JWTAuth:
         except jwt.InvalidTokenError as e:
             logger.warning("jwt_invalid", error=str(e))
             return AuthResult(False, AuthMethod.JWT, error="Invalid token")
+
+    def _verify_without_pyjwt(self, token: str) -> AuthResult:
+        """Minimal HS256 JWT verification fallback when PyJWT is unavailable."""
+        try:
+            header_b64, payload_b64, signature_b64 = token.split(".")
+        except ValueError:
+            return AuthResult(False, AuthMethod.JWT, error="Invalid token")
+
+        expected_sig = hmac.new(
+            self.secret.encode("utf-8"),
+            f"{header_b64}.{payload_b64}".encode("utf-8"),
+            hashlib.sha256,
+        ).digest()
+
+        try:
+            actual_sig = _b64url_decode(signature_b64)
+        except Exception:
+            return AuthResult(False, AuthMethod.JWT, error="Invalid token")
+
+        if not hmac.compare_digest(actual_sig, expected_sig):
+            return AuthResult(False, AuthMethod.JWT, error="Invalid token")
+
+        try:
+            payload = json.loads(_b64url_decode(payload_b64).decode("utf-8"))
+        except (ValueError, json.JSONDecodeError):
+            return AuthResult(False, AuthMethod.JWT, error="Invalid token")
+
+        now = int(time.time())
+        if payload.get("exp") is None or int(payload["exp"]) < now:
+            return AuthResult(False, AuthMethod.JWT, error="Token has expired")
+        if payload.get("aud") != "supervisor":
+            return AuthResult(False, AuthMethod.JWT, error="Invalid token audience")
+        if payload.get("iss") != "supervisor-api":
+            return AuthResult(False, AuthMethod.JWT, error="Invalid token issuer")
+        if not payload.get("sub") or not payload.get("role"):
+            return AuthResult(False, AuthMethod.JWT, error="Invalid token")
+
+        return AuthResult(
+            authenticated=True,
+            method=AuthMethod.JWT,
+            user_id=payload.get("sub"),
+            role=UserRole(payload.get("role", "user")),
+            scopes=payload.get("scopes", []),
+        )
     
     def create_token(
         self,
@@ -134,7 +188,7 @@ class JWTAuth:
     ) -> str:
         """Create a new JWT token"""
         if not JWT_AVAILABLE:
-            raise RuntimeError("PyJWT not installed")
+            return self._create_token_without_pyjwt(user_id, role, scopes, expires_in, service)
         
         now = int(time.time())
         payload = {
@@ -151,6 +205,35 @@ class JWTAuth:
             payload["service"] = service
             
         return jwt.encode(payload, self.secret, algorithm=self.algorithm)
+
+    def _create_token_without_pyjwt(
+        self,
+        user_id: str,
+        role: str,
+        scopes: Optional[List[str]] = None,
+        expires_in: int = 3600,
+        service: Optional[str] = None,
+    ) -> str:
+        """Minimal HS256 JWT creation fallback when PyJWT is unavailable."""
+        now = int(time.time())
+        header = {"alg": self.algorithm, "typ": "JWT"}
+        payload = {
+            "sub": user_id,
+            "role": role,
+            "scopes": scopes or [],
+            "iat": now,
+            "exp": now + expires_in,
+            "iss": "supervisor-api",
+            "aud": "supervisor",
+        }
+        if service:
+            payload["service"] = service
+
+        header_b64 = _b64url_encode(json.dumps(header, separators=(",", ":")).encode("utf-8"))
+        payload_b64 = _b64url_encode(json.dumps(payload, separators=(",", ":")).encode("utf-8"))
+        signing_input = f"{header_b64}.{payload_b64}".encode("utf-8")
+        signature = hmac.new(self.secret.encode("utf-8"), signing_input, hashlib.sha256).digest()
+        return f"{header_b64}.{payload_b64}.{_b64url_encode(signature)}"
     
     def refresh_token(self, token: str, expires_in: int = 3600) -> Optional[str]:
         """Refresh an existing token"""
@@ -365,7 +448,7 @@ async def require_auth(
     return result
 
 
-async def require_role(allowed_roles: List[UserRole]):
+def require_role(allowed_roles: List[UserRole]):
     """FastAPI dependency factory for role-based access"""
     async def check_role(auth: AuthResult = Depends(require_auth)):
         if auth.role not in allowed_roles:
@@ -377,7 +460,7 @@ async def require_role(allowed_roles: List[UserRole]):
     return check_role
 
 
-async def require_scope(required_scopes: List[str]):
+def require_scope(required_scopes: List[str]):
     """FastAPI dependency factory for scope-based access"""
     async def check_scope(auth: AuthResult = Depends(require_auth)):
         if not auth.scopes:

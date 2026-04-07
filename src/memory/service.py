@@ -1,9 +1,16 @@
 from typing import Optional
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core import InputPayload, MemoryScopeType, MemoryItem
 from src.memory.cache import RedisCache
+from src.memory.mempalace_adapter import MemPalaceAdapter
+from src.memory.providers import (
+    ExternalMemoryProvider,
+    ExternalMemoryProviderConfig,
+    get_external_memory_provider,
+)
+from src.memory.routing import ExternalMemoryRoutingPolicy
 from src.memory.repository import MemoryRepository
 from src.config import get_settings
 
@@ -18,12 +25,14 @@ class MemoryContext:
         user_profile: Optional[dict] = None,
         case_memory: Optional[dict] = None,
         episodic_memory: list[dict] = None,
+        external_memory: list[dict] = None,
     ):
         self.conversation_summary = conversation_summary
         self.recent_messages = recent_messages or []
         self.user_profile = user_profile or {}
         self.case_memory = case_memory or {}
         self.episodic_memory = episodic_memory or []
+        self.external_memory = external_memory or []
 
     def to_dict(self) -> dict:
         return {
@@ -32,6 +41,7 @@ class MemoryContext:
             "user_profile": self.user_profile,
             "case_memory": self.case_memory,
             "episodic_memory": self.episodic_memory,
+            "external_memory": self.external_memory,
         }
 
     def get_context_text(self) -> str:
@@ -51,14 +61,57 @@ class MemoryContext:
             parts.append("\n=== Learned Patterns ===")
             for item in self.episodic_memory[:3]:
                 parts.append(f"- {item.get('content', '')}")
+        if self.external_memory:
+            parts.append("\n=== External Memory ===")
+            for item in self.external_memory[:3]:
+                parts.append(f"- {item.get('content', '')}")
         return "\n".join(parts)
 
 
 class MemoryService:
-    def __init__(self, session: AsyncSession, cache: RedisCache):
+    def __init__(
+        self,
+        session: AsyncSession,
+        cache: RedisCache,
+        external_provider: Optional[ExternalMemoryProvider] = None,
+    ):
         self.session = session
         self.cache = cache
         self.repo = MemoryRepository(session)
+        self.routing_policy = ExternalMemoryRoutingPolicy(
+            mempalace_enabled=settings.mempalace_enabled,
+            file_enabled=settings.file_memory_enabled,
+        )
+        self.external_provider = external_provider
+
+    def _resolve_external_provider(self, payload: InputPayload) -> ExternalMemoryProvider:
+        if self.external_provider is not None:
+            return self.external_provider
+
+        route = self.routing_policy.select(
+            message_text=payload.message.text,
+            case_id=payload.case.case_id if payload.case else None,
+            team=payload.user.team,
+        )
+
+        if route.provider_name == "file":
+            return get_external_memory_provider(
+                ExternalMemoryProviderConfig(
+                    provider_name="file",
+                    enabled=settings.file_memory_enabled,
+                    path=settings.file_memory_path,
+                    top_k=settings.mempalace_top_k,
+                )
+            )
+
+        return get_external_memory_provider(
+            ExternalMemoryProviderConfig(
+                provider_name=route.provider_name,
+                enabled=settings.mempalace_enabled,
+                path=settings.mempalace_path,
+                top_k=settings.mempalace_top_k,
+            )
+        )
 
     async def retrieve(self, payload: InputPayload) -> MemoryContext:
         thread_id = payload.conversation.thread_id
@@ -109,12 +162,24 @@ class MemoryService:
             for item in episodic_items
         ]
 
+        provider = self._resolve_external_provider(payload)
+
+        mempalace_context = await provider.search(
+            message_text=payload.message.text,
+            user_id=user_id,
+            thread_id=thread_id,
+            case_id=case_id,
+            team=payload.user.team,
+        )
+        external_memory = mempalace_context.to_memory_items()
+
         context = MemoryContext(
             conversation_summary=summary_text,
             recent_messages=recent_messages,
             user_profile=user_profile,
             case_memory=case_memory,
             episodic_memory=episodic_memory,
+            external_memory=external_memory,
         )
 
         await self.cache.set_json(
@@ -163,7 +228,16 @@ class MemoryService:
                 scope_id="global",
                 content=reusable_insight,
                 confidence_score=0.8,
-                ttl_at=datetime.utcnow() + timedelta(days=settings.memory_summary_ttl),
+                ttl_at=datetime.now(UTC) + timedelta(days=settings.memory_summary_ttl),
+            )
+            provider = self._resolve_external_provider(payload)
+            await provider.write_memory(
+                content=reusable_insight,
+                user_id=user_id,
+                thread_id=thread_id,
+                case_id=case_id,
+                team=payload.user.team,
+                room="episodic-insights",
             )
 
         if user_preference_detected:
@@ -171,6 +245,15 @@ class MemoryService:
                 user_id=user_id,
                 display_name=payload.user.display_name,
                 preferences={"last_preference": user_preference_detected},
+            )
+            provider = self._resolve_external_provider(payload)
+            await provider.write_memory(
+                content=f"user_preference:{user_preference_detected}",
+                user_id=user_id,
+                thread_id=thread_id,
+                case_id=case_id,
+                team=payload.user.team,
+                room="user-preferences",
             )
 
         await self.cache.delete(f"memory:{thread_id}")

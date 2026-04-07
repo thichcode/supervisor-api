@@ -122,6 +122,12 @@ REDIS_ERRORS = Counter(
     ['error_type']
 )
 
+EXTERNAL_MEMORY_OPERATIONS = Counter(
+    'supervisor_external_memory_operations_total',
+    'External memory provider operations',
+    ['provider', 'operation', 'status']
+)
+
 
 class MetricsCollector:
     @staticmethod
@@ -194,6 +200,14 @@ class MetricsCollector:
     @staticmethod
     def record_redis_error(error_type: str):
         REDIS_ERRORS.labels(error_type=error_type).inc()
+
+    @staticmethod
+    def record_external_memory(provider: str, operation: str, status: str):
+        EXTERNAL_MEMORY_OPERATIONS.labels(
+            provider=provider,
+            operation=operation,
+            status=status,
+        ).inc()
 
 
 metrics = MetricsCollector()

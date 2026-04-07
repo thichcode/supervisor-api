@@ -2,7 +2,7 @@
 
 [![Version](https://img.shields.io/badge/version-v1.0.0-blue.svg)](https://github.com/thichcode/supervisor-api/releases)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Python](https://img.shields.io/badge/python-3.10+-orange.svg)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/python-3.11+-orange.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.104+-cyan.svg)](https://fastapi.tiangolo.com/)
 
 AI agent system with long-term memory for Microsoft Teams integration.
@@ -18,8 +18,9 @@ AI agent system with long-term memory for Microsoft Teams integration.
 | Distributed Tracing | ✅ Implemented | v1.0.0 |
 | Load Testing | ✅ Implemented | v1.0.0 |
 | Prometheus Alerts | ✅ Implemented | v1.0.0 |
+| External Memory Provider Registry | ✅ Multi-backend + Routed Prototype | v1.0.0+ |
 
-**Production Readiness Score: 9/10** ✅
+**Production Readiness Score: 9.2/10** ✅
 
 ---
 
@@ -48,13 +49,18 @@ Microsoft Teams → Power Automate → n8n Webhook → Supervisor API
 
 ```bash
 # Install package
-pip install .
+pip install -e ".[dev]"
 
 # Run tests
 python -m pytest -q
 
+# Run checks
+python -m mypy src
+python -m bandit -r src
+python -m pip_audit
+
 # Run the server
-python -m src.api
+python -m src.api.app
 ```
 
 ---
@@ -94,6 +100,19 @@ python -m src.api
 | Load Testing | k6 + Locust scripts |
 | Docker Compose | One-command deployment |
 | Prometheus Alerts | SLO/SLA monitoring |
+
+### External Memory Integration
+
+| Feature | Description |
+|---------|-------------|
+| MemPalace Adapter | Optional external semantic memory provider |
+| File Provider | Lightweight local JSON-backed provider for fallback/demo scenarios |
+| Provider Abstraction | Swappable provider interface for future backends |
+| Provider Registry | Factory-based backend selection (`mempalace` / `file` / `none`) |
+| Routing Policy | Runtime provider selection based on request shape |
+| Read/Write Path | Search external memory and persist reusable insights/preferences |
+| Readiness Awareness | `/health/ready` now checks external memory provider health when enabled |
+| Metrics & Logging | External memory operations tracked by status |
 
 ---
 
@@ -144,6 +163,40 @@ python -m src.api
 | `CIRCUIT_BREAKER_FAILURE_THRESHOLD` | 5 | Failures before opening |
 | `CIRCUIT_BREAKER_SUCCESS_THRESHOLD` | 2 | Successes to close |
 | `CIRCUIT_BREAKER_TIMEOUT` | 30 | Seconds before half-open |
+
+### Optional - External Memory (MemPalace)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MEMPALACE_ENABLED` | `false` | Enable MemPalace adapter integration |
+| `MEMPALACE_PATH` | empty | Path to local MemPalace palace |
+| `MEMPALACE_TOP_K` | `3` | Number of external memory hits to retrieve |
+| `MEMPALACE_TIMEOUT_SECONDS` | `2.0` | Timeout for MemPalace operations |
+| `MEMPALACE_RETRY_ATTEMPTS` | `2` | Retry attempts for MemPalace operations |
+| `MEMPALACE_CIRCUIT_FAILURE_THRESHOLD` | `3` | Failures before opening provider circuit |
+| `MEMPALACE_CIRCUIT_SUCCESS_THRESHOLD` | `2` | Successes required to close provider circuit |
+| `MEMPALACE_CIRCUIT_TIMEOUT_SECONDS` | `30.0` | Seconds before MemPalace provider half-open retry |
+
+### External Provider Modes
+
+Current provider registry supports:
+
+| Provider | Purpose |
+|----------|---------|
+| `mempalace` | Semantic long-term memory provider |
+| `file` | Lightweight JSON-backed provider for fallback, local demos, and testing |
+| `none` | Disabled/null provider |
+
+### Provider Routing Heuristics
+
+Current routing policy prefers:
+
+| Request pattern | Preferred provider |
+|----------------|--------------------|
+| Case-aware requests | `mempalace` |
+| Policy/team/context-heavy requests | `mempalace` |
+| Lightweight fallback/local demo scenarios | `file` |
+| No external backend enabled | `none` |
 
 ---
 
@@ -203,6 +256,7 @@ Access at `GET /metrics`:
 | `supervisor_llm_cost_usd` | Counter | LLM cost |
 | `supervisor_circuit_breaker_state` | Gauge | CB state (0/1/2) |
 | `supervisor_dlq_pending_total` | Gauge | Pending DLQ messages |
+| `supervisor_external_memory_operations_total` | Counter | External memory provider operations by provider/action/status |
 
 ### Alert Examples
 
@@ -225,6 +279,8 @@ Access at `GET /metrics`:
 
 - [Changelog](./CHANGELOG.md) - Version history
 - [Release Notes](./RELEASES/) - Detailed release notes
+- [Configuration Guide](./CONFIGURATION_GUIDE.md) - Config precedence and source of truth
+- [Product Scorecard](./PRODUCT_SCORECARD.md) - Current engineering and product assessment
 - [API Documentation](./docs/api.md) - API reference
 - [Deployment Guide](./docs/deployment.md) - Production deployment
 - [Monitoring Guide](./docs/monitoring.md) - Observability setup

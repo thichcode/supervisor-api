@@ -2,19 +2,19 @@ import logging
 import sys
 import json
 import structlog
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
-from pythonjsonlogger import jsonlogger
+from pythonjsonlogger.json import JsonFormatter
 
 from src.config import get_settings
 
 settings = get_settings()
 
 
-class CustomJsonFormatter(jsonlogger.JsonFormatter):
-    def add_fields(self, log_record: dict, record: logging.Record, message_dict: dict):
+class CustomJsonFormatter(JsonFormatter):
+    def add_fields(self, log_record: dict, record: logging.LogRecord, message_dict: dict):
         super().add_fields(log_record, record, message_dict)
-        log_record['timestamp'] = datetime.utcnow().isoformat()
+        log_record['timestamp'] = datetime.now(UTC).isoformat()
         log_record['level'] = record.levelname
         log_record['logger'] = record.name
         log_record['service'] = 'supervisor'

@@ -1,6 +1,6 @@
 [project]
 name = "multiagent-supervisor"
-version = "0.1.0"
+version = "1.0.0"
 description = "Multi-Agent Supervisor System with Long-term Memory"
 requires-python = ">=3.11"
 dependencies = [
@@ -17,6 +17,7 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "numpy>=1.26.0",
     "openai>=1.12.0",
+    "PyJWT>=2.8.0",
     "litellm>=1.0.0",
     "slowapi>=0.1.9",
     "prometheus-client>=0.19.0",
@@ -29,6 +30,8 @@ dev = [
     "pytest-asyncio>=0.23.0",
     "ruff>=0.2.0",
     "mypy>=1.8.0",
+    "bandit>=1.7.8",
+    "pip-audit>=2.7.0",
 ]
 
 [build-system]

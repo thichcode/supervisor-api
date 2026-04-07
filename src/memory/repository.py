@@ -2,7 +2,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, delete
 from sqlalchemy.orm import selectinload
 from typing import Optional
-from datetime import datetime
+from datetime import UTC, datetime
+
+
+def utc_now() -> datetime:
+    return datetime.now(UTC)
 
 from src.db.models import (
     Message,
@@ -65,7 +69,7 @@ class MemoryRepository:
         if existing:
             existing.summary_text = summary_text
             existing.unresolved_points = unresolved_points
-            existing.updated_at = datetime.utcnow()
+            existing.updated_at = utc_now()
             await self.session.commit()
             await self.session.refresh(existing)
             return existing
@@ -105,7 +109,7 @@ class MemoryRepository:
             existing.vip_flag = vip_flag
             if preferences:
                 existing.preferences = preferences
-            existing.updated_at = datetime.utcnow()
+            existing.updated_at = utc_now()
             await self.session.commit()
             await self.session.refresh(existing)
             return existing
@@ -150,7 +154,7 @@ class MemoryRepository:
                 existing.open_items = open_items
             if priority:
                 existing.priority = priority
-            existing.updated_at = datetime.utcnow()
+            existing.updated_at = utc_now()
             await self.session.commit()
             await self.session.refresh(existing)
             return existing
@@ -179,7 +183,7 @@ class MemoryRepository:
             .where(MemoryItem.memory_scope == scope.value)
             .where(MemoryItem.scope_id == scope_id)
             .where(
-                (MemoryItem.ttl_at.is_(None)) | (MemoryItem.ttl_at > datetime.utcnow())
+                (MemoryItem.ttl_at.is_(None)) | (MemoryItem.ttl_at > utc_now())
             )
             .order_by(MemoryItem.confidence_score.desc())
             .limit(limit)

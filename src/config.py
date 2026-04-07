@@ -6,6 +6,8 @@ from typing import Literal
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
+    app_name: str = "Multi-Agent Supervisor System"
+    app_version: str = "1.0.0"
     app_host: str = "0.0.0.0"
     app_port: int = 8000
     app_debug: bool = False
@@ -38,6 +40,16 @@ class Settings(BaseSettings):
     memory_conversation_ttl: int = 86400
     memory_summary_ttl: int = 604800
     memory_max_tokens: int = 4000
+    mempalace_enabled: bool = False
+    mempalace_path: str = ""
+    mempalace_top_k: int = 3
+    mempalace_timeout_seconds: float = 2.0
+    mempalace_retry_attempts: int = 2
+    mempalace_circuit_failure_threshold: int = 3
+    mempalace_circuit_success_threshold: int = 2
+    mempalace_circuit_timeout_seconds: float = 30.0
+    file_memory_enabled: bool = False
+    file_memory_path: str = ""
 
     openai_api_key: str = ""
     llm_model: str = "gpt-4"

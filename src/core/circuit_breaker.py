@@ -120,6 +120,7 @@ class CircuitBreaker:
                 
             elif self._state == CircuitState.CLOSED:
                 if self.metrics.failures >= self.config.failure_threshold:
+                    self._last_failure_time = self.metrics.last_failure_time
                     logger.warning(
                         "circuit_breaker_opened",
                         name=self.name,
