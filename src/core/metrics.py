@@ -59,6 +59,69 @@ ERRORS_TOTAL = Counter(
     ['error_type', 'endpoint']
 )
 
+# Circuit Breaker Metrics
+CIRCUIT_BREAKER_STATE = Gauge(
+    'supervisor_circuit_breaker_state',
+    'Circuit breaker state (0=closed, 1=half_open, 2=open)',
+    ['name']
+)
+
+CIRCUIT_BREAKER_FAILURES = Counter(
+    'supervisor_circuit_breaker_failures_total',
+    'Circuit breaker failures',
+    ['name']
+)
+
+CIRCUIT_BREAKER_REJECTED = Counter(
+    'supervisor_circuit_breaker_rejected_total',
+    'Circuit breaker rejected calls',
+    ['name']
+)
+
+# Dead Letter Queue Metrics
+DLQ_ENTRIES = Gauge(
+    'supervisor_dlq_entries_total',
+    'DLQ entries by status',
+    ['status']
+)
+
+DLQ_OPERATIONS = Counter(
+    'supervisor_dlq_operations_total',
+    'DLQ operations',
+    ['operation']
+)
+
+# LLM Cost Metrics
+LLM_COST = Counter(
+    'supervisor_llm_cost_total',
+    'Total LLM cost in USD',
+    ['model']
+)
+
+# Rate Limiting Metrics
+RATE_LIMIT_EXCEEDED = Counter(
+    'supervisor_rate_limit_exceeded_total',
+    'Rate limit exceeded count'
+)
+
+# Database Pool Metrics
+DB_POOL_SIZE = Gauge(
+    'supervisor_db_pool_size',
+    'Database connection pool size'
+)
+
+DB_POOL_AVAILABLE = Gauge(
+    'supervisor_db_pool_available',
+    'Available database connections'
+)
+
+# Redis Metrics
+REDIS_ERRORS = Counter(
+    'supervisor_redis_errors_total',
+    'Redis errors',
+    ['error_type']
+)
+
 
 class MetricsCollector:
     @staticmethod
@@ -97,6 +160,40 @@ class MetricsCollector:
     @staticmethod
     def decrement_active():
         ACTIVE_REQUESTS.dec()
+
+    @staticmethod
+    def record_circuit_breaker(name: str, state: int, failures: int = 0, rejected: int = 0):
+        state_map = {"closed": 0, "half_open": 1, "open": 2}
+        CIRCUIT_BREAKER_STATE.labels(name=name).set(state_map.get(state, state))
+        if failures > 0:
+            CIRCUIT_BREAKER_FAILURES.labels(name=name).inc(failures)
+        if rejected > 0:
+            CIRCUIT_BREAKER_REJECTED.labels(name=name).inc(rejected)
+
+    @staticmethod
+    def record_dlq(status: str, count: int = 1):
+        DLQ_ENTRIES.labels(status=status).set(count)
+
+    @staticmethod
+    def record_dlq_operation(operation: str):
+        DLQ_OPERATIONS.labels(operation=operation).inc()
+
+    @staticmethod
+    def record_llm_cost(model: str, cost_usd: float):
+        LLM_COST.labels(model=model).inc(cost_usd)
+
+    @staticmethod
+    def record_rate_limit_exceeded():
+        RATE_LIMIT_EXCEEDED.inc()
+
+    @staticmethod
+    def record_db_pool(size: int, available: int):
+        DB_POOL_SIZE.set(size)
+        DB_POOL_AVAILABLE.set(available)
+
+    @staticmethod
+    def record_redis_error(error_type: str):
+        REDIS_ERRORS.labels(error_type=error_type).inc()
 
 
 metrics = MetricsCollector()

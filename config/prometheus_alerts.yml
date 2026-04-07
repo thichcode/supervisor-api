@@ -1,0 +1,195 @@
+# Prometheus Alert Rules for Supervisor API
+# Place in: /etc/prometheus/rules/supervisor_alerts.yml
+
+groups:
+  - name: supervisor_api
+    interval: 30s
+    rules:
+      # High Error Rate
+      - alert: HighErrorRate
+        expr: |
+          rate(supervisor_http_requests_total{status=~"5.."}[5m]) 
+          / rate(supervisor_http_requests_total[5m]) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High HTTP 5xx error rate"
+          description: "Error rate is {{ $value | humanizePercentage }} over the last 5 minutes"
+
+      # Service Down
+      - alert: ServiceDown
+        expr: up{job="supervisor-api"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Supervisor API is down"
+          description: "Supervisor API has been down for more than 1 minute"
+
+      # High Latency
+      - alert: HighLatency
+        expr: |
+          histogram_quantile(0.95, 
+            rate(supervisor_http_request_duration_seconds_bucket[5m])
+          ) > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High API latency"
+          description: "95th percentile latency is {{ $value | humanizeDuration }}"
+
+      # Circuit Breaker Open
+      - alert: CircuitBreakerOpen
+        expr: supervisor_circuit_breaker_state == 2
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Circuit breaker is open"
+          description: "Circuit breaker {{ $labels.name }} has been open for more than 1 minute"
+
+      # High DLQ Size
+      - alert: DLQBacklogGrowing
+        expr: increase(supervisor_dlq_entries_total{status="pending"}[1h]) > 10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Dead Letter Queue backlog growing"
+          description: "More than 10 items added to DLQ in the last hour"
+
+      # DLQ Critical
+      - alert: DLQCritical
+        expr: supervisor_dlq_entries_total{status="failed"} > 5
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Critical DLQ failures"
+          description: "There are {{ $value }} failed entries in the DLQ"
+
+      # High Memory Usage
+      - alert: HighMemoryUsage
+        expr: |
+          (container_memory_usage_bytes{name=~"supervisor.*"} 
+           / container_spec_memory_limit_bytes{name=~"supervisor.*"}) > 0.85
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High memory usage"
+          description: "Memory usage is above 85%"
+
+      # High CPU Usage
+      - alert: HighCPUUsage
+        expr: |
+          rate(container_cpu_usage_seconds_total{name=~"supervisor.*"}[5m]) 
+          > 0.8
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High CPU usage"
+          description: "CPU usage is above 80% for 10 minutes"
+
+      # LLM Cost Spike
+      - alert: LLMCostSpike
+        expr: |
+          increase(supervisor_llm_cost_total[1h]) > 100
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "LLM cost spike detected"
+          description: "LLM costs have increased by ${{ $value }} in the last hour"
+
+      # LLM Circuit Breaker
+      - alert: LLMCircuitBreakerOpen
+        expr: supervisor_circuit_breaker_state{name="llm_client"} == 2
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "LLM circuit breaker is open"
+          description: "LLM client circuit breaker has been open for more than 2 minutes. All LLM calls are being rejected."
+
+      # Database Connection Pool Exhausted
+      - alert: DatabasePoolExhausted
+        expr: |
+          supervisor_db_pool_available / supervisor_db_pool_size < 0.1
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Database connection pool nearly exhausted"
+          description: "Less than 10% of database connections available"
+
+      # Redis Connection Issues
+      - alert: RedisConnectionIssues
+        expr: rate(supervisor_redis_errors_total[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Redis connection errors"
+          description: "Redis is experiencing connection errors"
+
+      # Rate Limit Hit
+      - alert: RateLimitThrottling
+        expr: |
+          rate(supervisor_rate_limit_exceeded_total[5m]) 
+          / rate(supervisor_http_requests_total[5m]) > 0.1
+        for: 10m
+        labels:
+          severity: info
+        annotations:
+          summary: "High rate limit usage"
+          description: "More than 10% of requests are being rate limited"
+
+  - name: supervisor_slos
+    interval: 60s
+    rules:
+      # Availability SLO (99.9%)
+      - alert: AvailabilitySLOBreach
+        expr: |
+          (
+            1 - (
+              sum(rate(supervisor_http_requests_total{status=~"5.."}[1h])) 
+              / sum(rate(supervisor_http_requests_total[1h]))
+            )
+          ) < 0.999
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Availability SLO at risk"
+          description: "Current availability is {{ $value | humanizePercentage }}, SLO target is 99.9%"
+
+      # Latency SLO (p95 < 2s)
+      - alert: LatencySLOBreach
+        expr: |
+          histogram_quantile(0.95, 
+            rate(supervisor_http_request_duration_seconds_bucket[1h])
+          ) > 2
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Latency SLO at risk"
+          description: "95th percentile latency is {{ $value | humanizeDuration }}, SLO target is 2s"
+
+      # Error Budget Burn Rate
+      - alert: ErrorBudgetBurnHigh
+        expr: |
+          (
+            sum(rate(supervisor_http_requests_total{status=~"5.."}[1h])) 
+            / sum(rate(supervisor_http_requests_total[1h]))
+          ) * 100 > 1
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Error budget burning fast"
+          description: "Error rate is {{ $value | humanizePercentage }}, consuming error budget rapidly"
