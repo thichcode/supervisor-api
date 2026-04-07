@@ -1,0 +1,373 @@
+# Cline Rules for Supervisor API Project
+
+## 🎯 Project Context
+
+**Project:** Multi-Agent Supervisor System  
+**Purpose:** AI agent system with long-term memory for MS Teams integration  
+**Tech Stack:** Python 3.10+, FastAPI, PostgreSQL, Redis, Azure OpenAI  
+**Repo:** https://github.com/thichcode/supervisor-api
+
+---
+
+## 📜 System Instructions
+
+### Core Principles
+
+1. **Security First**
+   - Never commit secrets, API keys, or credentials
+   - All secrets must come from environment variables
+   - Use `os.getenv()` not hardcoded values
+   - Run `pip-audit` and `bandit` before any PR
+
+2. **Type Safety**
+   - Use Pydantic models for all API inputs/outputs
+   - Use dataclasses for internal data structures
+   - Add type hints to all function signatures
+   - No `Any` types without justification
+
+3. **Async First**
+   - Use `async/await` for all I/O operations
+   - Use `asyncio` for concurrent operations
+   - Never use blocking calls in request handlers
+
+4. **Error Handling**
+   - Catch specific exceptions, not bare `except:`
+   - Log errors with context (use structlog)
+   - Return structured error responses
+   - Never leak internal errors to clients
+
+5. **Testing**
+   - Write tests BEFORE submitting PR
+   - Minimum 80% coverage on changed modules
+   - Mock external dependencies (DB, Redis, LLM)
+   - Use `pytest` with `pytest-asyncio`
+
+---
+
+## 🏗️ Code Conventions
+
+### File Structure
+```
+src/
+├── __init__.py          # Package marker
+├── api.py               # FastAPI app, routes
+├── config.py            # Configuration loading
+├── llm/                 # LLM client code
+│   ├── __init__.py
+│   └── client.py
+├── agents/              # Agent implementations
+│   ├── __init__.py
+│   ├── context.py
+│   ├── policy.py
+│   ├── knowledge.py
+│   ├── draft.py
+│   └── qa.py
+├── memory/              # Memory system
+│   ├── __init__.py
+│   ├── postgres.py
+│   └── redis.py
+└── core/                # Shared utilities
+    ├── __init__.py
+    ├── auth.py
+    ├── tracing.py
+    ├── metrics.py
+    ├── circuit_breaker.py
+    └── dlq.py
+```
+
+### Naming Conventions
+
+| Type | Convention | Example |
+|------|------------|---------|
+| Files | snake_case | `circuit_breaker.py` |
+| Classes | PascalCase | `CircuitBreaker` |
+| Functions | snake_case | `get_circuit_breaker()` |
+| Constants | UPPER_SNAKE | `MAX_RETRIES` |
+| Env vars | UPPER_SNAKE | `DB_PASSWORD` |
+| Private | _prefix | `_internal_func()` |
+
+### Import Order
+```python
+# 1. Standard library
+import os
+import json
+from datetime import datetime
+
+# 2. Third-party (alphabetical)
+import structlog
+from fastapi import APIRouter, HTTPException
+
+# 3. Local application
+from src.config import get_settings
+from src.llm.client import LLMClient
+```
+
+### Docstring Format
+```python
+async def process_request(request: WebhookPayload) -> ProcessingResult:
+    """Process incoming webhook request.
+    
+    Args:
+        request: Webhook payload from n8n
+        
+    Returns:
+        ProcessingResult with status and response data
+        
+    Raises:
+        ValidationError: If request payload is invalid
+        ProcessingError: If processing fails
+        
+    Example:
+        >>> result = await process_request(payload)
+        >>> print(result.status)
+        'completed'
+    """
+```
+
+---
+
+## 🚫 Prohibited Patterns
+
+### DO NOT:
+```python
+# ❌ Never do this:
+
+# 1. Hardcode secrets
+api_key = "sk-1234567890"
+
+# 2. Bare except
+try:
+    do_something()
+except:
+    pass
+
+# 3. Sync blocking in async
+result = requests.get(url)  # Use httpx
+
+# 4. String concatenation for SQL
+query = "SELECT * FROM users WHERE id = " + user_id
+
+# 5. Print statements (use structlog)
+print("debug info")
+
+# 6. Mutable default arguments
+def func(items=[]):  # Use None instead
+
+# 7. Sleep in async code
+time.sleep(5)  # Use asyncio.sleep
+
+# 8. Global state
+_config = None  # Use singleton pattern or dependency injection
+```
+
+### DO INSTEAD:
+```python
+# ✅ Do this:
+
+# 1. Environment variables
+api_key = os.getenv("OPENAI_API_KEY")
+
+# 2. Specific exception handling
+try:
+    do_something()
+except ValueError as e:
+    logger.error("invalid_value", error=str(e))
+    raise
+
+# 3. Async HTTP client
+async with httpx.AsyncClient() as client:
+    response = await client.get(url)
+
+# 4. Parameterized queries
+query = "SELECT * FROM users WHERE id = $1"
+await pool.fetch(query, user_id)
+
+# 5. Structured logging
+logger.info("processing_request", request_id=request_id)
+
+# 6. None default
+def func(items=None):
+    items = items or []
+
+# 7. Async sleep
+await asyncio.sleep(5)
+
+# 8. Dependency injection
+def get_config() -> Config:
+    return Config()
+```
+
+---
+
+## 🧪 Testing Requirements
+
+### Test Structure
+```
+tests/
+├── conftest.py          # Shared fixtures
+├── test_api.py          # API endpoint tests
+├── test_agents.py       # Agent unit tests
+├── test_memory.py       # Memory system tests
+├── test_llm.py          # LLM client tests
+├── test_integration.py  # Integration tests
+└── fixtures/
+    ├── sample_payloads.py
+    └── mock_data.py
+```
+
+### Test Patterns
+```python
+import pytest
+from unittest.mock import AsyncMock, MagicMock, patch
+
+class TestCircuitBreaker:
+    @pytest.fixture
+    def circuit_breaker(self):
+        return CircuitBreaker("test", CircuitBreakerConfig(failure_threshold=3))
+    
+    @pytest.mark.asyncio
+    async def test_opens_after_failures(self, circuit_breaker):
+        for _ in range(3):
+            await circuit_breaker.record_failure()
+        
+        assert circuit_breaker.state == CircuitState.OPEN
+```
+
+### Coverage Requirements
+- Core modules: > 80%
+- Agents: > 70%
+- API: > 85%
+- Overall: > 75%
+
+---
+
+## 📦 Dependency Management
+
+### Adding Dependencies
+1. Add to `pyproject.toml` under `dependencies`
+2. Run `pip-compile` to update `requirements.txt`
+3. Verify with `pip-audit`
+4. Update this file if major dependency
+
+### Allowed Packages
+- **Web:** fastapi, uvicorn, httpx, websockets
+- **Data:** pydantic, sqlmodel, asyncpg
+- **Cache:** redis, aiocache
+- **LLM:** openai, anthropic
+- **Observability:** structlog, prometheus-client, opentelemetry-*
+- **Testing:** pytest, pytest-asyncio, pytest-cov, pytest-mock
+- **Security:** bandit, pip-audit
+
+### Forbidden Packages
+- `requests` (use httpx)
+- `psycopg2` (use asyncpg)
+- `redis-py` sync mode (use aioredis)
+- Any packages without async support
+
+---
+
+## 🔍 Code Review Checklist
+
+Before submitting PR, verify:
+
+- [ ] No hardcoded secrets
+- [ ] All tests passing: `python -m pytest -q`
+- [ ] Type hints on all functions
+- [ ] Docstrings on public APIs
+- [ ] Structured logging (not print)
+- [ ] Error handling with specific exceptions
+- [ ] Async/await for I/O
+- [ ] Test coverage maintained/increased
+- [ ] No blocking calls
+- [ ] No mutable default arguments
+
+---
+
+## 📝 Commit Message Format
+
+```
+<type>(<scope>): <description>
+
+[optional body]
+
+[optional footer]
+```
+
+### Types
+- `feat`: New feature
+- `fix`: Bug fix
+- `docs`: Documentation
+- `style`: Formatting
+- `refactor`: Code restructuring
+- `test`: Adding tests
+- `chore`: Maintenance
+- `perf`: Performance improvement
+- `security`: Security fix
+
+### Examples
+```
+feat(auth): add JWT token validation
+fix(circuit_breaker): handle timeout correctly
+docs(readme): update installation guide
+test(llm): add cost tracking test
+```
+
+---
+
+## 🎯 Task Priorities
+
+When working on this project, prioritize in this order:
+
+1. **Security Issues** - Fix immediately, no matter the size
+2. **Broken Tests** - All tests must pass before PR
+3. **Error Handling** - Every edge case handled
+4. **Performance** - No N+1, connection pooling
+5. **Documentation** - Keep docs in sync with code
+6. **Code Style** - Follow conventions
+
+---
+
+## 🔗 Useful Commands
+
+```bash
+# Setup development environment
+pip install -e ".[dev]"
+
+# Run tests
+python -m pytest -q
+
+# Run with coverage
+python -m pytest --cov=src --cov-report=html
+
+# Type checking
+python -m mypy src/
+
+# Linting
+python -m pylint src/
+
+# Security scan
+bandit -r src/
+pip-audit
+
+# Format code
+black src/ tests/
+isort src/ tests/
+
+# All checks before PR
+python -m pytest -q && python -m pylint src/ && bandit -r src/
+```
+
+---
+
+## 📚 References
+
+- [FastAPI Best Practices](https://fastapi.tiangolo.com/tutorial/)
+- [Python Async Guide](https://docs.python.org/3/library/asyncio.html)
+- [Structlog Documentation](https://www.structlog.org/)
+- [Pydantic Models](https://docs.pydantic.dev/)
+- [Pytest Async](https://pytest-asyncio.readthedocs.io/)
+
+---
+
+**Last Updated:** 2024-01-15  
+**Version:** 1.0.0
