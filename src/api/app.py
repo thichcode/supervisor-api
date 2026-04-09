@@ -39,9 +39,17 @@ async def lifespan(app: FastAPI):
     logger.info("Starting up Multi-Agent Supervisor System")
     await init_db()
     await redis_cache.connect()
-    await llm_client.initialize()
-    supervisor.set_llm(llm_client)
-    logger.info("All connections initialized", model=settings.llm_model)
+    
+    # LLM is optional - app works without it
+    try:
+        await llm_client.initialize()
+        supervisor.set_llm(llm_client)
+        logger.info("LLM initialized", model=settings.llm_model)
+    except Exception as e:
+        logger.warning("LLM initialization failed - running in fallback mode", error=str(e))
+        # App continues without LLM - uses fallback responses
+        supervisor.set_llm(None)
+    
     metrics.record_memory("startup", "success")
     yield
     logger.info("Shutting down Multi-Agent Supervisor System")
