@@ -1,0 +1,6 @@
+title = "supervisor-api allowlist"
+
+[allowlist]
+  description = "Placeholder values in docs"
+  commits = ["9b9490c81bf223ee32462c2e7a21bac73a364331"]
+  paths = [".*\\.md$", ".*\\.rules$", ".*\\.clinerules$"]
