@@ -68,12 +68,19 @@ app = FastAPI(
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+# CORS configuration - never use "*" with credentials
+cors_origins = settings.cors_allowed_origins
+if settings.app_debug and "*" in cors_origins:
+    import structlog
+    logger = structlog.get_logger()
+    logger.warning("CORS: debug mode with wildcard - restrict in production")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_allowed_origins if not settings.app_debug else ["*"],
+    allow_origins=cors_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
+    allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
 )
 
 
