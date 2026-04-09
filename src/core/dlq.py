@@ -53,7 +53,7 @@ class DeadLetterQueue:
         metadata: Optional[dict] = None
     ) -> DLQEntry:
         """Add a failed request to the DLQ"""
-        now = datetime.now(timezone.utc)
+        now = datetime.now()
         entry = DLQEntry(
             id=str(uuid.uuid4()),
             original_request_id=request_id,
@@ -86,7 +86,7 @@ class DeadLetterQueue:
 
     def get_pending(self) -> list[DLQEntry]:
         """Get all pending entries ready for retry"""
-        now = datetime.now(timezone.utc)
+        now = datetime.now()
         pending = []
         
         for entry in self._queue.values():
@@ -107,7 +107,7 @@ class DeadLetterQueue:
             return False
             
         entry.status = DLQStatus.RETRYING.value
-        entry.updated_at = datetime.now(timezone.utc).isoformat()
+        entry.updated_at = datetime.now().isoformat()
         return True
 
     def mark_resolved(self, entry_id: str) -> bool:
@@ -117,7 +117,7 @@ class DeadLetterQueue:
             return False
             
         entry.status = DLQStatus.RESOLVED.value
-        entry.updated_at = datetime.now(timezone.utc).isoformat()
+        entry.updated_at = datetime.now().isoformat()
         
         logger.info(
             "dlq_entry_resolved",
@@ -134,7 +134,7 @@ class DeadLetterQueue:
             
         entry.status = DLQStatus.FAILED.value
         entry.error_message = f"{entry.error_message}; Final failure: {reason}"
-        entry.updated_at = datetime.now(timezone.utc).isoformat()
+        entry.updated_at = datetime.now().isoformat()
         
         logger.error(
             "dlq_entry_failed",
@@ -157,9 +157,9 @@ class DeadLetterQueue:
         
         # Schedule next retry
         from datetime import timedelta
-        next_retry = datetime.now(timezone.utc) + timedelta(seconds=self.retry_delay_seconds * entry.retry_count)
+        next_retry = datetime.now() + timedelta(seconds=self.retry_delay_seconds * entry.retry_count)
         entry.next_retry_at = next_retry.isoformat()
-        entry.updated_at = datetime.now(timezone.utc).isoformat()
+        entry.updated_at = datetime.now().isoformat()
         
         logger.info(
             "dlq_retry_scheduled",

@@ -1,5 +1,5 @@
 from typing import Optional
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core import InputPayload, MemoryScopeType, MemoryItem
@@ -228,7 +228,7 @@ class MemoryService:
                 scope_id="global",
                 content=reusable_insight,
                 confidence_score=0.8,
-                ttl_at=datetime.now(UTC) + timedelta(days=settings.memory_summary_ttl),
+                ttl_at=datetime.now().replace(tzinfo=None) + timedelta(days=settings.memory_summary_ttl),
             )
             provider = self._resolve_external_provider(payload)
             await provider.write_memory(

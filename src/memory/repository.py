@@ -2,11 +2,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, delete
 from sqlalchemy.orm import selectinload
 from typing import Optional
-from datetime import UTC, datetime
+from datetime import datetime
 
 
 def utc_now() -> datetime:
-    return datetime.now(UTC)
+    # Return naive datetime to match PostgreSQL TIMESTAMP WITHOUT TIME ZONE columns
+    # The previous UTC-aware datetime was causing comparison issues with PostgreSQL
+    return datetime.now().replace(tzinfo=None)
 
 from src.db.models import (
     Message,

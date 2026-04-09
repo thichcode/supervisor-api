@@ -1,11 +1,11 @@
 from pydantic import BaseModel, Field
 from typing import Optional
-from datetime import datetime, UTC
+from datetime import datetime
 from enum import Enum
 
 
 def utc_now() -> datetime:
-    return datetime.now(UTC)
+    return datetime.now().replace(tzinfo=None)
 
 
 class IntentType(str, Enum):
