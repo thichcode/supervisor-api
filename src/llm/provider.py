@@ -549,7 +549,14 @@ IMPORTANT:
             await self._circuit_breaker.record_success()
 
             content = response.choices[0].message.content or ""
-            usage = response.usage or {}
+            usage = response.usage
+            
+            # Convert usage to dict (Ollama returns CompletionUsage object, not dict)
+            if hasattr(usage, '__dict__'):
+                usage = usage.__dict__
+            elif not isinstance(usage, dict):
+                usage = {}
+                
             finish_reason = response.choices[0].finish_reason
 
             cost = self._calculate_cost(target_model, usage)
