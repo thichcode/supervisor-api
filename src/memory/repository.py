@@ -48,11 +48,10 @@ class MemoryRepository:
         result = await self.session.execute(
             select(Message)
             .where(Message.thread_id == thread_id)
-            .order_by(Message.created_at.desc())
+            .order_by(Message.created_at.asc())
             .limit(limit)
         )
-        messages = result.scalars().all()
-        return list(reversed(messages))
+        return result.scalars().all()
 
     async def get_conversation_summary(self, conversation_id: str) -> Optional[ConversationSummary]:
         result = await self.session.execute(
