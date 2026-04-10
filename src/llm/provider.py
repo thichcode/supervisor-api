@@ -170,8 +170,16 @@ class MultiProviderLLMClient:
 
     def __init__(self):
         self._clients: dict[LLMProvider, AsyncOpenAI] = {}
-        self._active_provider: Optional[LLMProvider] = None
         self._active_model: str = "llama3"
+        
+        # Set explicit provider override from config
+        explicit_provider = getattr(settings, 'llm_provider', '').lower().strip()
+        if explicit_provider:
+            self._explicit_provider = LLMProvider(explicit_provider)
+            self._active_provider = self._explicit_provider
+        else:
+            self._explicit_provider = None
+            self._active_provider = None
         self._temperature: float = settings.llm_temperature or 0.7
         self._max_tokens: int = settings.llm_max_tokens or 2000
         self._timeout: int = settings.agent_timeout or 60
@@ -200,13 +208,6 @@ class MultiProviderLLMClient:
 
         # Ollama base URL
         self._ollama_base_url = getattr(settings, 'ollama_base_url', 'http://localhost:11434')
-
-        # Explicit provider override
-        explicit_provider = getattr(settings, 'llm_provider', '').lower().strip()
-        if explicit_provider:
-            self._explicit_provider = LLMProvider(explicit_provider)
-        else:
-            self._explicit_provider = None
 
     def get_provider(self, model: str = None) -> LLMProvider:
         """Get provider - explicit override or auto-detect"""
@@ -363,10 +364,26 @@ class MultiProviderLLMClient:
         if self.get_provider(model) == LLMProvider.OLLAMA:
             return 0.0
 
+        # Safely extract usage dict (handle CompletionUsage object)
+        if hasattr(usage, '__dict__'):
+            usage = usage.__dict__
+        elif not isinstance(usage, dict):
+            usage = {}
+
         pricing = self._pricing.get(model, {"input": 0.01, "output": 0.03})
         input_cost = (usage.get("prompt_tokens", 0) / 1000) * pricing["input"]
         output_cost = (usage.get("completion_tokens", 0) / 1000) * pricing["output"]
         return input_cost + output_cost
+
+    def _extract_usage(self, usage) -> dict:
+        """Safely convert usage object to dict"""
+        if usage is None:
+            return {}
+        if hasattr(usage, '__dict__'):
+            return usage.__dict__
+        if isinstance(usage, dict):
+            return usage
+        return {}
 
     @retry(
         stop=stop_after_attempt(3),
@@ -429,26 +446,27 @@ class MultiProviderLLMClient:
             await self._circuit_breaker.record_success()
 
             content = response.choices[0].message.content or ""
-            usage = response.usage or {}
+            usage = response.usage
+            usage_dict = self._extract_usage(usage)
             finish_reason = response.choices[0].finish_reason
 
             # Track cost
             cost = self._calculate_cost(target_model, usage)
             self._total_cost += cost
-            self._total_tokens += usage.get("total_tokens", 0)
+            self._total_tokens += usage_dict.get("total_tokens", 0)
 
             logger.debug(
                 "LLM completion",
                 provider=target_provider.value,
                 model=target_model,
-                tokens=usage.get("total_tokens", 0),
+                tokens=usage_dict.get("total_tokens", 0),
                 cost_usd=round(cost, 6)
             )
 
             return LLMResponse(
                 content=content,
                 confidence=self._calculate_confidence(finish_reason),
-                usage=usage,
+                usage=usage_dict,
                 model=target_model,
                 provider=target_provider.value,
                 finish_reason=finish_reason
@@ -561,12 +579,13 @@ IMPORTANT:
 
             cost = self._calculate_cost(target_model, usage)
             self._total_cost += cost
-            self._total_tokens += usage.get("total_tokens", 0)
+            usage_dict = self._extract_usage(usage)
+            self._total_tokens += usage_dict.get("total_tokens", 0)
 
             return LLMResponse(
                 content=content,
                 confidence=self._calculate_confidence(finish_reason),
-                usage=usage,
+                usage=usage_dict,
                 model=target_model,
                 provider=target_provider.value,
                 finish_reason=finish_reason
