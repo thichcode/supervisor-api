@@ -1,5 +1,5 @@
 from src.core import InputPayload
-from src.llm import LLMClient
+from src.llm import MultiProviderLLMClient, LLMResponse
 from typing import Optional
 
 
@@ -10,22 +10,29 @@ class DraftAgent:
         context: dict,
         policy: dict,
         knowledge: dict,
-        llm: Optional[LLMClient] = None,
+        llm: Optional[MultiProviderLLMClient] = None,
     ) -> str:
         user_name = payload.user.display_name
 
         if llm:
-            answer, _ = await llm.generate_response(
-                message=payload.message.text,
-                context={
-                    "summary": context.get("conversation_summary", ""),
-                    "recent_messages": context.get("conversation_history", []),
-                    "user_role": context.get("user_info", {}).get("role", "employee"),
-                },
-                policy=policy,
-                knowledge=knowledge,
+            system_prompt = """Bạn là trợ lý AI cho hệ thống IT Support.
+Dựa trên ngữ cảnh, chính sách và kiến thức được cung cấp, tạo câu trả lời phù hợp.
+Trả lời bằng tiếng Việt, ngắn gọn và chính xác."""
+
+            user_prompt = f"""Câu hỏi của người dùng: {payload.message.text}
+
+Ngữ cảnh hội thoại: {context.get('conversation_summary', 'Không có')}
+Tin nhắn gần đây: {context.get('conversation_history', [])}
+Vai trò người dùng: {context.get('user_info', {}).get('role', 'employee')}
+
+Chính sách liên quan: {policy}
+Kiến thức: {knowledge}"""
+
+            response: LLMResponse = await llm.complete(
+                system_prompt=system_prompt,
+                user_message=user_prompt,
             )
-            return answer
+            return response.content
 
         parts = []
 
@@ -74,17 +81,17 @@ class QAAgent:
         draft: str,
         payload: InputPayload,
         context: dict,
-        llm: Optional[LLMClient] = None,
+        llm: Optional[MultiProviderLLMClient] = None,
     ) -> dict:
         issues = []
         confidence = 0.85
 
         if len(draft) < 20:
-            issues.append("Response too short")
+            issues.append("Câu trả lời quá ngắn")
             confidence -= 0.2
 
         if not draft.strip():
-            issues.append("Empty response")
+            issues.append("Câu trả lời trống")
             confidence -= 0.5
 
         text_lower = payload.message.text.lower()
@@ -92,36 +99,39 @@ class QAAgent:
         support_keywords = ["giúp", "help", "hỗ trợ", "support", "case", "vấn đề"]
         if any(kw in text_lower for kw in support_keywords):
             if "case" not in draft.lower() and "support" not in draft.lower() and "help" not in draft.lower():
-                issues.append("Support request not explicitly addressed")
+                issues.append("Yêu cầu hỗ trợ chưa được xử lý rõ ràng")
                 confidence -= 0.1
 
         if context.get("case_info") and context["case_info"].get("status") == "urgent":
             if "urgent" not in draft.lower() and "asap" not in draft.lower():
-                issues.append("Urgent case not flagged appropriately")
+                issues.append("Case khẩn cấp chưa được đánh dấu phù hợp")
                 confidence -= 0.1
 
         if "?" in payload.message.text and "?" not in draft:
-            issues.append("Question asked but not answered directly")
+            issues.append("Câu hỏi chưa được trả lời trực tiếp")
             confidence -= 0.15
 
         if llm and issues:
-            validation_prompt = f"""Review this draft response for the user's question:
-User Question: {payload.message.text}
-Draft: {draft}
+            validation_prompt = f"""Kiểm tra câu trả lời nháp cho câu hỏi của người dùng:
+Câu hỏi: {payload.message.text}
+Nháp: {draft}
 
-Check for:
-1. Does it answer the question?
-2. Is it appropriately detailed?
-3. Are there any hallucinations or incorrect info?
+Kiểm tra:
+1. Có trả lời được câu hỏi không?
+2. Có chi tiết phù hợp không?
+3. Có thông tin sai không?
 
-Return JSON:
+Trả về JSON:
 {{"additional_issues": [], "confidence_adjustment": 0.0}}"""
 
-            result, _ = await llm.complete("You are a quality assurance agent.", validation_prompt)
+            response: LLMResponse = await llm.complete(
+                "Bạn là agent kiểm tra chất lượng QA. Trả lời bằng tiếng Việt.",
+                validation_prompt
+            )
 
             import json
             import re
-            match = re.search(r'\{[^{}]*\}', result, re.DOTALL)
+            match = re.search(r'\{[^{}]*\}', response.content, re.DOTALL)
             if match:
                 try:
                     parsed = json.loads(match.group())
@@ -131,7 +141,7 @@ Return JSON:
                     pass
 
         if confidence < self.confidence_threshold:
-            issues.append("Confidence below threshold")
+            issues.append("Độ tin cậy dưới ngưỡng")
 
         needs_review = len(issues) > 1 or confidence < self.confidence_threshold
 

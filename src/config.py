@@ -51,11 +51,23 @@ class Settings(BaseSettings):
     file_memory_enabled: bool = False
     file_memory_path: str = ""
 
+    # LLM Provider Configuration
     openai_api_key: str = ""
-    llm_model: str = "gpt-4"
+    llm_model: str = "llama3"  # Default to Ollama for Vietnamese
     llm_temperature: float = 0.7
     llm_max_tokens: int = 2000
     llm_healthcheck_enabled: bool = False
+
+    # Ollama Configuration (for self-hosted Vietnamese models)
+    ollama_base_url: str = "http://localhost:11434"
+    ollama_default_model: str = "llama3"
+    ollama_timeout: int = 120
+
+    # Azure OpenAI Configuration (optional)
+    azure_openai_endpoint: str = ""
+    azure_openai_key: str = ""
+    azure_openai_api_version: str = "2024-02-01"
+    azure_deployment_name: str = ""
 
     rate_limit_requests: int = 100
     rate_limit_window: int = 60

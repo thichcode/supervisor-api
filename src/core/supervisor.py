@@ -9,7 +9,7 @@ from src.core import (
 from src.memory import MemoryContext as MemoryContextModel
 from src.agents import ContextAgent, PolicyAgent, KnowledgeAgent, DraftAgent, QAAgent
 from src.db import AuditLog, async_session
-from src.llm import LLMClient
+from src.llm import MultiProviderLLMClient, LLMResponse
 from typing import Optional
 import time
 
@@ -68,9 +68,9 @@ class Supervisor:
         self.knowledge_agent = KnowledgeAgent()
         self.draft_agent = DraftAgent()
         self.qa_agent = QAAgent()
-        self._llm: Optional[LLMClient] = None
+        self._llm: Optional[MultiProviderLLMClient] = None
 
-    def set_llm(self, llm: LLMClient):
+    def set_llm(self, llm: MultiProviderLLMClient):
         self._llm = llm
 
     async def process(self, payload: InputPayload, memory: MemoryContextModel) -> OutputPayload:
@@ -151,15 +151,15 @@ class Supervisor:
         message = payload.message.text
 
         if self._llm:
-            answer, confidence = await self._llm.complete(
-                system_prompt="You are a helpful AI assistant. Provide a direct, concise answer.",
-                user_message=f"User {user_name} asks: {message}",
+            response: LLMResponse = await self._llm.complete(
+                system_prompt="Bạn là một trợ lý AI hữu ích. Trả lời ngắn gọn, chính xác bằng tiếng Việt.",
+                user_message=f"Người dùng {user_name} hỏi: {message}",
                 context=memory.to_dict(),
             )
-            return answer, confidence
+            return response.content, response.confidence
 
         return (
-            f"Hi {user_name}, regarding your question about \"{message[:100]}...\", I can help you with that. Please let me know if you need more details.",
+            f"Xin chào {user_name}, về câu hỏi của bạn \"{message[:100]}...\", tôi có thể giúp bạn. Bạn cần thêm thông tin gì không?",
             0.6,
         )
 

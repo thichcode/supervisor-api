@@ -1,6 +1,6 @@
 from src.core import InputPayload
 from src.memory import MemoryContext
-from src.llm import LLMClient
+from src.llm import MultiProviderLLMClient, LLMResponse
 from typing import Optional
 
 
@@ -42,7 +42,7 @@ class PolicyAgent:
         self,
         payload: InputPayload,
         memory: MemoryContext,
-        llm: Optional[LLMClient] = None,
+        llm: Optional[MultiProviderLLMClient] = None,
     ) -> dict:
         text_lower = payload.message.text.lower()
         policy_info = {
@@ -56,14 +56,19 @@ class PolicyAgent:
             policy_info["guidelines_found"] = True
 
             if llm:
-                system_prompt = """You are a policy expert. Extract relevant company policies and SOPs from the user's question.
-Return JSON format:
+                system_prompt = """Bạn là chuyên gia về chính sách công ty. 
+Trích xuất các chính sách và SOP liên quan từ câu hỏi của người dùng.
+Trả về JSON format:
 {"policies": ["policy1", "policy2"], "sop_steps": ["step1", "step2"]}"""
 
-                result, _ = await llm.complete(system_prompt, payload.message.text)
+                response: LLMResponse = await llm.complete(
+                    system_prompt, 
+                    payload.message.text
+                )
+                
                 import json
                 import re
-                match = re.search(r'\{[^{}]*\}', result, re.DOTALL)
+                match = re.search(r'\{[^{}]*\}', response.content, re.DOTALL)
                 if match:
                     try:
                         parsed = json.loads(match.group())
@@ -73,22 +78,22 @@ Return JSON format:
                         pass
 
             if not policy_info["relevant_policies"]:
-                policy_info["relevant_policies"].append("General company policies apply")
+                policy_info["relevant_policies"].append("Áp dụng các chính sách chung của công ty")
 
         support_keywords = ["support", "case", "hỗ trợ", "vấn đề", "ticket", "issue"]
         if any(kw in text_lower for kw in support_keywords):
             if memory.case_memory:
-                policy_info["relevant_policies"].append("Case handling procedures apply")
+                policy_info["relevant_policies"].append("Áp dụng quy trình xử lý case")
             if not policy_info["sop_steps"]:
                 policy_info["sop_steps"] = [
-                    "Acknowledge the case",
-                    "Review case history",
-                    "Provide resolution or escalate",
+                    "Xác nhận case",
+                    "Xem lịch sử case",
+                    "Cung cấp giải pháp hoặc chuyển escalated",
                 ]
 
         if any(kw in text_lower for kw in ["escalate", "chuyển", "forward"]):
-            policy_info["relevant_policies"].append("Escalation policy applies")
-            policy_info["sop_steps"].append("Escalate to appropriate team")
+            policy_info["relevant_policies"].append("Áp dụng chính sách escalation")
+            policy_info["sop_steps"].append("Chuyển đến team phù hợp")
 
         return policy_info
 
@@ -98,7 +103,7 @@ class KnowledgeAgent:
         self,
         payload: InputPayload,
         memory: MemoryContext,
-        llm: Optional[LLMClient] = None,
+        llm: Optional[MultiProviderLLMClient] = None,
     ) -> dict:
         knowledge = {
             "facts": [],
@@ -124,25 +129,28 @@ class KnowledgeAgent:
 
         for qtype, keywords in question_types.items():
             if any(kw in text_lower for kw in keywords):
-                knowledge["facts"].append(f"{qtype.capitalize()} question detected")
+                knowledge["facts"].append(f"Phát hiện câu hỏi {qtype}")
 
         if llm and (knowledge["patterns"] or memory.conversation_summary):
-            system_prompt = """You are a knowledge retrieval assistant. Based on the context provided, 
-extract relevant facts and patterns that would help answer the user's question.
-Return JSON format:
+            system_prompt = """Bạn là trợ lý tìm kiếm kiến thức. 
+Dựa trên ngữ cảnh được cung cấp, trích xuất các thông tin và patterns phù hợp để trả lời câu hỏi.
+Trả về JSON format:
 {"relevant_facts": ["fact1", "fact2"], "confidence": 0.0-1.0}"""
 
             context_str = f"Patterns: {knowledge['patterns']}\nSummary: {memory.conversation_summary}"
-            result, conf = await llm.complete(system_prompt, f"Question: {payload.message.text}\nContext: {context_str}")
+            response: LLMResponse = await llm.complete(
+                system_prompt, 
+                f"Câu hỏi: {payload.message.text}\nNgữ cảnh: {context_str}"
+            )
 
             import json
             import re
-            match = re.search(r'\{[^{}]*\}', result, re.DOTALL)
+            match = re.search(r'\{[^{}]*\}', response.content, re.DOTALL)
             if match:
                 try:
                     parsed = json.loads(match.group())
                     knowledge["facts"] = parsed.get("relevant_facts", knowledge["facts"])
-                    knowledge["confidence"] = parsed.get("confidence", conf)
+                    knowledge["confidence"] = parsed.get("confidence", response.confidence)
                 except json.JSONDecodeError:
                     pass
 
