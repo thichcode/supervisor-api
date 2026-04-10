@@ -12,6 +12,14 @@ from .schemas import (
     ConversationInfo,
     CaseInfo,
     MessageInfo,
+    MessageType,
+    ChatRequest,
+    ChatResponse,
+    SystemQueryRequest,
+    SystemQueryResponse,
+    GuideDeliveryRequest,
+    GuideDeliveryResponse,
+    CallbackRequest,
 )
 
 __all__ = [
@@ -28,4 +36,12 @@ __all__ = [
     "ConversationInfo",
     "CaseInfo",
     "MessageInfo",
+    "MessageType",
+    "ChatRequest",
+    "ChatResponse",
+    "SystemQueryRequest",
+    "SystemQueryResponse",
+    "GuideDeliveryRequest",
+    "GuideDeliveryResponse",
+    "CallbackRequest",
 ]

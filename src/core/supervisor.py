@@ -90,25 +90,34 @@ class Supervisor:
             policy = await self.policy_agent.extract(payload, memory, self._llm)
             knowledge = await self.knowledge_agent.retrieve(payload, memory, self._llm)
 
-            draft = await self.draft_agent.generate(payload, context, policy, knowledge, self._llm)
+            if policy.get("guide_requested") and policy.get("guide_id"):
+                answer = await self._handle_guide_request(payload, policy)
+                final_confidence = 0.95
+                agents_used.append("guide_delivery")
+            elif knowledge.get("system_query_requested"):
+                query_result = await self._handle_system_query(payload, memory, knowledge.get("query_type"))
+                answer = self._format_system_query_response(query_result)
+                final_confidence = query_result.get("confidence", 0.9)
+                agents_used.append("system_query")
+            else:
+                draft = await self.draft_agent.generate(payload, context, policy, knowledge, self._llm)
+                validation = await self.qa_agent.validate(draft, payload, context, self._llm)
 
-            validation = await self.qa_agent.validate(draft, payload, context, self._llm)
+                if validation["needs_review"]:
+                    if self.decision_engine.needs_human_review(intent, risk, payload, validation["confidence"]):
+                        return self._create_output(
+                            payload=payload,
+                            answer=validation["draft"],
+                            confidence=validation["confidence"],
+                            risk=risk,
+                            intent=intent,
+                            agents_used=agents_used,
+                            status="needs_review",
+                            processing_time=start_time,
+                        )
 
-            if validation["needs_review"]:
-                if self.decision_engine.needs_human_review(intent, risk, payload, validation["confidence"]):
-                    return self._create_output(
-                        payload=payload,
-                        answer=validation["draft"],
-                        confidence=validation["confidence"],
-                        risk=risk,
-                        intent=intent,
-                        agents_used=agents_used,
-                        status="needs_review",
-                        processing_time=start_time,
-                    )
-
-            answer = self.qa_agent.refine(validation, payload)
-            final_confidence = validation["confidence"]
+                answer = self.qa_agent.refine(validation, payload)
+                final_confidence = validation["confidence"]
         else:
             agents_used = ["draft"]
             answer, final_confidence = await self._generate_direct_answer(payload, memory)
@@ -213,3 +222,105 @@ class Supervisor:
             )
             session.add(audit)
             await session.commit()
+
+    async def _handle_guide_request(self, payload: InputPayload, policy: dict) -> str:
+        guide_title = policy.get("guide_title", "Hướng dẫn")
+        guide_id = policy.get("guide_id", "unknown")
+        
+        guide_content = f"""📖 **Hướng dẫn: {guide_title}**
+
+Dưới đây là thông tin hướng dẫn theo yêu cầu của bạn:
+
+**Chủ đề:** {guide_title}
+**ID:** {guide_id}
+
+{policy.get('sop_steps', ['Không có chi tiết cụ thể'])}
+
+---
+*Bạn có câu hỏi nào về hướng dẫn này không?*"""
+
+        return guide_content
+
+    async def _handle_system_query(self, payload: InputPayload, memory: MemoryContextModel, query_type: str) -> dict:
+        from src.memory.repository import MemoryRepository
+        
+        results = {}
+        
+        async with async_session() as session:
+            repo = MemoryRepository(session)
+            
+            if query_type in ["user_info", None]:
+                user_profile = await repo.get_user_profile(payload.user.id)
+                if user_profile:
+                    results["user"] = {
+                        "user_id": user_profile.user_id,
+                        "display_name": user_profile.display_name,
+                        "role": user_profile.role,
+                        "team": user_profile.team,
+                        "vip_flag": user_profile.vip_flag,
+                    }
+                    
+                    messages = await repo.get_recent_messages(payload.user.id, limit=20)
+                    results["recent_threads"] = list(set([m.thread_id for m in messages]))
+                    
+                    if memory.case_memory:
+                        results["active_case"] = {
+                            "case_id": memory.case_memory.get("case_id"),
+                            "status": memory.case_memory.get("status"),
+                            "owner": memory.case_memory.get("owner"),
+                        }
+            
+            if query_type in ["case_info", None] and payload.case and payload.case.case_id:
+                case = await repo.get_case_memory(payload.case.case_id)
+                if case:
+                    results["case"] = {
+                        "case_id": case.case_id,
+                        "status": case.status,
+                        "owner": case.owner,
+                        "summary": case.summary,
+                        "priority": case.priority,
+                        "open_items": case.open_items,
+                    }
+                    
+        return {
+            "results": results,
+            "query_type": query_type or "general",
+            "confidence": 0.9 if results else 0.3,
+        }
+
+    def _format_system_query_response(self, query_result: dict) -> str:
+        results = query_result.get("results", {})
+        query_type = query_result.get("query_type", "general")
+        
+        if not results:
+            return "Không tìm thấy thông tin theo yêu cầu."
+        
+        response_parts = ["📊 **Thông tin hệ thống:**\n"]
+        
+        if "user" in results:
+            user = results["user"]
+            response_parts.append(f"**Người dùng:** {user.get('display_name', 'N/A')}")
+            response_parts.append(f"  - Role: {user.get('role', 'N/A')}")
+            response_parts.append(f"  - Team: {user.get('team', 'N/A')}")
+            response_parts.append(f"  - VIP: {'Có' if user.get('vip_flag') else 'Không'}")
+            
+        if "active_case" in results:
+            case = results["active_case"]
+            response_parts.append(f"\n**Case đang xử lý:**")
+            response_parts.append(f"  - ID: {case.get('case_id', 'N/A')}")
+            response_parts.append(f"  - Trạng thái: {case.get('status', 'N/A')}")
+            response_parts.append(f"  - Người xử lý: {case.get('owner', 'N/A')}")
+            
+        if "case" in results:
+            case = results["case"]
+            response_parts.append(f"\n**Case #{case.get('case_id', 'N/A')}:**")
+            response_parts.append(f"  - Trạng thái: {case.get('status', 'N/A')}")
+            response_parts.append(f"  - Priority: {case.get('priority', 'N/A')}")
+            response_parts.append(f"  - Người xử lý: {case.get('owner', 'N/A')}")
+            if case.get("open_items"):
+                response_parts.append(f"  - Công việc còn lại: {len(case['open_items'])} items")
+                
+        response_parts.append("\n---")
+        response_parts.append("*Bạn cần thêm thông tin gì không?*")
+        
+        return "\n".join(response_parts)

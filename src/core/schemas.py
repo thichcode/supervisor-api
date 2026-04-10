@@ -112,3 +112,68 @@ class AuditLog(BaseModel):
     output_summary: str
     processing_time_ms: int
     created_at: datetime = Field(default_factory=utc_now)
+
+
+class MessageType(str, Enum):
+    TEXT = "text"
+    GUIDELINE = "guideline"
+    SYSTEM_QUERY = "system_query"
+    NOTIFICATION = "notification"
+
+
+class ChatRequest(BaseModel):
+    user_id: str
+    display_name: str
+    message: str
+    thread_id: Optional[str] = None
+    case_id: Optional[str] = None
+    message_type: MessageType = MessageType.TEXT
+    metadata: dict = Field(default_factory=dict)
+
+
+class ChatResponse(BaseModel):
+    request_id: str
+    status: str
+    message: str
+    message_type: MessageType
+    confidence: float
+    attachments: list[dict] = Field(default_factory=list)
+    metadata: dict = Field(default_factory=dict)
+
+
+class SystemQueryRequest(BaseModel):
+    query: str
+    query_type: str = Field(default="user_info", description="user_info, case_info, general")
+    user_id: Optional[str] = None
+    case_id: Optional[str] = None
+
+
+class SystemQueryResponse(BaseModel):
+    results: dict
+    confidence: float
+    metadata: dict = Field(default_factory=dict)
+
+
+class GuideDeliveryRequest(BaseModel):
+    user_id: str
+    display_name: str
+    guide_id: str
+    guide_title: str
+    guide_content: str
+    thread_id: Optional[str] = None
+
+
+class GuideDeliveryResponse(BaseModel):
+    status: str
+    guide_id: str
+    delivered: bool
+    message: str
+    metadata: dict = Field(default_factory=dict)
+
+
+class CallbackRequest(BaseModel):
+    original_request_id: str
+    user_id: str
+    message: str
+    callback_url: str
+    method: str = "POST"

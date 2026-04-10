@@ -49,22 +49,22 @@ class PolicyAgent:
             "relevant_policies": [],
             "guidelines_found": False,
             "sop_steps": [],
+            "guide_requested": False,
+            "guide_id": None,
+            "guide_title": None,
         }
 
-        policy_keywords = ["policy", "quy định", "chính sách", "guideline", "rule", "sop"]
-        if any(kw in text_lower for kw in policy_keywords):
+        guide_keywords = ["hướng dẫn", "guideline", "hướng dẫn", "manual", "tài liệu", "doc", "cách làm", "quy trình", "hướng dẫn"]
+        
+        if any(kw in text_lower for kw in guide_keywords):
             policy_info["guidelines_found"] = True
-
+            policy_info["guide_requested"] = True
+            
             if llm:
-                system_prompt = """Bạn là chuyên gia về chính sách công ty. 
-Trích xuất các chính sách và SOP liên quan từ câu hỏi của người dùng.
-Trả về JSON format:
-{"policies": ["policy1", "policy2"], "sop_steps": ["step1", "step2"]}"""
+                system_prompt = """Bạn là chuyên gia về policy. Trích xuất ID và tiêu đề hướng dẫn phù hợp với câu hỏi người dùng.
+Trả về JSON: {"guide_id": "...", "guide_title": "..."}"""
 
-                response: LLMResponse = await llm.complete(
-                    system_prompt, 
-                    payload.message.text
-                )
+                response: LLMResponse = await llm.complete(system_prompt, payload.message.text)
                 
                 import json
                 import re
@@ -72,10 +72,16 @@ Trả về JSON format:
                 if match:
                     try:
                         parsed = json.loads(match.group())
-                        policy_info["relevant_policies"] = parsed.get("policies", [])
-                        policy_info["sop_steps"] = parsed.get("sop_steps", [])
+                        policy_info["guide_id"] = parsed.get("guide_id")
+                        policy_info["guide_title"] = parsed.get("guide_title")
+                        if parsed.get("guide_title"):
+                            policy_info["relevant_policies"].append(parsed.get("guide_title"))
                     except json.JSONDecodeError:
                         pass
+
+        policy_keywords = ["policy", "quy định", "chính sách", "rule", "sop"]
+        if any(kw in text_lower for kw in policy_keywords) and not policy_info["guide_requested"]:
+            policy_info["guidelines_found"] = True
 
             if not policy_info["relevant_policies"]:
                 policy_info["relevant_policies"].append("Áp dụng các chính sách chung của công ty")
@@ -109,7 +115,35 @@ class KnowledgeAgent:
             "facts": [],
             "patterns": [],
             "confidence": 0.5,
+            "system_query_requested": False,
+            "query_type": None,
         }
+
+        text_lower = payload.message.text.lower()
+        
+        system_query_keywords = [
+            "thông tin người dùng", "user info", "tra cứu", 
+            "kiểm tra thông tin", "check info", "tìm thông tin",
+            "case của tôi", "my case", "trạng thái case", "case id",
+            "ai đang xử lý", "who is handling", "assignee",
+            "đang ở đâu", "status", "tình trạng",
+            "cho tôi biết", "cho xem", "hiển thị",
+        ]
+        
+        query_type_mapping = {
+            "case của tôi": "case_info",
+            "my case": "case_info",
+            "trạng thái case": "case_info",
+            "case id": "case_info",
+            "ai đang xử lý": "user_info",
+            "who is handling": "user_info",
+        }
+        
+        for keyword, qtype in query_type_mapping.items():
+            if keyword in text_lower:
+                knowledge["system_query_requested"] = True
+                knowledge["query_type"] = qtype
+                break
 
         if memory.episodic_memory:
             knowledge["patterns"] = [
@@ -117,7 +151,6 @@ class KnowledgeAgent:
             ]
             knowledge["confidence"] = 0.7
 
-        text_lower = payload.message.text.lower()
         question_types = {
             "who": ["who", "ai là", "người nào"],
             "when": ["when", "khi nào", "thời gian", "lúc nào"],

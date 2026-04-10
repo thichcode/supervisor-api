@@ -15,6 +15,16 @@ from slowapi.util import get_remote_address
 
 from src.config import get_settings
 from src.core import InputPayload, OutputPayload
+from src.core.schemas import (
+    ChatRequest,
+    ChatResponse,
+    SystemQueryRequest,
+    SystemQueryResponse,
+    GuideDeliveryRequest,
+    GuideDeliveryResponse,
+    CallbackRequest,
+    CaseInfo,
+)
 from src.core.logging_config import setup_logging, RequestLogger
 from src.core.metrics import get_metrics, metrics
 from src.core.sanitizer import sanitizer
@@ -23,6 +33,7 @@ from src.db import init_db, close_db, async_session
 from src.llm import llm_client
 from src.memory import redis_cache
 from src.memory.service import MemoryService
+from datetime import datetime
 
 settings = get_settings()
 setup_logging()
@@ -221,3 +232,180 @@ async def send_to_power_automate(payload: OutputPayload):
     except httpx.HTTPError:
         metrics.record_error("power_automate", "output/power-automate")
         raise HTTPException(status_code=502, detail="Failed to reach Power Automate")
+
+
+@app.post("/chat", response_model=ChatResponse)
+async def chat(request: ChatRequest):
+    """Direct user chat endpoint for real-time messaging with users."""
+    import uuid
+    from src.core.schemas import UserInfo, ConversationInfo, MessageInfo, InputPayload
+    
+    request_id = str(uuid.uuid4())
+    thread_id = request.thread_id or f"chat-{request.user_id}-{int(time.time())}"
+    
+    payload = InputPayload(
+        request_id=request_id,
+        source="direct_chat",
+        timestamp=datetime.now().isoformat(),
+        user=UserInfo(
+            id=request.user_id,
+            display_name=request.display_name,
+            role=request.metadata.get("role"),
+            team=request.metadata.get("team"),
+            vip_flag=request.metadata.get("vip_flag", False),
+        ),
+        conversation=ConversationInfo(
+            thread_id=thread_id,
+            message_id=f"msg-{request_id}",
+        ),
+        case=CaseInfo(case_id=request.case_id) if request.case_id else None,
+        message=MessageInfo(text=request.message),
+    )
+    
+    import src.api as api_module
+    
+    async with api_module.async_session() as session:
+        memory_service = MemoryService(session, api_module.redis_cache)
+        memory = await memory_service.retrieve(payload)
+        result = await api_module.supervisor.process(payload, memory)
+        await memory_service.commit(payload)
+    
+    return ChatResponse(
+        request_id=request_id,
+        status=result.status,
+        message=result.answer,
+        message_type=request.message_type,
+        confidence=result.confidence,
+        metadata=result.metadata,
+    )
+
+
+@app.post("/system/query", response_model=SystemQueryResponse)
+async def system_query(request: SystemQueryRequest):
+    """Query system information (user data, case data, etc.)."""
+    import src.api as api_module
+    from src.memory.repository import MemoryRepository
+    
+    results = {}
+    metadata = {"query_type": request.query_type}
+    
+    async with api_module.async_session() as session:
+        repo = MemoryRepository(session)
+        
+        if request.query_type == "user_info" and request.user_id:
+            user_profile = await repo.get_user_profile(request.user_id)
+            if user_profile:
+                results["user"] = {
+                    "user_id": user_profile.user_id,
+                    "display_name": user_profile.display_name,
+                    "role": user_profile.role,
+                    "team": user_profile.team,
+                    "vip_flag": user_profile.vip_flag,
+                    "preferences": user_profile.preferences,
+                }
+                
+                messages = await repo.get_recent_messages(request.user_id, limit=20)
+                results["recent_threads"] = list(set([m.thread_id for m in messages]))
+        
+        elif request.query_type == "case_info" and request.case_id:
+            case = await repo.get_case_memory(request.case_id)
+            if case:
+                results["case"] = {
+                    "case_id": case.case_id,
+                    "status": case.status,
+                    "owner": case.owner,
+                    "summary": case.summary,
+                    "priority": case.priority,
+                    "open_items": case.open_items,
+                }
+    
+    return SystemQueryResponse(
+        results=results,
+        confidence=0.9 if results else 0.3,
+        metadata=metadata,
+    )
+
+
+@app.post("/guide/deliver", response_model=GuideDeliveryResponse)
+async def deliver_guide(request: GuideDeliveryRequest):
+    """Deliver a guideline to user (async callback or webhook)."""
+    import uuid
+    
+    guide_id = request.guide_id
+    
+    guide_message = f"""📖 **Hướng dẫn: {request.guide_title}**
+
+{request.guide_content}
+
+---
+*Đây là hướng dẫn được gửi từ hệ thống. Bạn có câu hỏi nào không?*"""
+    
+    if settings.power_automate_webhook_url:
+        import httpx
+        from datetime import datetime
+        
+        payload = {
+            "request_id": str(uuid.uuid4()),
+            "user_id": request.user_id,
+            "message": guide_message,
+            "message_type": "guideline",
+            "guide_id": guide_id,
+            "timestamp": datetime.now().isoformat(),
+        }
+        
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    settings.power_automate_webhook_url,
+                    json=payload,
+                    timeout=settings.webhook_timeout,
+                )
+                response.raise_for_status()
+                return GuideDeliveryResponse(
+                    status="sent",
+                    guide_id=guide_id,
+                    delivered=True,
+                    message="Guide sent to user via webhook",
+                    metadata={"webhook_response": response.status_code},
+                )
+        except Exception as e:
+            return GuideDeliveryResponse(
+                status="failed",
+                guide_id=guide_id,
+                delivered=False,
+                message=f"Webhook failed: {str(e)}",
+            )
+    
+    return GuideDeliveryResponse(
+        status="pending",
+        guide_id=guide_id,
+        delivered=False,
+        message="No webhook configured for guide delivery",
+    )
+
+
+@app.post("/callback/send")
+async def send_callback(request: CallbackRequest):
+    """Send async response back to user via callback URL."""
+    import httpx
+    
+    if not request.callback_url:
+        raise HTTPException(status_code=400, detail="callback_url is required")
+    
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.request(
+                method=request.method,
+                url=request.callback_url,
+                json={
+                    "request_id": request.original_request_id,
+                    "user_id": request.user_id,
+                    "message": request.message,
+                    "timestamp": datetime.now().isoformat(),
+                },
+                timeout=settings.webhook_timeout,
+            )
+            response.raise_for_status()
+            return {"status": "sent", "callback_response": response.status_code}
+    except httpx.HTTPError as e:
+        raise HTTPException(status_code=502, detail=f"Callback failed: {str(e)}")
