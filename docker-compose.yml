@@ -17,7 +17,16 @@ services:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - REDIS_PASSWORD=${REDIS_PASSWORD:-}
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      # LLM Configuration
+      - LLM_PROVIDER=${LLM_PROVIDER:-ollama}
+      - LLM_MODEL=${LLM_MODEL:-llama3}
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://llama-cpp:8080}
+      - OLLAMA_TIMEOUT=${OLLAMA_TIMEOUT:-320}
+      - LLM_TEMPERATURE=${LLM_TEMPERATURE:-0.7}
+      - LLM_MAX_TOKENS=${LLM_MAX_TOKENS:-2000}
+      # Optional: OpenAI (fallback if Ollama unavailable)
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      # Webhook
       - WEBHOOK_INPUT_SECRET=${WEBHOOK_INPUT_SECRET:-}
       - POWER_AUTOMATE_WEBHOOK_URL=${POWER_AUTOMATE_WEBHOOK_URL:-}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
@@ -26,12 +35,14 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      llama-cpp:
+        condition: service_started
     healthcheck:
       test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/health').raise_for_status()"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 10s
+      start_period: 40s
     restart: unless-stopped
     deploy:
       resources:
@@ -41,6 +52,34 @@ services:
         reservations:
           cpus: '0.5'
           memory: 512M
+
+  # llama.cpp Server (OpenAI-compatible API)
+  llama-cpp:
+    image: ghcr.io/ggerganov/llama.cpp:server
+    container_name: llama-cpp
+    ports:
+      - "8080:8080"
+    volumes:
+      - llama_models:/models
+    command: >
+      sh -c '
+        if [ ! -f /models/llama-3.1-8b-instruct-q4_k_m.gguf ]; then
+          echo "Downloading model...";
+          huggingface-cli download unsloth/Llama-3.1-8B-Instruct-GGUF Llama-3.1-8B-Instruct-Q4_K_M.gguf --local-dir /models --local-dir-use-symlinks=False;
+        fi;
+        llama-server -m /models/Llama-3.1-8B-Instruct-Q4_K_M.gguf -h 0.0.0.0 -p 8080 --ctx-size 4096 --parallel 4
+      '
+    environment:
+      - HF_TOKEN=${HF_TOKEN:-}
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 8G
+        reservations:
+          cpus: '2'
+          memory: 4G
 
   postgres:
     image: postgres:16-alpine
@@ -71,7 +110,7 @@ services:
     container_name: supervisor-redis
     command: >
       sh -c 'redis-server
-      --requirepass "$${REDIS_PASSWORD:-}"
+      --requirepass "${REDIS_PASSWORD:-}"
       --maxmemory 256mb
       --maxmemory-policy allkeys-lru'
     ports:
@@ -79,7 +118,7 @@ services:
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-}", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -111,7 +150,7 @@ services:
       - "3000:3000"
     environment:
       - GF_SECURITY_ADMIN_USER=admin
-      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN:-admin}
       - GF_USERS_ALLOW_SIGN_UP=false
     volumes:
       - grafana_data:/var/lib/grafana
@@ -125,3 +164,4 @@ volumes:
   redis_data:
   prometheus_data:
   grafana_data:
+  llama_models:

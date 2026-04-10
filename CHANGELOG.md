@@ -5,6 +5,85 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+---
+
+## [v1.2.3] - 2026-04-10 - Ollama/llama.cpp Timeout Fix
+
+[Full Diff](https://github.com/thichcode/supervisor-api/compare/v1.2.2...v1.2.3)
+
+### Fixed
+
+- Use `OLLAMA_TIMEOUT` env var for httpx client timeout (was using `agent_timeout` instead)
+- Compatible with llama.cpp server
+
+---
+
+## [v1.2.2] - 2026-04-10 - CompletionUsage Object Fix
+
+[Full Diff](https://github.com/thichcode/supervisor-api/compare/v1.2.1...v1.2.2)
+
+### Fixed
+
+- Handle `CompletionUsage` object from llama.cpp (convert to dict properly)
+- Add `_extract_usage()` helper for safe dict conversion
+- Set `_active_provider` correctly in `__init__` from `_explicit_provider`
+- All `usage.get()` calls now handle CompletionUsage object
+
+### Changed
+
+- Compatible with llama.cpp OpenAI-compatible API
+
+---
+
+## [v1.2.1] - 2026-04-10 - LLM Provider Config Fix
+
+[Full Diff](https://github.com/thichcode/supervisor-api/compare/v1.2.0...v1.2.1)
+
+### Fixed
+
+- Model detection bug (gemma2 was using wrong provider)
+- Add explicit `LLM_PROVIDER` env var support
+
+---
+
+## [v1.2.0] - 2026-04-10 - Multi-Provider LLM Support
+
+[Full Diff](https://github.com/thichcode/supervisor-api/compare/v1.1.4...v1.2.0)
+
+### Added
+
+- **Multi-Provider LLM Client** (`src/llm/provider.py`)
+  - Support for Ollama, llama.cpp, OpenAI, Azure OpenAI
+  - Automatic provider detection from model name
+  - Explicit provider override via `LLM_PROVIDER` env var
+  - Circuit breaker pattern for all providers
+  - Cost tracking for cloud providers
+  - Vietnamese-optimized defaults
+
+- **GitHub Actions Auto-Tagging Workflow**
+  - Automatic version bump on main branch push
+  - Semantic versioning (major/minor/patch)
+  - Git tag creation and push
+
+### Changed
+
+- `src/llm/` module restructured
+- `MultiProviderLLMClient` is now the default client
+
+---
+
+## [v1.1.4] - 2026-04-09 - Ollama Integration
+
+[Full Diff](https://github.com/thichcode/supervisor-api/compare/v1.1.3...v1.1.4)
+
+### Added
+
+- Ollama server support for Vietnamese models
+- Configurable Ollama base URL
+- Ollama timeout configuration
+
+---
+
 ## [v1.0.0] - 2024-01-15 - Production Ready Release
 
 [Full Diff](https://github.com/thichcode/supervisor-api/compare/v0.9.0...v1.0.0)
