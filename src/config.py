@@ -62,7 +62,7 @@ class Settings(BaseSettings):
     # Ollama Configuration (for self-hosted Vietnamese models)
     ollama_base_url: str = "http://localhost:11434"
     ollama_default_model: str = "llama3"
-    ollama_timeout: int = 120
+    ollama_timeout: int = 320
 
     # Azure OpenAI Configuration (optional)
     azure_openai_endpoint: str = ""
