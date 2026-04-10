@@ -201,6 +201,19 @@ class MultiProviderLLMClient:
         # Ollama base URL
         self._ollama_base_url = getattr(settings, 'ollama_base_url', 'http://localhost:11434')
 
+        # Explicit provider override
+        explicit_provider = getattr(settings, 'llm_provider', '').lower().strip()
+        if explicit_provider:
+            self._explicit_provider = LLMProvider(explicit_provider)
+        else:
+            self._explicit_provider = None
+
+    def get_provider(self, model: str = None) -> LLMProvider:
+        """Get provider - explicit override or auto-detect"""
+        if self._explicit_provider:
+            return self._explicit_provider
+        return self._detect_provider(model or self._active_model)
+
     def _detect_provider(self, model: str) -> LLMProvider:
         """Auto-detect provider from model name"""
         model_lower = model.lower()
@@ -254,7 +267,7 @@ class MultiProviderLLMClient:
         # Determine active model
         configured_model = settings.llm_model or "llama3"
         self._active_model = configured_model
-        self._active_provider = self._detect_provider(configured_model)
+        self._active_provider = self.get_provider(configured_model)
 
         # Initialize client
         self._get_client(self._active_provider)
@@ -285,7 +298,7 @@ class MultiProviderLLMClient:
 
     def set_model(self, model: str):
         """Switch to a different model"""
-        new_provider = self._detect_provider(model)
+        new_provider = self.get_provider(model)
 
         # Get new client if needed
         if new_provider not in self._clients:
@@ -347,7 +360,7 @@ class MultiProviderLLMClient:
     def _calculate_cost(self, model: str, usage: dict) -> float:
         """Calculate cost based on token usage"""
         # Only cloud models have cost
-        if self._detect_provider(model) == LLMProvider.OLLAMA:
+        if self.get_provider(model) == LLMProvider.OLLAMA:
             return 0.0
 
         pricing = self._pricing.get(model, {"input": 0.01, "output": 0.03})
@@ -375,7 +388,7 @@ class MultiProviderLLMClient:
         """
         # Use specified model or active model
         target_model = model or self._active_model
-        target_provider = self._detect_provider(target_model)
+        target_provider = self.get_provider(target_model)
 
         # Get client
         client = self._get_client(target_provider)
@@ -464,7 +477,7 @@ class MultiProviderLLMClient:
         Generate structured JSON output matching a schema
         """
         target_model = model or self._active_model
-        target_provider = self._detect_provider(target_model)
+        target_provider = self.get_provider(target_model)
 
         # Build schema description
         schema_fields = []
@@ -509,7 +522,7 @@ IMPORTANT:
         Direct chat completion
         """
         target_model = model or self._active_model
-        target_provider = self._detect_provider(target_model)
+        target_provider = self.get_provider(target_model)
         client = self._get_client(target_provider)
 
         if not await self._circuit_breaker.can_execute():

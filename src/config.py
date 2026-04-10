@@ -52,6 +52,7 @@ class Settings(BaseSettings):
     file_memory_path: str = ""
 
     # LLM Provider Configuration
+    llm_provider: str = ""  # "ollama", "openai", or "azure" (auto-detect if empty)
     openai_api_key: str = ""
     llm_model: str = "llama3"  # Default to Ollama for Vietnamese
     llm_temperature: float = 0.7
