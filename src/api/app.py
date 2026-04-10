@@ -30,6 +30,12 @@ from src.core.schemas import (
     ApprovalRequestResponse,
     ApprovalListResponse,
 )
+from src.knowledge.schemas import (
+    PolicyCreate,
+    FAQCreate,
+    GuideCreate,
+    KnowledgeSearchRequest,
+)
 from src.core.logging_config import setup_logging, RequestLogger
 from src.core.metrics import get_metrics, metrics
 from src.core.sanitizer import sanitizer
@@ -590,3 +596,165 @@ async def approve_or_reject(approval_id: str, action: ApprovalActionRequest):
         }
     
     raise HTTPException(status_code=400, detail="Invalid action. Use 'approve' or 'reject'")
+
+
+@app.get("/knowledge/stats")
+async def get_knowledge_stats():
+    """Get knowledge base statistics."""
+    from src.knowledge import KnowledgeRetrievalService
+    
+    async with async_session() as session:
+        kb_service = KnowledgeRetrievalService(session)
+        stats = await kb_service.get_knowledge_stats()
+        return stats
+
+
+@app.post("/knowledge/search")
+async def search_knowledge(request: KnowledgeSearchRequest):
+    """Search knowledge base (policies, FAQs, guides, documents)."""
+    from src.knowledge import KnowledgeRetrievalService
+    
+    async with async_session() as session:
+        kb_service = KnowledgeRetrievalService(session, None)
+        results = await kb_service.search(
+            query=request.query,
+            search_type=request.search_type,
+            category=request.category,
+            tags=request.tags,
+            limit=request.limit,
+        )
+        return results
+
+
+@app.post("/knowledge/policies")
+async def create_policy(policy: PolicyCreate):
+    """Create a new policy."""
+    from src.db.models import KnowledgePolicy
+    
+    async with async_session() as session:
+        kb_policy = KnowledgePolicy(
+            policy_id=policy.policy_id,
+            title=policy.title,
+            content=policy.content,
+            category=policy.category,
+            tags=policy.tags,
+            version=policy.version,
+        )
+        session.add(kb_policy)
+        await session.commit()
+        await session.refresh(kb_policy)
+        return {"status": "created", "policy_id": kb_policy.policy_id}
+
+
+@app.get("/knowledge/policies")
+async def list_policies(category: str = None, limit: int = 20):
+    """List all policies, optionally filtered by category."""
+    from src.knowledge import KnowledgeBaseRepository
+    
+    async with async_session() as session:
+        repo = KnowledgeBaseRepository(session)
+        policies = await repo.search_policies(category=category, limit=limit)
+        return {
+            "policies": [
+                {
+                    "policy_id": p.policy_id,
+                    "title": p.title,
+                    "content": p.content,
+                    "category": p.category,
+                    "tags": p.tags,
+                    "version": p.version,
+                }
+                for p in policies
+            ],
+            "total": len(policies),
+        }
+
+
+@app.post("/knowledge/faqs")
+async def create_faq(faq: FAQCreate):
+    """Create a new FAQ."""
+    from src.db.models import KnowledgeFAQ
+    
+    async with async_session() as session:
+        kb_faq = KnowledgeFAQ(
+            question_id=faq.question_id,
+            question=faq.question,
+            answer=faq.answer,
+            category=faq.category,
+            tags=faq.tags,
+            keywords=faq.keywords,
+        )
+        session.add(kb_faq)
+        await session.commit()
+        await session.refresh(kb_faq)
+        return {"status": "created", "question_id": kb_faq.question_id}
+
+
+@app.get("/knowledge/faqs")
+async def list_faqs(category: str = None, limit: int = 20):
+    """List all FAQs, optionally filtered by category."""
+    from src.knowledge import KnowledgeBaseRepository
+    
+    async with async_session() as session:
+        repo = KnowledgeBaseRepository(session)
+        faqs = await repo.search_faqs(category=category, limit=limit)
+        return {
+            "faqs": [
+                {
+                    "question_id": f.question_id,
+                    "question": f.question,
+                    "answer": f.answer,
+                    "category": f.category,
+                    "tags": f.tags,
+                    "usage_count": f.usage_count,
+                }
+                for f in faqs
+            ],
+            "total": len(faqs),
+        }
+
+
+@app.post("/knowledge/guides")
+async def create_guide(guide: GuideCreate):
+    """Create a new guide."""
+    from src.db.models import KnowledgeGuide
+    
+    async with async_session() as session:
+        kb_guide = KnowledgeGuide(
+            guide_id=guide.guide_id,
+            title=guide.title,
+            content=guide.content,
+            guide_type=guide.guide_type,
+            category=guide.category,
+            tags=guide.tags,
+            steps=guide.steps,
+        )
+        session.add(kb_guide)
+        await session.commit()
+        await session.refresh(kb_guide)
+        return {"status": "created", "guide_id": kb_guide.guide_id}
+
+
+@app.get("/knowledge/guides")
+async def list_guides(guide_type: str = None, category: str = None, limit: int = 20):
+    """List all guides, optionally filtered by type or category."""
+    from src.knowledge import KnowledgeBaseRepository
+    
+    async with async_session() as session:
+        repo = KnowledgeBaseRepository(session)
+        guides = await repo.search_guides(guide_type=guide_type, category=category, limit=limit)
+        return {
+            "guides": [
+                {
+                    "guide_id": g.guide_id,
+                    "title": g.title,
+                    "content": g.content,
+                    "guide_type": g.guide_type,
+                    "category": g.category,
+                    "tags": g.tags,
+                    "steps_count": len(g.steps or []),
+                }
+                for g in guides
+            ],
+            "total": len(guides),
+        }

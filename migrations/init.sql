@@ -117,3 +117,103 @@ CREATE TRIGGER update_case_memory_updated_at
 CREATE TRIGGER update_memory_items_updated_at
     BEFORE UPDATE ON memory_items
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- ============================================
+-- Knowledge Base Tables
+-- ============================================
+
+-- Knowledge Policies (SOPs, guidelines)
+CREATE TABLE IF NOT EXISTS knowledge_policies (
+    id SERIAL PRIMARY KEY,
+    policy_id VARCHAR(100) UNIQUE NOT NULL,
+    title VARCHAR(255) NOT NULL,
+    content TEXT NOT NULL,
+    category VARCHAR(100) NOT NULL,
+    tags JSONB DEFAULT '[]',
+    version VARCHAR(20) DEFAULT '1.0',
+    is_active BOOLEAN DEFAULT TRUE,
+    embedding JSONB,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_policies_policy_id ON knowledge_policies(policy_id);
+CREATE INDEX IF NOT EXISTS idx_policies_category ON knowledge_policies(category);
+CREATE INDEX IF NOT EXISTS idx_policies_category_active ON knowledge_policies(category, is_active);
+
+-- Knowledge FAQs
+CREATE TABLE IF NOT EXISTS knowledge_faqs (
+    id SERIAL PRIMARY KEY,
+    question_id VARCHAR(100) UNIQUE NOT NULL,
+    question TEXT NOT NULL,
+    answer TEXT NOT NULL,
+    category VARCHAR(100) NOT NULL,
+    tags JSONB DEFAULT '[]',
+    keywords JSONB DEFAULT '[]',
+    is_active BOOLEAN DEFAULT TRUE,
+    usage_count INTEGER DEFAULT 0,
+    embedding JSONB,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_faqs_question_id ON knowledge_faqs(question_id);
+CREATE INDEX IF NOT EXISTS idx_faqs_category ON knowledge_faqs(category);
+CREATE INDEX IF NOT EXISTS idx_faqs_category_active ON knowledge_faqs(category, is_active);
+
+-- Knowledge Guides
+CREATE TABLE IF NOT EXISTS knowledge_guides (
+    id SERIAL PRIMARY KEY,
+    guide_id VARCHAR(100) UNIQUE NOT NULL,
+    title VARCHAR(255) NOT NULL,
+    content TEXT NOT NULL,
+    guide_type VARCHAR(50) NOT NULL,
+    category VARCHAR(100) NOT NULL,
+    tags JSONB DEFAULT '[]',
+    steps JSONB DEFAULT '[]',
+    is_active BOOLEAN DEFAULT TRUE,
+    embedding JSONB,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_guides_guide_id ON knowledge_guides(guide_id);
+CREATE INDEX IF NOT EXISTS idx_guides_type ON knowledge_guides(guide_type);
+CREATE INDEX IF NOT EXISTS idx_guides_type_category ON knowledge_guides(guide_type, category);
+
+-- Knowledge Documents
+CREATE TABLE IF NOT EXISTS knowledge_documents (
+    id SERIAL PRIMARY KEY,
+    doc_id VARCHAR(100) UNIQUE NOT NULL,
+    title VARCHAR(255) NOT NULL,
+    content TEXT NOT NULL,
+    doc_type VARCHAR(50) NOT NULL,
+    category VARCHAR(100) NOT NULL,
+    tags JSONB DEFAULT '[]',
+    metadata JSONB DEFAULT '{}',
+    embedding JSONB,
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_documents_doc_id ON knowledge_documents(doc_id);
+CREATE INDEX IF NOT EXISTS idx_documents_type ON knowledge_documents(doc_type);
+CREATE INDEX IF NOT EXISTS idx_documents_category ON knowledge_documents(category);
+
+-- Triggers for knowledge tables
+CREATE TRIGGER update_knowledge_policies_updated_at
+    BEFORE UPDATE ON knowledge_policies
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_knowledge_faqs_updated_at
+    BEFORE UPDATE ON knowledge_faqs
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_knowledge_guides_updated_at
+    BEFORE UPDATE ON knowledge_guides
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_knowledge_documents_updated_at
+    BEFORE UPDATE ON knowledge_documents
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();

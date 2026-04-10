@@ -90,3 +90,82 @@ class AuditLog(Base):
     output_summary = Column(Text)
     processing_time_ms = Column(Integer)
     created_at = Column(DateTime, default=func.now())
+
+
+class KnowledgePolicy(Base):
+    __tablename__ = "knowledge_policies"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    policy_id = Column(String(100), nullable=False, unique=True, index=True)
+    title = Column(String(255), nullable=False)
+    content = Column(Text, nullable=False)
+    category = Column(String(100), nullable=False, index=True)
+    tags = Column(JSON, default=list)
+    version = Column(String(20), default="1.0")
+    is_active = Column(Boolean, default=True)
+    embedding = Column(JSON, nullable=True)
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        Index("idx_policies_category_active", "category", "is_active"),
+    )
+
+
+class KnowledgeFAQ(Base):
+    __tablename__ = "knowledge_faqs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    question_id = Column(String(100), nullable=False, unique=True, index=True)
+    question = Column(Text, nullable=False)
+    answer = Column(Text, nullable=False)
+    category = Column(String(100), nullable=False, index=True)
+    tags = Column(JSON, default=list)
+    keywords = Column(JSON, default=list)
+    is_active = Column(Boolean, default=True)
+    usage_count = Column(Integer, default=0)
+    embedding = Column(JSON, nullable=True)
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        Index("idx_faqs_category_active", "category", "is_active"),
+    )
+
+
+class KnowledgeGuide(Base):
+    __tablename__ = "knowledge_guides"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    guide_id = Column(String(100), nullable=False, unique=True, index=True)
+    title = Column(String(255), nullable=False)
+    content = Column(Text, nullable=False)
+    guide_type = Column(String(50), nullable=False, index=True)
+    category = Column(String(100), nullable=False, index=True)
+    tags = Column(JSON, default=list)
+    steps = Column(JSON, default=list)
+    is_active = Column(Boolean, default=True)
+    embedding = Column(JSON, nullable=True)
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        Index("idx_guides_type_category", "guide_type", "category"),
+    )
+
+
+class KnowledgeDocument(Base):
+    __tablename__ = "knowledge_documents"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    doc_id = Column(String(100), nullable=False, unique=True, index=True)
+    title = Column(String(255), nullable=False)
+    content = Column(Text, nullable=False)
+    doc_type = Column(String(50), nullable=False, index=True)
+    category = Column(String(100), nullable=False, index=True)
+    tags = Column(JSON, default=list)
+    metadata = Column(JSON, default=dict)
+    embedding = Column(JSON, nullable=True)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
