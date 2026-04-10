@@ -119,6 +119,34 @@ class RedisCache:
             logger.warning("Redis MGET failed", keys=keys, error=str(e))
             return {}
 
+    async def sadd(self, key: str, *values: str) -> int:
+        if not self._client:
+            return 0
+        try:
+            return await self._client.sadd(key, *values)
+        except redis.RedisError as e:
+            logger.warning("Redis SADD failed", key=key, error=str(e))
+            return 0
+
+    async def smembers(self, key: str) -> set[str]:
+        if not self._client:
+            return set()
+        try:
+            result = await self._client.smembers(key)
+            return set(result) if result else set()
+        except redis.RedisError as e:
+            logger.warning("Redis SMEMBERS failed", key=key, error=str(e))
+            return set()
+
+    async def srem(self, key: str, *values: str) -> int:
+        if not self._client:
+            return 0
+        try:
+            return await self._client.srem(key, *values)
+        except redis.RedisError as e:
+            logger.warning("Redis SREM failed", key=key, error=str(e))
+            return 0
+
     @property
     def is_connected(self) -> bool:
         return self._connected

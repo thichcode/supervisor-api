@@ -24,16 +24,26 @@ from src.core.schemas import (
     GuideDeliveryResponse,
     CallbackRequest,
     CaseInfo,
+    ApprovalStatus,
+    ApprovalActionRequest,
+    ApprovalRequest,
+    ApprovalRequestResponse,
+    ApprovalListResponse,
 )
 from src.core.logging_config import setup_logging, RequestLogger
 from src.core.metrics import get_metrics, metrics
 from src.core.sanitizer import sanitizer
 from src.core.supervisor import Supervisor
+from src.core import approval
 from src.db import init_db, close_db, async_session
 from src.llm import llm_client
 from src.memory import redis_cache
 from src.memory.service import MemoryService
 from datetime import datetime
+from typing import Optional
+import structlog
+
+logger = structlog.get_logger()
 
 settings = get_settings()
 setup_logging()
@@ -236,9 +246,13 @@ async def send_to_power_automate(payload: OutputPayload):
 
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
-    """Direct user chat endpoint for real-time messaging with users."""
+    """Direct user chat endpoint for real-time messaging with users.
+    
+    If confidence < 90%, the response will be queued for approval.
+    """
     import uuid
     from src.core.schemas import UserInfo, ConversationInfo, MessageInfo, InputPayload
+    from src.core.approval import approval_service
     
     request_id = str(uuid.uuid4())
     thread_id = request.thread_id or f"chat-{request.user_id}-{int(time.time())}"
@@ -269,6 +283,39 @@ async def chat(request: ChatRequest):
         memory = await memory_service.retrieve(payload)
         result = await api_module.supervisor.process(payload, memory)
         await memory_service.commit(payload)
+    
+    needs_approval = await approval_service.needs_approval(result.confidence)
+    
+    if needs_approval:
+        approval = await approval_service.create_approval(
+            request_id=request_id,
+            user_id=request.user_id,
+            display_name=request.display_name,
+            original_message=request.message,
+            ai_response=result.answer,
+            confidence=result.confidence,
+            action_type="send_message",
+            metadata={
+                "thread_id": thread_id,
+                "case_id": request.case_id,
+                "agents_used": result.metadata.get("agents_used", []),
+                "intent": result.metadata.get("intent"),
+            },
+        )
+        
+        return ChatResponse(
+            request_id=request_id,
+            status="pending_approval",
+            message=f"⚠️ Phản hồi AI (confidence: {result.confidence:.0%}) cần được duyệt trước khi gửi cho user.",
+            message_type=request.message_type,
+            confidence=result.confidence,
+            metadata={
+                **result.metadata,
+                "approval_id": approval.id,
+                "approval_required": True,
+                "threshold": 0.9,
+            },
+        )
     
     return ChatResponse(
         request_id=request_id,
@@ -328,8 +375,12 @@ async def system_query(request: SystemQueryRequest):
 
 @app.post("/guide/deliver", response_model=GuideDeliveryResponse)
 async def deliver_guide(request: GuideDeliveryRequest):
-    """Deliver a guideline to user (async callback or webhook)."""
+    """Deliver a guideline to user.
+    
+    If confidence < 90%, the guide delivery will be queued for approval.
+    """
     import uuid
+    from src.core.approval import approval_service
     
     guide_id = request.guide_id
     
@@ -340,9 +391,36 @@ async def deliver_guide(request: GuideDeliveryRequest):
 ---
 *Đây là hướng dẫn được gửi từ hệ thống. Bạn có câu hỏi nào không?*"""
     
+    confidence = 0.95
+    
+    needs_approval = await approval_service.needs_approval(confidence)
+    
+    if needs_approval:
+        approval = await approval_service.create_approval(
+            request_id=str(uuid.uuid4()),
+            user_id=request.user_id,
+            display_name=request.display_name,
+            original_message=f"Request guide: {request.guide_title}",
+            ai_response=guide_message,
+            confidence=confidence,
+            action_type="deliver_guide",
+            metadata={
+                "guide_id": guide_id,
+                "guide_title": request.guide_title,
+                "thread_id": request.thread_id,
+            },
+        )
+        
+        return GuideDeliveryResponse(
+            status="pending_approval",
+            guide_id=guide_id,
+            delivered=False,
+            message=f"Guide delivery queued for approval (confidence: {confidence:.0%})",
+            metadata={"approval_id": approval.id},
+        )
+    
     if settings.power_automate_webhook_url:
         import httpx
-        from datetime import datetime
         
         payload = {
             "request_id": str(uuid.uuid4()),
@@ -409,3 +487,106 @@ async def send_callback(request: CallbackRequest):
             return {"status": "sent", "callback_response": response.status_code}
     except httpx.HTTPError as e:
         raise HTTPException(status_code=502, detail=f"Callback failed: {str(e)}")
+
+
+@app.get("/approvals", response_model=ApprovalListResponse)
+async def list_approvals(status: Optional[str] = None):
+    """List all approvals, optionally filtered by status."""
+    from src.core.schemas import ApprovalStatus
+    from src.core.approval import approval_service
+    
+    filter_status = ApprovalStatus(status) if status else None
+    approvals = await approval_service.get_all_approvals(filter_status)
+    pending_count = await approval_service.get_pending_count()
+    
+    return ApprovalListResponse(
+        approvals=[
+            ApprovalRequestResponse(
+                approval_id=a.id,
+                request_id=a.request_id,
+                status=a.status,
+                message=a.ai_response[:200] + "..." if len(a.ai_response) > 200 else a.ai_response,
+                confidence=a.confidence,
+                threshold=a.threshold,
+                created_at=a.created_at,
+            )
+            for a in approvals
+        ],
+        total=len(approvals),
+        pending_count=pending_count,
+    )
+
+
+@app.get("/approvals/{approval_id}", response_model=ApprovalRequest)
+async def get_approval(approval_id: str):
+    """Get details of a specific approval."""
+    from src.core.approval import approval_service
+    
+    approval = await approval_service.get_approval(approval_id)
+    if not approval:
+        raise HTTPException(status_code=404, detail="Approval not found")
+    
+    return approval
+
+
+@app.post("/approvals/{approval_id}/action")
+async def approve_or_reject(approval_id: str, action: ApprovalActionRequest):
+    """Approve or reject an approval request.
+    
+    If approved, the action (send message, deliver guide, etc.) will be executed.
+    If rejected, no action will be taken.
+    """
+    import httpx
+    from src.core.approval import approval_service
+    
+    approval = await approval_service.get_approval(approval_id)
+    if not approval:
+        raise HTTPException(status_code=404, detail="Approval not found")
+    
+    if approval.status != ApprovalStatus.PENDING:
+        raise HTTPException(status_code=400, detail=f"Approval already {approval.status}")
+    
+    if action.action == "approve":
+        result = await approval_service.approve(approval_id, action.reviewed_by, action.comment)
+        
+        if settings.power_automate_webhook_url:
+            payload = {
+                "request_id": approval.request_id,
+                "user_id": approval.user_id,
+                "message": approval.ai_response,
+                "message_type": approval.action_type,
+                "approved_by": action.reviewed_by,
+                "timestamp": datetime.now().isoformat(),
+            }
+            
+            try:
+                async with httpx.AsyncClient() as client:
+                    response = await client.post(
+                        settings.power_automate_webhook_url,
+                        json=payload,
+                        timeout=settings.webhook_timeout,
+                    )
+                    response.raise_for_status()
+            except httpx.HTTPError as e:
+                logger.warning("Failed to send approved message", error=str(e))
+        
+        return {
+            "status": "approved",
+            "approval_id": approval_id,
+            "reviewed_by": action.reviewed_by,
+            "comment": action.comment,
+            "message": "Action executed successfully",
+        }
+    
+    elif action.action == "reject":
+        await approval_service.reject(approval_id, action.reviewed_by, action.comment)
+        
+        return {
+            "status": "rejected",
+            "approval_id": approval_id,
+            "reviewed_by": action.reviewed_by,
+            "comment": action.comment,
+            "message": "Action rejected",
+        }
+    
+    raise HTTPException(status_code=400, detail="Invalid action. Use 'approve' or 'reject'")

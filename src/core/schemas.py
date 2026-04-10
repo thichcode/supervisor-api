@@ -177,3 +177,50 @@ class CallbackRequest(BaseModel):
     message: str
     callback_url: str
     method: str = "POST"
+
+
+class ApprovalStatus(str, Enum):
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    EXPIRED = "expired"
+
+
+class ApprovalRequest(BaseModel):
+    id: Optional[str] = None
+    request_id: str
+    user_id: str
+    display_name: str
+    original_message: str
+    ai_response: str
+    confidence: float
+    threshold: float = 0.9
+    status: ApprovalStatus = ApprovalStatus.PENDING
+    action_type: str = Field(default="send_message", description="send_message, deliver_guide, system_query")
+    metadata: dict = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=utc_now)
+    reviewed_by: Optional[str] = None
+    reviewed_at: Optional[datetime] = None
+    review_comment: Optional[str] = None
+
+
+class ApprovalRequestResponse(BaseModel):
+    approval_id: str
+    request_id: str
+    status: ApprovalStatus
+    message: str
+    confidence: float
+    threshold: float
+    created_at: datetime
+
+
+class ApprovalListResponse(BaseModel):
+    approvals: list[ApprovalRequestResponse]
+    total: int
+    pending_count: int
+
+
+class ApprovalActionRequest(BaseModel):
+    action: str = Field(..., description="approve or reject")
+    comment: Optional[str] = None
+    reviewed_by: str = Field(..., description="Who is approving/rejecting")
