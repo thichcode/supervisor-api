@@ -182,7 +182,8 @@ class MultiProviderLLMClient:
             self._active_provider = None
         self._temperature: float = settings.llm_temperature or 0.7
         self._max_tokens: int = settings.llm_max_tokens or 2000
-        self._timeout: int = settings.agent_timeout or 60
+        # Use ollama_timeout if set, otherwise agent_timeout
+        self._timeout: int = getattr(settings, 'ollama_timeout', None) or settings.agent_timeout or 60
 
         # Circuit breaker
         self._circuit_breaker = get_circuit_breaker(
