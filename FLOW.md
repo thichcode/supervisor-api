@@ -6,7 +6,7 @@
 ┌─────────────────────────────────────────────────────────────────────────────────────────────┐
 │                              Microsoft Teams                                              │
 │                                                                                             │
-│  User sends message                                                                         │
+│  User sends message (may include URLs)                                                    │
 │         │                                                                                  │
 │         ↓                                                                                  │
 │  ┌──────────────────┐                                                                       │
@@ -40,6 +40,16 @@
 │                        │    - If HIT → Return cached response immediately                  │   │
 │                        └────┬────────────────────────────────────────────────────────────────┘   │
 │                             │ (cache miss)                                                  │
+│                             ↓                                                                    │
+│                        ┌────┴────────────────────────────────────────────────────────────────┐   │
+│                        │ 0b. URL Detection & Fetching (v2 Enhancement)                      │   │
+│                        │    - Detect URLs in message (regex pattern matching)               │   │
+│                        │    - Fetch internal URLs (company.com, wiki, jira, etc.)          │   │
+│                        │    - Fetch trusted external URLs (GitHub, StackOverflow, etc.)    │   │
+│                        │    - Extract title, description from fetched pages               │   │
+│                        │    - Inject URL context into LLM prompt                           │   │
+│                        └────┬────────────────────────────────────────────────────────────────┘   │
+│                             │                                                                    │
 │                             ↓                                                                    │
 │                        ┌────┴────────────────────────────────────────────────────────────────┐   │
 │                        │ 1. Input Normalizer & Sanitizer                                 │   │
@@ -108,8 +118,8 @@
 │                        │             │               ↓               ↓                       │   │
 │                        │             │        ┌────────────┐  ┌─────────────┐              │   │
 │                        │             │        │Draft Agent │  │ QAAgent     │              │   │
-│                        │             │        └────────────┘  │(Bayesian)  │              │   │
-│                        │             │                       └─────────────┘              │   │
+│                        │             │        │+URL Context│  │(Bayesian)  │              │   │
+│                        │             │        └────────────┘  └─────────────┘              │   │
 │                        │             │               │               │                       │   │
 │                        │             └───────────────┼───────────────┘                       │   │
 │                        │                             │                                       │   │
@@ -121,7 +131,7 @@
 │                        │    - Calculate confidence using Bayesian inference               │   │
 │                        │    - Factors: context_relevance, policy_match,                   │   │
 │                        │      knowledge_freshness, user_satisfaction                     │   │
-│                        │    - More accurate than rule-based scoring                       │   │
+│                        │    - More accurate than rule-based scoring                     │   │
 │                        └────┬────────────────────────────────────────────────────────────────┘   │
 │                             │                                                                    │
 │                             ↓                                                                    │
@@ -338,9 +348,17 @@ User asks: "case của tôi", "ai đang xử lý", "trạng thái"
 2. **BM25 Search** - Hybrid search (BM25 70% + TF-IDF 30%)
 3. **Bayesian Confidence** - Probabilistic confidence scoring
 4. **Agent Router** - Dynamic agent path selection
+5. **URL Fetcher** - Auto-detect and fetch URLs from messages
 
 ### Auto-Send to Power Automate:
 - Enabled by default for `/chat` and `/webhook/n8n` endpoints
 - Configured via `POWER_AUTOMATE_WEBHOOK_URL` environment variable
 - Retry 3 times with exponential backoff
 - Formats response for Power Automate consumption
+
+### URL Fetcher Feature:
+- **Detection**: Regex pattern matching for HTTP/HTTPS URLs
+- **Internal URLs**: Auto-fetch from company domains (wiki, jira, confluence, sharepoint, etc.)
+- **Trusted External URLs**: GitHub, GitLab, StackOverflow, official docs sites
+- **Extracted Data**: Title, description, HTTP status
+- **Context Injection**: URL info injected into LLM prompt for better understanding

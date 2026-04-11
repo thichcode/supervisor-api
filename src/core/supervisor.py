@@ -104,6 +104,7 @@ class Supervisor:
     - BM25 Search for knowledge retrieval
     - Bayesian Confidence for validation
     - Agent Router for optimal path selection
+    - URL Fetcher for auto-detecting and fetching URLs
     """
     
     def __init__(self):
@@ -136,8 +137,16 @@ class Supervisor:
                 self.response_validator = ResponseValidator()
                 
                 # Agent Router (already in decision_engine)
+                
+                # URL Fetcher (v2 new)
+                from src.tools.url_fetcher import URLFetcher
+                self.url_fetcher = URLFetcher(
+                    timeout=10,
+                    max_urls=5
+                )
+                
                 logger.info("Supervisor v2 enhancements initialized",
-                          cache=True, bm25=True, bayesian=True, routing=True)
+                          cache=True, bm25=True, bayesian=True, routing=True, url_fetcher=True)
             except Exception as e:
                 logger.error("Failed to initialize enhancements", error=str(e))
         else:
@@ -170,6 +179,13 @@ class Supervisor:
                     processing_time=start_time,
                 )
 
+        # NEW v2: Auto-fetch URLs from message
+        url_context = await self._fetch_urls(payload)
+        if url_context:
+            logger.debug("URLs fetched for context", count=len(url_context))
+        else:
+            url_context = ""
+
         intent = self._classify_intent(payload, memory)
         risk = self._evaluate_risk(payload, memory)
 
@@ -194,7 +210,12 @@ class Supervisor:
                 final_confidence = query_result.get("confidence", 0.9)
                 agents_used.append("system_query")
             else:
-                draft = await self.draft_agent.generate(payload, context, policy, knowledge, self._llm)
+                # Inject URL context into context dict
+                context_with_urls = dict(context)
+                if url_context:
+                    context_with_urls["url_context"] = url_context
+                
+                draft = await self.draft_agent.generate(payload, context_with_urls, policy, knowledge, self._llm)
                 
                 # Enhanced validation with Bayesian confidence (v2)
                 validation = await self._enhanced_validate(draft, payload, context, policy, knowledge)
@@ -297,6 +318,27 @@ class Supervisor:
             IntentType.ANALYSIS: "analysis",
         }
         return mapping.get(intent.intent, "general")
+    
+    async def _fetch_urls(self, payload: InputPayload) -> str:
+        """Fetch URLs from message and return context string"""
+        if not NEW_MODULES_AVAILABLE or not hasattr(self, 'url_fetcher'):
+            return ""
+        
+        try:
+            urls_detected = self.url_fetcher.detect_urls(payload.message.text)
+            if not urls_detected:
+                return ""
+            
+            # Fetch all URLs concurrently
+            url_infos = await self.url_fetcher.fetch_all(payload.message.text)
+            
+            # Build context string
+            context = self.url_fetcher.build_context(url_infos)
+            
+            return context
+        except Exception as e:
+            logger.warning("URL fetch failed", error=str(e))
+            return ""
     
     def _enhanced_validate(
         self,

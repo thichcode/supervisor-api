@@ -25,6 +25,8 @@ Ngữ cảnh hội thoại: {context.get('conversation_summary', 'Không có')}
 Tin nhắn gần đây: {context.get('conversation_history', [])}
 Vai trò người dùng: {context.get('user_info', {}).get('role', 'employee')}
 
+{context.get('url_context', '')}
+
 Chính sách liên quan: {policy}
 Kiến thức: {knowledge}"""
 
