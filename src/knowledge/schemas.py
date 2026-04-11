@@ -145,3 +145,47 @@ class BulkImportResponse(BaseModel):
     status: str
     imported: dict
     errors: List[dict] = []
+
+
+# ============ File Processing Schemas ============
+
+class FileProcessRequest(BaseModel):
+    """Request to process a file for knowledge base"""
+    file_path: str = Field(description="Path to file on server")
+    file_url: Optional[str] = Field(None, description="URL to download file")
+    knowledge_type: str = Field("document", description="Type: policy, faq, guide, document")
+    category: str = Field("general", description="Category for classification")
+    tags: List[str] = Field(default_factory=list, description="Manual tags")
+    auto_classify: bool = Field(True, description="Auto-detect knowledge type using LLM")
+    extract_metadata: bool = Field(True, description="Extract metadata from file")
+
+
+class FileProcessResponse(BaseModel):
+    """Response from file processing"""
+    status: str
+    file_name: str
+    file_size: int
+    extracted_content: str
+    knowledge_type: str
+    category: str
+    suggested_tags: List[str]
+    extracted_fields: dict
+    chunks_count: int
+    embeddings_generated: bool
+    processing_time_ms: int
+    errors: List[str] = []
+
+
+class BatchFileRequest(BaseModel):
+    """Batch file processing request"""
+    files: List[FileProcessRequest]
+    import_to_knowledge_base: bool = Field(True, description="Auto-import after processing")
+
+
+class BatchFileResponse(BaseModel):
+    """Batch file processing response"""
+    status: str
+    total_files: int
+    successful: int
+    failed: int
+    results: List[FileProcessResponse]
