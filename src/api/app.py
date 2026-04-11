@@ -12,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
+from pydantic import BaseModel
 
 from src.config import get_settings
 from src.core import InputPayload, OutputPayload
@@ -35,6 +36,9 @@ from src.knowledge.schemas import (
     FAQCreate,
     GuideCreate,
     KnowledgeSearchRequest,
+    DocumentCreate,
+    BulkImportRequest,
+    BulkImportResponse,
 )
 from src.core.logging_config import setup_logging, RequestLogger
 from src.core.metrics import get_metrics, metrics
@@ -158,6 +162,269 @@ async def readiness_check():
         metrics.record_error("external_memory_health", "health/ready")
 
     return {"status": "ready" if all(checks.values()) else "degraded", "checks": checks}
+
+
+@app.get("/health/detailed")
+async def health_detailed():
+    """Detailed system health with comprehensive stats."""
+    import src.api as api_module
+    from sqlalchemy import text, select, func
+    from src.db.models import Message, UserProfile, CaseMemory, ConversationSummary
+    from src.knowledge import KnowledgeRetrievalService
+
+    health = {
+        "status": "healthy",
+        "timestamp": datetime.now().isoformat(),
+        "components": {},
+        "statistics": {},
+    }
+
+    # Database stats
+    try:
+        async with api_module.async_session() as session:
+            msg_count = await session.scalar(select(func.count(Message.id)))
+            user_count = await session.scalar(select(func.count(UserProfile.id)))
+            case_count = await session.scalar(select(func.count(CaseMemory.id)))
+            conv_count = await session.scalar(select(func.count(ConversationSummary.id)))
+
+            health["components"]["database"] = {"status": "healthy", "connected": True}
+            health["statistics"]["database"] = {
+                "total_messages": msg_count or 0,
+                "total_users": user_count or 0,
+                "total_cases": case_count or 0,
+                "total_conversations": conv_count or 0,
+            }
+    except Exception as e:
+        health["components"]["database"] = {"status": "error", "error": str(e)}
+
+    # Redis stats
+    try:
+        info = await api_module.redis_cache.get_info()
+        keys = await api_module.redis_cache.get_keys_pattern("*")
+        health["components"]["redis"] = {"status": "healthy", "connected": True}
+        health["statistics"]["redis"] = {
+            "total_keys": len(keys) if keys else 0,
+            "info": info,
+        }
+    except Exception as e:
+        health["components"]["redis"] = {"status": "error", "error": str(e)}
+
+    # LLM stats
+    try:
+        llm = api_module.llm_client
+        if llm.is_initialized:
+            health["components"]["llm"] = {
+                "status": "healthy",
+                "model": llm.active_model,
+                "provider": llm.active_provider,
+                "cost_stats": llm.get_cost_stats(),
+            }
+        else:
+            health["components"]["llm"] = {"status": "degraded", "reason": "not_initialized"}
+    except Exception as e:
+        health["components"]["llm"] = {"status": "error", "error": str(e)}
+
+    # Knowledge Base stats
+    try:
+        async with api_module.async_session() as session:
+            kb_service = KnowledgeRetrievalService(session)
+            stats = await kb_service.get_knowledge_stats()
+            health["components"]["knowledge_base"] = {"status": "healthy"}
+            health["statistics"]["knowledge_base"] = stats
+    except Exception as e:
+        health["components"]["knowledge_base"] = {"status": "error", "error": str(e)}
+
+    # Overall status
+    error_count = sum(1 for c in health["components"].values() if c.get("status") == "error")
+    health["status"] = "healthy" if error_count == 0 else ("degraded" if error_count == 1 else "unhealthy")
+
+    return health
+
+
+@app.get("/metrics/dashboard")
+async def dashboard_metrics():
+    """Dashboard metrics for monitoring."""
+    import src.api as api_module
+    from sqlalchemy import select, func, text
+    from src.db.models import Message, UserProfile, CaseMemory, AuditLog, ApprovalRequest
+
+    stats = {
+        "timestamp": datetime.now().isoformat(),
+        "conversations": {},
+        "users": {},
+        "cases": {},
+        "approvals": {},
+        "performance": {},
+    }
+
+    try:
+        async with api_module.async_session() as session:
+            # Conversation stats
+            total_msgs = await session.scalar(select(func.count(Message.id)))
+            today_msgs = await session.scalar(
+                select(func.count(Message.id)).where(text("created_at > NOW() - INTERVAL '24 hours'"))
+            )
+
+            stats["conversations"] = {
+                "total_messages": total_msgs or 0,
+                "messages_last_24h": today_msgs or 0,
+            }
+
+            # User stats
+            total_users = await session.scalar(select(func.count(UserProfile.id)))
+            vip_users = await session.scalar(
+                select(func.count(UserProfile.id)).where(UserProfile.vip_flag == True)
+            )
+
+            stats["users"] = {
+                "total": total_users or 0,
+                "vip": vip_users or 0,
+            }
+
+            # Case stats
+            total_cases = await session.scalar(select(func.count(CaseMemory.id)))
+            open_cases = await session.scalar(
+                select(func.count(CaseMemory.id)).where(CaseMemory.status == "open")
+            )
+
+            stats["cases"] = {
+                "total": total_cases or 0,
+                "open": open_cases or 0,
+            }
+
+            # Approval stats
+            pending_approvals = await session.scalar(
+                select(func.count(ApprovalRequest.id)).where(ApprovalRequest.status == "pending")
+            )
+            approved_approvals = await session.scalar(
+                select(func.count(ApprovalRequest.id)).where(ApprovalRequest.status == "approved")
+            )
+            rejected_approvals = await session.scalar(
+                select(func.count(ApprovalRequest.id)).where(ApprovalRequest.status == "rejected")
+            )
+
+            stats["approvals"] = {
+                "pending": pending_approvals or 0,
+                "approved": approved_approvals or 0,
+                "rejected": rejected_approvals or 0,
+            }
+
+    except Exception as e:
+        stats["error"] = str(e)
+
+    return stats
+
+
+@app.post("/alerts")
+async def create_alert(
+    alert_type: str,
+    severity: str,
+    title: str,
+    message: str,
+    metadata: dict = None
+):
+    """Create an alert."""
+    from src.db.models import Alert
+
+    alert_id = f"alert-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+
+    async with async_session() as session:
+        alert = Alert(
+            alert_id=alert_id,
+            alert_type=alert_type,
+            severity=severity,
+            title=title,
+            message=message,
+            metadata=metadata or {},
+        )
+        session.add(alert)
+        await session.commit()
+        await session.refresh(alert)
+
+    metrics.record_counter("alerts_created", 1, {"type": alert_type, "severity": severity})
+
+    return {"status": "created", "alert_id": alert_id}
+
+
+@app.get("/alerts")
+async def list_alerts(
+    severity: str = None,
+    status: str = None,
+    limit: int = 50
+):
+    """List alerts."""
+    from src.db.models import Alert
+    from sqlalchemy import select
+
+    async with async_session() as session:
+        query = select(Alert).order_by(Alert.created_at.desc()).limit(limit)
+
+        if severity:
+            query = query.where(Alert.severity == severity)
+        if status:
+            query = query.where(Alert.status == status)
+
+        result = await session.execute(query)
+        alerts = result.scalars().all()
+
+        return {
+            "alerts": [
+                {
+                    "alert_id": a.alert_id,
+                    "alert_type": a.alert_type,
+                    "severity": a.severity,
+                    "title": a.title,
+                    "message": a.message,
+                    "status": a.status,
+                    "created_at": a.created_at.isoformat() if a.created_at else None,
+                }
+                for a in alerts
+            ],
+            "total": len(alerts),
+        }
+
+
+@app.put("/alerts/{alert_id}/acknowledge")
+async def acknowledge_alert(alert_id: str, acknowledged_by: str):
+    """Acknowledge an alert."""
+    from src.db.models import Alert
+    from sqlalchemy import select
+
+    async with async_session() as session:
+        result = await session.execute(
+            select(Alert).where(Alert.alert_id == alert_id)
+        )
+        alert = result.scalar_one_or_none()
+        if not alert:
+            raise HTTPException(status_code=404, detail="Alert not found")
+
+        alert.status = "acknowledged"
+        alert.acknowledged_by = acknowledged_by
+        alert.acknowledged_at = datetime.now()
+
+        await session.commit()
+
+    return {"status": "acknowledged", "alert_id": alert_id}
+
+
+@app.delete("/alerts/{alert_id}")
+async def delete_alert(alert_id: str):
+    """Delete an alert."""
+    from src.db.models import Alert
+    from sqlalchemy import select
+
+    async with async_session() as session:
+        result = await session.execute(
+            select(Alert).where(Alert.alert_id == alert_id)
+        )
+        alert = result.scalar_one_or_none()
+        if not alert:
+            raise HTTPException(status_code=404, detail="Alert not found")
+
+        await session.delete(alert)
+        await session.commit()
+
+    return {"status": "deleted", "alert_id": alert_id}
 
 
 @app.get("/metrics")
@@ -758,3 +1025,731 @@ async def list_guides(guide_type: str = None, category: str = None, limit: int =
             ],
             "total": len(guides),
         }
+
+
+@app.get("/knowledge/policies/{policy_id}")
+async def get_policy(policy_id: str):
+    """Get a specific policy by ID."""
+    from src.db.models import KnowledgePolicy
+    
+    async with async_session() as session:
+        from sqlalchemy import select
+        result = await session.execute(
+            select(KnowledgePolicy).where(KnowledgePolicy.policy_id == policy_id)
+        )
+        policy = result.scalar_one_or_none()
+        if not policy:
+            raise HTTPException(status_code=404, detail="Policy not found")
+        return {
+            "policy_id": policy.policy_id,
+            "title": policy.title,
+            "content": policy.content,
+            "category": policy.category,
+            "tags": policy.tags,
+            "version": policy.version,
+            "created_at": policy.created_at.isoformat() if policy.created_at else None,
+            "updated_at": policy.updated_at.isoformat() if policy.updated_at else None,
+        }
+
+
+@app.put("/knowledge/policies/{policy_id}")
+async def update_policy(policy_id: str, policy: PolicyCreate):
+    """Update a policy."""
+    from src.db.models import KnowledgePolicy
+    
+    async with async_session() as session:
+        from sqlalchemy import select
+        result = await session.execute(
+            select(KnowledgePolicy).where(KnowledgePolicy.policy_id == policy_id)
+        )
+        kb_policy = result.scalar_one_or_none()
+        if not kb_policy:
+            raise HTTPException(status_code=404, detail="Policy not found")
+        
+        kb_policy.title = policy.title
+        kb_policy.content = policy.content
+        kb_policy.category = policy.category
+        kb_policy.tags = policy.tags
+        kb_policy.version = policy.version
+        
+        await session.commit()
+        await session.refresh(kb_policy)
+        return {"status": "updated", "policy_id": kb_policy.policy_id}
+
+
+@app.delete("/knowledge/policies/{policy_id}")
+async def delete_policy(policy_id: str):
+    """Delete a policy."""
+    from src.db.models import KnowledgePolicy
+    
+    async with async_session() as session:
+        from sqlalchemy import select
+        result = await session.execute(
+            select(KnowledgePolicy).where(KnowledgePolicy.policy_id == policy_id)
+        )
+        kb_policy = result.scalar_one_or_none()
+        if not kb_policy:
+            raise HTTPException(status_code=404, detail="Policy not found")
+        
+        await session.delete(kb_policy)
+        await session.commit()
+        return {"status": "deleted", "policy_id": policy_id}
+
+
+@app.get("/knowledge/faqs/{question_id}")
+async def get_faq(question_id: str):
+    """Get a specific FAQ by ID."""
+    from src.db.models import KnowledgeFAQ
+    
+    async with async_session() as session:
+        from sqlalchemy import select
+        result = await session.execute(
+            select(KnowledgeFAQ).where(KnowledgeFAQ.question_id == question_id)
+        )
+        faq = result.scalar_one_or_none()
+        if not faq:
+            raise HTTPException(status_code=404, detail="FAQ not found")
+        return {
+            "question_id": faq.question_id,
+            "question": faq.question,
+            "answer": faq.answer,
+            "category": faq.category,
+            "tags": faq.tags,
+            "keywords": faq.keywords,
+            "usage_count": faq.usage_count,
+        }
+
+
+@app.put("/knowledge/faqs/{question_id}")
+async def update_faq(question_id: str, faq: FAQCreate):
+    """Update an FAQ."""
+    from src.db.models import KnowledgeFAQ
+    
+    async with async_session() as session:
+        from sqlalchemy import select
+        result = await session.execute(
+            select(KnowledgeFAQ).where(KnowledgeFAQ.question_id == question_id)
+        )
+        kb_faq = result.scalar_one_or_none()
+        if not kb_faq:
+            raise HTTPException(status_code=404, detail="FAQ not found")
+        
+        kb_faq.question = faq.question
+        kb_faq.answer = faq.answer
+        kb_faq.category = faq.category
+        kb_faq.tags = faq.tags
+        kb_faq.keywords = faq.keywords
+        
+        await session.commit()
+        await session.refresh(kb_faq)
+        return {"status": "updated", "question_id": kb_faq.question_id}
+
+
+@app.delete("/knowledge/faqs/{question_id}")
+async def delete_faq(question_id: str):
+    """Delete an FAQ."""
+    from src.db.models import KnowledgeFAQ
+    
+    async with async_session() as session:
+        from sqlalchemy import select
+        result = await session.execute(
+            select(KnowledgeFAQ).where(KnowledgeFAQ.question_id == question_id)
+        )
+        kb_faq = result.scalar_one_or_none()
+        if not kb_faq:
+            raise HTTPException(status_code=404, detail="FAQ not found")
+        
+        await session.delete(kb_faq)
+        await session.commit()
+        return {"status": "deleted", "question_id": question_id}
+
+
+@app.get("/knowledge/guides/{guide_id}")
+async def get_guide(guide_id: str):
+    """Get a specific guide by ID."""
+    from src.db.models import KnowledgeGuide
+    
+    async with async_session() as session:
+        from sqlalchemy import select
+        result = await session.execute(
+            select(KnowledgeGuide).where(KnowledgeGuide.guide_id == guide_id)
+        )
+        guide = result.scalar_one_or_none()
+        if not guide:
+            raise HTTPException(status_code=404, detail="Guide not found")
+        return {
+            "guide_id": guide.guide_id,
+            "title": guide.title,
+            "content": guide.content,
+            "guide_type": guide.guide_type,
+            "category": guide.category,
+            "tags": guide.tags,
+            "steps": guide.steps,
+        }
+
+
+@app.put("/knowledge/guides/{guide_id}")
+async def update_guide(guide_id: str, guide: GuideCreate):
+    """Update a guide."""
+    from src.db.models import KnowledgeGuide
+    
+    async with async_session() as session:
+        from sqlalchemy import select
+        result = await session.execute(
+            select(KnowledgeGuide).where(KnowledgeGuide.guide_id == guide_id)
+        )
+        kb_guide = result.scalar_one_or_none()
+        if not kb_guide:
+            raise HTTPException(status_code=404, detail="Guide not found")
+        
+        kb_guide.title = guide.title
+        kb_guide.content = guide.content
+        kb_guide.guide_type = guide.guide_type
+        kb_guide.category = guide.category
+        kb_guide.tags = guide.tags
+        kb_guide.steps = guide.steps
+        
+        await session.commit()
+        await session.refresh(kb_guide)
+        return {"status": "updated", "guide_id": kb_guide.guide_id}
+
+
+@app.delete("/knowledge/guides/{guide_id}")
+async def delete_guide(guide_id: str):
+    """Delete a guide."""
+    from src.db.models import KnowledgeGuide
+    
+    async with async_session() as session:
+        from sqlalchemy import select
+        result = await session.execute(
+            select(KnowledgeGuide).where(KnowledgeGuide.guide_id == guide_id)
+        )
+        kb_guide = result.scalar_one_or_none()
+        if not kb_guide:
+            raise HTTPException(status_code=404, detail="Guide not found")
+        
+        await session.delete(kb_guide)
+        await session.commit()
+        return {"status": "deleted", "guide_id": guide_id}
+
+
+@app.post("/knowledge/bulk-import")
+async def bulk_import_knowledge(request: BulkImportRequest):
+    """Bulk import policies, FAQs, guides, and documents."""
+    from src.db.models import KnowledgePolicy, KnowledgeFAQ, KnowledgeGuide, KnowledgeDocument
+    
+    imported = {"policies": 0, "faqs": 0, "guides": 0, "documents": 0}
+    errors = []
+    
+    async with async_session() as session:
+        for policy in request.policies:
+            try:
+                kb_policy = KnowledgePolicy(
+                    policy_id=policy.policy_id,
+                    title=policy.title,
+                    content=policy.content,
+                    category=policy.category,
+                    tags=policy.tags,
+                    version=policy.version,
+                )
+                session.add(kb_policy)
+                imported["policies"] += 1
+            except Exception as e:
+                errors.append({"type": "policy", "id": policy.policy_id, "error": str(e)})
+        
+        for faq in request.faqs:
+            try:
+                kb_faq = KnowledgeFAQ(
+                    question_id=faq.question_id,
+                    question=faq.question,
+                    answer=faq.answer,
+                    category=faq.category,
+                    tags=faq.tags,
+                    keywords=faq.keywords,
+                )
+                session.add(kb_faq)
+                imported["faqs"] += 1
+            except Exception as e:
+                errors.append({"type": "faq", "id": faq.question_id, "error": str(e)})
+        
+        for guide in request.guides:
+            try:
+                kb_guide = KnowledgeGuide(
+                    guide_id=guide.guide_id,
+                    title=guide.title,
+                    content=guide.content,
+                    guide_type=guide.guide_type,
+                    category=guide.category,
+                    tags=guide.tags,
+                    steps=guide.steps,
+                )
+                session.add(kb_guide)
+                imported["guides"] += 1
+            except Exception as e:
+                errors.append({"type": "guide", "id": guide.guide_id, "error": str(e)})
+        
+        for doc in request.documents:
+            try:
+                kb_doc = KnowledgeDocument(
+                    document_id=doc.document_id,
+                    title=doc.title,
+                    content=doc.content,
+                    document_type=doc.document_type,
+                    category=doc.category,
+                    tags=doc.tags,
+                    file_url=doc.file_url,
+                )
+                session.add(kb_doc)
+                imported["documents"] += 1
+            except Exception as e:
+                errors.append({"type": "document", "id": doc.document_id, "error": str(e)})
+        
+        await session.commit()
+    
+    return {"status": "completed", "imported": imported, "errors": errors}
+
+
+@app.post("/knowledge/search/enhanced")
+async def search_knowledge_enhanced(request: KnowledgeSearchRequest):
+    """Search knowledge base with LLM enhancement."""
+    from src.llm import llm_client
+    from src.knowledge import KnowledgeRetrievalService
+    
+    async with async_session() as session:
+        if llm_client and llm_client.is_initialized:
+            kb_service = KnowledgeRetrievalService(session, llm_client)
+            results = await kb_service.search_with_llm_enhancement(
+                query=request.query,
+                search_type=request.search_type or "all",
+                category=request.category,
+                tags=request.tags,
+                limit=request.limit,
+            )
+        else:
+            kb_service = KnowledgeRetrievalService(session, None)
+            results = await kb_service.search(
+                query=request.query,
+                search_type=request.search_type,
+                category=request.category,
+                tags=request.tags,
+                limit=request.limit,
+            )
+        return results
+
+
+@app.post("/knowledge/documents")
+async def create_document(document: DocumentCreate):
+    """Create a new document."""
+    from src.db.models import KnowledgeDocument
+    
+    async with async_session() as session:
+        kb_doc = KnowledgeDocument(
+            document_id=document.document_id,
+            title=document.title,
+            content=document.content,
+            document_type=document.document_type,
+            category=document.category,
+            tags=document.tags,
+            file_url=document.file_url,
+        )
+        session.add(kb_doc)
+        await session.commit()
+        await session.refresh(kb_doc)
+        return {"status": "created", "document_id": kb_doc.document_id}
+
+
+@app.get("/knowledge/documents")
+async def list_documents(document_type: str = None, category: str = None, limit: int = 20):
+    """List all documents, optionally filtered by type or category."""
+    from src.knowledge import KnowledgeBaseRepository
+    
+    async with async_session() as session:
+        repo = KnowledgeBaseRepository(session)
+        docs = await repo.search_documents(document_type=document_type, category=category, limit=limit)
+        return {
+            "documents": [
+                {
+                    "document_id": d.document_id,
+                    "title": d.title,
+                    "content": d.content,
+                    "document_type": d.document_type,
+                    "category": d.category,
+                    "tags": d.tags,
+                    "file_url": d.file_url,
+                }
+                for d in docs
+            ],
+            "total": len(docs),
+        }
+
+
+@app.get("/knowledge/documents/{document_id}")
+async def get_document(document_id: str):
+    """Get a specific document by ID."""
+    from src.db.models import KnowledgeDocument
+    
+    async with async_session() as session:
+        from sqlalchemy import select
+        result = await session.execute(
+            select(KnowledgeDocument).where(KnowledgeDocument.document_id == document_id)
+        )
+        doc = result.scalar_one_or_none()
+        if not doc:
+            raise HTTPException(status_code=404, detail="Document not found")
+        return {
+            "document_id": doc.document_id,
+            "title": doc.title,
+            "content": doc.content,
+            "document_type": doc.document_type,
+            "category": doc.category,
+            "tags": doc.tags,
+            "file_url": doc.file_url,
+            "created_at": doc.created_at.isoformat() if doc.created_at else None,
+            "updated_at": doc.updated_at.isoformat() if doc.updated_at else None,
+        }
+
+
+@app.put("/knowledge/documents/{document_id}")
+async def update_document(document_id: str, document: DocumentCreate):
+    """Update a document."""
+    from src.db.models import KnowledgeDocument
+    
+    async with async_session() as session:
+        from sqlalchemy import select
+        result = await session.execute(
+            select(KnowledgeDocument).where(KnowledgeDocument.document_id == document_id)
+        )
+        kb_doc = result.scalar_one_or_none()
+        if not kb_doc:
+            raise HTTPException(status_code=404, detail="Document not found")
+        
+        kb_doc.title = document.title
+        kb_doc.content = document.content
+        kb_doc.document_type = document.document_type
+        kb_doc.category = document.category
+        kb_doc.tags = document.tags
+        kb_doc.file_url = document.file_url
+        
+        await session.commit()
+        await session.refresh(kb_doc)
+        return {"status": "updated", "document_id": kb_doc.document_id}
+
+
+@app.delete("/knowledge/documents/{document_id}")
+async def delete_document(document_id: str):
+    """Delete a document."""
+    from src.db.models import KnowledgeDocument
+    
+    async with async_session() as session:
+        from sqlalchemy import select
+        result = await session.execute(
+            select(KnowledgeDocument).where(KnowledgeDocument.document_id == document_id)
+        )
+        kb_doc = result.scalar_one_or_none()
+        if not kb_doc:
+            raise HTTPException(status_code=404, detail="Document not found")
+        
+        await session.delete(kb_doc)
+        await session.commit()
+        return {"status": "deleted", "document_id": document_id}
+
+
+# ========== User Management ==========
+
+class UserCreateRequest(BaseModel):
+    user_id: str
+    display_name: str
+    role: str = "employee"
+    team: Optional[str] = None
+    vip_flag: bool = False
+    preferences: dict = {}
+
+
+class UserUpdateRequest(BaseModel):
+    display_name: Optional[str] = None
+    role: Optional[str] = None
+    team: Optional[str] = None
+    vip_flag: Optional[bool] = None
+    preferences: Optional[dict] = None
+
+
+@app.post("/admin/users")
+async def create_user(request: UserCreateRequest):
+    """Create a new user profile."""
+    from src.db.models import UserProfile
+    
+    async with async_session() as session:
+        from sqlalchemy import select
+        result = await session.execute(
+            select(UserProfile).where(UserProfile.user_id == request.user_id)
+        )
+        existing = result.scalar_one_or_none()
+        if existing:
+            raise HTTPException(status_code=409, detail="User already exists")
+        
+        user = UserProfile(
+            user_id=request.user_id,
+            display_name=request.display_name,
+            role=request.role,
+            team=request.team,
+            vip_flag=request.vip_flag,
+            preferences=request.preferences,
+        )
+        session.add(user)
+        await session.commit()
+        await session.refresh(user)
+        
+        return {"status": "created", "user_id": user.user_id}
+
+
+@app.get("/admin/users")
+async def list_users(role: str = None, team: str = None, vip: bool = None, limit: int = 50):
+    """List all users with optional filters."""
+    from src.db.models import UserProfile
+    from sqlalchemy import select
+    
+    async with async_session() as session:
+        query = select(UserProfile).limit(limit)
+        
+        if role:
+            query = query.where(UserProfile.role == role)
+        if team:
+            query = query.where(UserProfile.team == team)
+        if vip is not None:
+            query = query.where(UserProfile.vip_flag == vip)
+        
+        result = await session.execute(query)
+        users = result.scalars().all()
+        
+        return {
+            "users": [
+                {
+                    "user_id": u.user_id,
+                    "display_name": u.display_name,
+                    "role": u.role,
+                    "team": u.team,
+                    "vip_flag": u.vip_flag,
+                }
+                for u in users
+            ],
+            "total": len(users),
+        }
+
+
+@app.get("/admin/users/{user_id}")
+async def get_user(user_id: str):
+    """Get a specific user by ID."""
+    from src.db.models import UserProfile
+    from sqlalchemy import select
+    
+    async with async_session() as session:
+        result = await session.execute(
+            select(UserProfile).where(UserProfile.user_id == user_id)
+        )
+        user = result.scalar_one_or_none()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        return {
+            "user_id": user.user_id,
+            "display_name": user.display_name,
+            "role": user.role,
+            "team": user.team,
+            "vip_flag": user.vip_flag,
+            "preferences": user.preferences,
+            "created_at": user.created_at.isoformat() if user.created_at else None,
+            "updated_at": user.updated_at.isoformat() if user.updated_at else None,
+        }
+
+
+@app.put("/admin/users/{user_id}")
+async def update_user(user_id: str, request: UserUpdateRequest):
+    """Update a user profile."""
+    from src.db.models import UserProfile
+    from sqlalchemy import select
+    
+    async with async_session() as session:
+        result = await session.execute(
+            select(UserProfile).where(UserProfile.user_id == user_id)
+        )
+        user = result.scalar_one_or_none()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        if request.display_name is not None:
+            user.display_name = request.display_name
+        if request.role is not None:
+            user.role = request.role
+        if request.team is not None:
+            user.team = request.team
+        if request.vip_flag is not None:
+            user.vip_flag = request.vip_flag
+        if request.preferences is not None:
+            user.preferences = request.preferences
+        
+        await session.commit()
+        await session.refresh(user)
+        
+        return {"status": "updated", "user_id": user.user_id}
+
+
+@app.delete("/admin/users/{user_id}")
+async def delete_user(user_id: str):
+    """Delete a user profile."""
+    from src.db.models import UserProfile
+    from sqlalchemy import select
+    
+    async with async_session() as session:
+        result = await session.execute(
+            select(UserProfile).where(UserProfile.user_id == user_id)
+        )
+        user = result.scalar_one_or_none()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        await session.delete(user)
+        await session.commit()
+        
+        return {"status": "deleted", "user_id": user_id}
+
+
+# ========== Config Management ==========
+
+class ConfigCreateRequest(BaseModel):
+    key: str
+    value: str
+    description: Optional[str] = None
+    is_sensitive: bool = False
+
+
+class ConfigUpdateRequest(BaseModel):
+    value: Optional[str] = None
+    description: Optional[str] = None
+    is_sensitive: Optional[bool] = None
+
+
+@app.post("/admin/config")
+async def create_config(request: ConfigCreateRequest):
+    """Create a new config entry."""
+    from src.db.models import Config
+    
+    async with async_session() as session:
+        from sqlalchemy import select
+        result = await session.execute(
+            select(Config).where(Config.key == request.key)
+        )
+        existing = result.scalar_one_or_none()
+        if existing:
+            raise HTTPException(status_code=409, detail="Config key already exists")
+        
+        config = Config(
+            key=request.key,
+            value=request.value,
+            description=request.description,
+            is_sensitive=request.is_sensitive,
+        )
+        session.add(config)
+        await session.commit()
+        await session.refresh(config)
+        
+        return {"status": "created", "key": config.key}
+
+
+@app.get("/admin/config")
+async def list_configs(category: str = None, limit: int = 50):
+    """List all configs with optional filter."""
+    from src.db.models import Config
+    from sqlalchemy import select
+    
+    async with async_session() as session:
+        query = select(Config).limit(limit)
+        
+        if category:
+            query = query.where(Config.category == category)
+        
+        result = await session.execute(query)
+        configs = result.scalars().all()
+        
+        return {
+            "configs": [
+                {
+                    "key": c.key,
+                    "value": "***" if c.is_sensitive else c.value,
+                    "description": c.description,
+                    "category": c.category,
+                    "is_sensitive": c.is_sensitive,
+                }
+                for c in configs
+            ],
+            "total": len(configs),
+        }
+
+
+@app.get("/admin/config/{key}")
+async def get_config(key: str):
+    """Get a specific config by key."""
+    from src.db.models import Config
+    from sqlalchemy import select
+    
+    async with async_session() as session:
+        result = await session.execute(
+            select(Config).where(Config.key == key)
+        )
+        config = result.scalar_one_or_none()
+        if not config:
+            raise HTTPException(status_code=404, detail="Config not found")
+        
+        return {
+            "key": config.key,
+            "value": "***" if config.is_sensitive else config.value,
+            "description": config.description,
+            "category": config.category,
+            "is_sensitive": config.is_sensitive,
+        }
+
+
+@app.put("/admin/config/{key}")
+async def update_config(key: str, request: ConfigUpdateRequest):
+    """Update a config."""
+    from src.db.models import Config
+    from sqlalchemy import select
+    
+    async with async_session() as session:
+        result = await session.execute(
+            select(Config).where(Config.key == key)
+        )
+        config = result.scalar_one_or_none()
+        if not config:
+            raise HTTPException(status_code=404, detail="Config not found")
+        
+        if request.value is not None:
+            config.value = request.value
+        if request.description is not None:
+            config.description = request.description
+        if request.is_sensitive is not None:
+            config.is_sensitive = request.is_sensitive
+        
+        await session.commit()
+        await session.refresh(config)
+        
+        return {"status": "updated", "key": config.key}
+
+
+@app.delete("/admin/config/{key}")
+async def delete_config(key: str):
+    """Delete a config."""
+    from src.db.models import Config
+    from sqlalchemy import select
+    
+    async with async_session() as session:
+        result = await session.execute(
+            select(Config).where(Config.key == key)
+        )
+        config = result.scalar_one_or_none()
+        if not config:
+            raise HTTPException(status_code=404, detail="Config not found")
+        
+        await session.delete(config)
+        await session.commit()
+        
+        return {"status": "deleted", "key": key}

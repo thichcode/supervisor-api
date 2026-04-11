@@ -74,10 +74,43 @@ class Settings(BaseSettings):
     rate_limit_window: int = 60
 
     log_level: str = "INFO"
-    executive_keywords: list[str] = ["ceo", "cto", "cfo", "director", "vp", "urgent", "asap"]
-    commitment_keywords: list[str] = ["cam kết", "đảm bảo", "chắc chắn", "sẽ làm", "hứa", "commit"]
-    financial_keywords: list[str] = ["financial", "finance", "budget", "quarterly", "doanh thu", "tài chính"]
-    legal_keywords: list[str] = ["legal", "contract", "compliance", "luật", "pháp lý", "hợp đồng"]
+    executive_keywords: list[str] = [
+        # English
+        "ceo", "cto", "cfo", "coo", "director", "vp", "head of", "manager",
+        "urgent", "asap", "critical", "important", "priority",
+        # Vietnamese
+        "sếp", "giám đốc", "trưởng phòng", "quản lý", "lãnh đạo",
+        "ban lãnh đạo", "cấp cao", "gấp", "khẩn",
+    ]
+    commitment_keywords: list[str] = [
+        # English
+        "commit", "guarantee", "promise", "assure", "ensure",
+        "will do", "can do", "definitely", "certainly",
+        # Vietnamese
+        "cam kết", "đảm bảo", "chắc chắn", "sẽ làm", "hứa",
+        "bảo đảm", "quyết tâm", "cam đoan", "đồng ý ngay",
+    ]
+    financial_keywords: list[str] = [
+        # English
+        "financial", "finance", "budget", "revenue", "profit", "cost",
+        "expense", "quarterly", "annual", "invoice", "payment",
+        "salary", "bonus", "allowance", "compensation",
+        "contract value", "deal", "quote", "pricing",
+        # Vietnamese
+        "doanh thu", "lợi nhuận", "tài chính", "ngân sách", "chi phí",
+        "lương", "thưởng", "phụ cấp", "tiền", "thanh toán",
+        "hóa đơn", "báo giá", "hợp đồng", "giá trị",
+    ]
+    legal_keywords: list[str] = [
+        # English
+        "legal", "contract", "compliance", "regulation", "law",
+        "agreement", "nda", "confidential", "patent", "ip",
+        "dispute", "violation", "breach", "termination",
+        # Vietnamese
+        "luật", "pháp lý", "hợp đồng", "thỏa thuận",
+        "bí mật", "điều khoản", "phạt", "chấm dứt",
+        "tranh chấp", "vi phạm", "quyền sở hữu", "bản quyền",
+    ]
 
     @property
     def database_url(self) -> str:

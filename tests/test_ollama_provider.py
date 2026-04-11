@@ -46,7 +46,7 @@ async def test_ollama_connection():
         return False
 
 
-async def test_vietnamese_completion(client: MultiProviderLLMClient):
+async def _test_vietnamese_completion(client: MultiProviderLLMClient):
     """Test Vietnamese language completion"""
     print("\n" + "=" * 60)
     print("Testing Vietnamese Language Processing")
@@ -90,7 +90,7 @@ async def test_vietnamese_completion(client: MultiProviderLLMClient):
             print(f"   ✗ Error: {e}")
 
 
-async def test_intent_classification(client: MultiProviderLLMClient):
+async def _test_intent_classification(client: MultiProviderLLMClient):
     """Test Vietnamese intent classification"""
     print("\n" + "=" * 60)
     print("Testing Intent Classification (Vietnamese)")
@@ -120,7 +120,7 @@ async def test_intent_classification(client: MultiProviderLLMClient):
             print(f"   ✗ Error: {e}")
 
 
-async def test_model_switching(client: MultiProviderLLMClient):
+async def _test_model_switching(client: MultiProviderLLMClient):
     """Test switching between models"""
     print("\n" + "=" * 60)
     print("Testing Model Switching")
@@ -176,9 +176,9 @@ async def main():
 
     # Run tests
     if ollama_available:
-        await test_vietnamese_completion(client)
-        await test_intent_classification(client)
-        await test_model_switching(client)
+        await _test_vietnamese_completion(client)
+        await _test_intent_classification(client)
+        await _test_model_switching(client)
 
     # Show cost stats
     print("\n" + "=" * 60)

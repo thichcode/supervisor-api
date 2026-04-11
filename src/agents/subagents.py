@@ -57,7 +57,15 @@ class PolicyAgent:
             "guide_title": None,
         }
 
-        guide_keywords = ["hướng dẫn", "guideline", "manual", "tài liệu", "doc", "cách làm", "quy trình"]
+        guide_keywords = [
+            # English
+            "guide", "guideline", "manual", "document", "doc", "documentation",
+            "how to", "tutorial", "instruction", "step by step",
+            # Vietnamese
+            "hướng dẫn", "tài liệu", "cách làm", "cách sử dụng", "quy trình",
+            "sách hướng dẫn", "chỉ dẫn", "chỉ thị", "hướng dẫn sử dụng",
+            "cách cài đặt", "cách config", "cách setup",
+        ]
         
         if any(kw in text_lower for kw in guide_keywords):
             policy_info["guidelines_found"] = True
@@ -82,13 +90,29 @@ Trả về JSON: {"guide_id": "...", "guide_title": "..."}"""
                     except json.JSONDecodeError:
                         pass
 
-        policy_keywords = ["policy", "quy định", "chính sách", "rule", "sop"]
+        policy_keywords = [
+            # English
+            "policy", "guideline", "rule", "sop", "procedure",
+            "regulation", "compliance", "requirement", "standard",
+            # Vietnamese
+            "quy định", "chính sách", "thể lệ", "nội quy",
+            "tiêu chuẩn", "yêu cầu", "nguyên tắc",
+            "quyền lợi", "phúc lợi", "phạt", "thưởng",
+        ]
         if any(kw in text_lower for kw in policy_keywords) and not policy_info["guide_requested"]:
             policy_info["guidelines_found"] = True
             if not policy_info["relevant_policies"]:
                 policy_info["relevant_policies"].append("Áp dụng các chính sách chung của công ty")
 
-        support_keywords = ["support", "case", "hỗ trợ", "vấn đề", "ticket", "issue"]
+        support_keywords = [
+            # English
+            "support", "case", "ticket", "issue", "problem", "bug",
+            "error", "crash", "not working", "broken", "help",
+            # Vietnamese
+            "hỗ trợ", "vấn đề", "sự cố", "lỗi", "hỏng",
+            "không được", "bị lỗi", "treo", "đơ",
+            "cần giúp", "giúp tôi", "sửa", "fix",
+        ]
         if any(kw in text_lower for kw in support_keywords):
             if memory.case_memory:
                 policy_info["relevant_policies"].append("Áp dụng quy trình xử lý case")
@@ -126,12 +150,24 @@ class KnowledgeAgent:
         text_lower = payload.message.text.lower()
 
         system_query_keywords = [
-            "thông tin người dùng", "user info", "tra cứu", 
-            "kiểm tra thông tin", "check info", "tìm thông tin",
-            "case của tôi", "my case", "trạng thái case", "case id",
-            "ai đang xử lý", "who is handling", "assignee",
-            "đang ở đâu", "status", "tình trạng",
+            # Vietnamese
+            "thông tin người dùng", "tra cứu", "kiểm tra thông tin",
+            "tìm thông tin", "case của tôi", "trạng thái case",
+            "ai đang xử lý", "đang ở đâu", "tình trạng",
             "cho tôi biết", "cho xem", "hiển thị",
+            "xem thông tin", "xem case", "xem trạng thái",
+            "tìm case", "case id", "mã case",
+            "người phụ trách", "ai làm", "ai giải quyết",
+            "bao giờ xong", "khi nào xong", "deadline",
+            "ai assign", "ai được assign",
+            # English
+            "user info", "check info", "find info",
+            "my case", "case status", "case id",
+            "who is handling", "assignee", "assigned to",
+            "status", "where is", "when done",
+            "show me", "tell me", "display",
+            "find case", "look up case",
+            "in charge", "responsible",
         ]
         
         query_type_mapping = {

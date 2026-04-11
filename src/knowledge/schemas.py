@@ -109,3 +109,39 @@ class KnowledgeStats(BaseModel):
     guides_count: int
     documents_count: int
     categories: List[dict]
+
+
+class DocumentCreate(BaseModel):
+    document_id: str
+    title: str
+    content: str
+    document_type: str
+    category: str
+    tags: List[str] = []
+    file_url: Optional[str] = None
+
+
+class DocumentResponse(BaseModel):
+    document_id: str
+    title: str
+    content: str
+    document_type: str
+    category: str
+    tags: List[str]
+    file_url: Optional[str]
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class BulkImportRequest(BaseModel):
+    policies: List[PolicyCreate] = []
+    faqs: List[FAQCreate] = []
+    guides: List[GuideCreate] = []
+    documents: List[DocumentCreate] = []
+
+
+class BulkImportResponse(BaseModel):
+    status: str
+    imported: dict
+    errors: List[dict] = []

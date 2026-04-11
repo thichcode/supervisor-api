@@ -23,6 +23,8 @@ from .provider import (
 
 llm_client = MultiProviderLLMClient()
 
+LLMClient = MultiProviderLLMClient
+
 
 def get_llm():
     """Get the default LLM client."""
@@ -31,6 +33,7 @@ def get_llm():
 
 __all__ = [
     "MultiProviderLLMClient",
+    "LLMClient",
     "llm_client",
     "get_llm_client",
     "get_llm",

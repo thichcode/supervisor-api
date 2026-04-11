@@ -158,14 +158,44 @@ class KnowledgeDocument(Base):
     __tablename__ = "knowledge_documents"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    doc_id = Column(String(100), nullable=False, unique=True, index=True)
+    document_id = Column(String(100), nullable=False, unique=True, index=True)
     title = Column(String(255), nullable=False)
     content = Column(Text, nullable=False)
-    doc_type = Column(String(50), nullable=False, index=True)
+    document_type = Column(String(50), nullable=False, index=True)
     category = Column(String(100), nullable=False, index=True)
     tags = Column(JSON, default=list)
+    file_url = Column(String(500), nullable=True)
     extra_metadata = Column(JSON, default=dict)
     embedding = Column(JSON, nullable=True)
     is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+
+class Alert(Base):
+    __tablename__ = "alerts"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    alert_id = Column(String(100), nullable=False, unique=True, index=True)
+    alert_type = Column(String(50), nullable=False, index=True)
+    severity = Column(String(20), nullable=False, index=True)
+    title = Column(String(255), nullable=False)
+    message = Column(Text, nullable=False)
+    extra_metadata = Column(JSON, default=dict)
+    status = Column(String(20), default="active", index=True)
+    acknowledged_by = Column(String(100), nullable=True)
+    acknowledged_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=func.now())
+
+
+class Config(Base):
+    __tablename__ = "configs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    key = Column(String(100), nullable=False, unique=True, index=True)
+    value = Column(Text, nullable=False)
+    description = Column(Text, nullable=True)
+    category = Column(String(50), default="general", index=True)
+    is_sensitive = Column(Boolean, default=False)
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())

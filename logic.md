@@ -3,6 +3,91 @@
 ## Overview
 This document explains how the Multi-Agent Supervisor System aggregates information within the same `thread_id` to maintain conversational context and provide coherent responses.
 
+## Input Processing Flow
+
+### 1. Request Reception
+The system receives input from multiple sources:
+- **Microsoft Teams** → Power Automate → n8n Webhook (`/webhook/n8n`)
+- **Direct Chat API** → `/chat`
+- **System Query** → `/system/query`
+
+Input schema validation via Pydantic models:
+- `InputPayload` - webhook payload
+- `ChatRequest` - direct chat
+
+### 2. Input Normalizer & Sanitizer
+```python
+# src/core/sanitizer.py
+- Validate required fields (request_id, user, message)
+- Mask PII (emails, phones, IDs)
+- Normalize whitespace and encoding
+```
+
+### 3. Memory Retrieval
+- Extract `thread_id` from payload
+- Check Redis cache first: `memory:{thread_id}`
+- On cache miss, query PostgreSQL:
+  - `get_conversation_summary(thread_id)`
+  - `get_recent_messages(thread_id, limit=10)`
+  - `get_user_profile(user_id)`
+  - `get_case_memory(case_id)` if applicable
+
+### 4. Intent Classification
+```python
+# src/core/intent_classifier.py
+IntentType = Enum['FAQ', 'POLICY', 'SUPPORT_CASE', 'ANALYSIS', 'EXECUTIVE_REQUEST']
+
+Classify based on:
+- Message text keywords
+- User profile (VIP → EXECUTIVE_REQUEST)
+- Case presence (SUPPORT_CASE)
+```
+
+### 5. Risk Evaluation
+```python
+# src/core/risk_evaluator.py
+RiskEvaluation:
+  - risk_level: LOW / MEDIUM / HIGH
+  - flags: vip, executive, legal, financial, commitment, high_priority_case
+```
+
+### 6. Auto-Detection
+
+**Guide Request Detection** (Policy Agent):
+```python
+guide_keywords = ["hướng dẫn", "guideline", "manual", "tài liệu", "cách làm", "quy trình"]
+# If detected → trigger guide delivery flow
+```
+
+**System Query Detection** (Knowledge Agent):
+```python
+system_query_keywords = [
+    "thông tin người dùng", "user info", "tra cứu",
+    "case của tôi", "my case", "trạng thái case",
+    "ai đang xử lý", "who is handling"
+]
+# If detected → query user/case info
+```
+
+### 7. Decision Engine
+
+**Use SUBAGENTS if:**
+- `intent` ∈ [policy, support_case, analysis]
+- OR `risk_level` ≥ MEDIUM
+- OR multi-step request (>50 words)
+- OR `guide_requested` = true
+- OR `system_query_requested` = true
+- OR confidence < 0.7
+
+**Use DIRECT ANSWER otherwise**
+
+### 8. Approval Check
+- If `confidence` < 0.9 (90%) → create approval request
+- Status: `pending_approval`
+- Manager must approve via `/approvals/{id}/action`
+
+---
+
 ## Core Mechanism
 
 The system uses `thread_id` as the primary key for aggregating conversation context across multiple interactions. When processing any request, the system extracts the `thread_id` from the payload and uses it to retrieve, aggregate, and store all relevant information for that conversation thread.
