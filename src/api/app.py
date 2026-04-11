@@ -918,6 +918,156 @@ async def approve_or_reject(approval_id: str, action: ApprovalActionRequest):
     raise HTTPException(status_code=400, detail="Invalid action. Use 'approve' or 'reject'")
 
 
+# =============================================================================
+# n8n Action Endpoints - Execute actions on internal systems via n8n webhooks
+# =============================================================================
+
+from src.tools.n8n_connector import get_n8n_connector, ActionType, RiskLevel
+from src.tools.n8n_tool import get_n8n_tool
+
+
+@app.get("/n8n/actions")
+async def list_n8n_actions(action_type: Optional[str] = None):
+    """
+    List all available n8n actions that can be executed via webhooks.
+    
+    - action_type: Filter by type ('query' or 'action')
+    """
+    tool = get_n8n_tool()
+    return {"actions": json.loads(tool.list_available_actions(action_type))}
+
+
+@app.post("/n8n/query")
+async def execute_n8n_query(
+    action_name: str,
+    parameters: dict = {},
+    user_id: str = "system",
+):
+    """
+    Execute a read-only query via n8n webhook (no approval needed).
+    
+    Examples:
+    - backup_status: Get backup system status
+    - monitor_status: Get monitoring system status
+    - server_status: Get server status
+    """
+    tool = get_n8n_tool()
+    result = json.loads(tool.execute_query(action_name, parameters, user_id))
+    
+    if not result.get("success"):
+        raise HTTPException(status_code=400, detail=result.get("error", "Query failed"))
+    
+    return result
+
+
+@app.post("/n8n/action/request")
+async def request_n8n_action(
+    action_name: str,
+    parameters: dict = {},
+    user_id: str = "unknown",
+    user_display_name: str = "Unknown User",
+):
+    """
+    Request an action that requires approval before execution.
+    
+    Returns an approval request ID that can be used to approve/reject.
+    """
+    tool = get_n8n_tool()
+    result = json.loads(tool.request_action(
+        action_name, parameters, user_id, user_display_name
+    ))
+    
+    if not result.get("success"):
+        raise HTTPException(status_code=400, detail=result.get("error", "Failed to request action"))
+    
+    return result
+
+
+@app.get("/n8n/approvals/pending")
+async def list_pending_n8n_approvals(
+    system: Optional[str] = None,
+    risk_level: Optional[str] = None,
+):
+    """
+    List all pending n8n action approvals.
+    
+    - system: Filter by system (backup, monitoring, itsm, infrastructure, iam)
+    - risk_level: Filter by risk level (low, medium, high, critical)
+    """
+    tool = get_n8n_tool()
+    return json.loads(tool.get_pending_approvals(system, risk_level))
+
+
+@app.post("/n8n/approvals/{request_id}/approve")
+async def approve_n8n_action(
+    request_id: str,
+    approver_name: str = "Admin",
+):
+    """
+    Approve a pending n8n action request.
+    
+    After approval, the action will be executed via n8n webhook.
+    """
+    tool = get_n8n_tool()
+    result = json.loads(tool.approve_action(request_id, approver_name))
+    
+    if not result.get("success"):
+        raise HTTPException(status_code=400, detail=result.get("error", "Failed to approve"))
+    
+    # Execute the approved action
+    exec_result = json.loads(tool.execute_approved_action(request_id))
+    
+    return {
+        "approval": result,
+        "execution": exec_result,
+    }
+
+
+@app.post("/n8n/approvals/{request_id}/reject")
+async def reject_n8n_action(
+    request_id: str,
+    rejector_name: str = "Admin",
+    reason: str = "",
+):
+    """
+    Reject a pending n8n action request.
+    """
+    tool = get_n8n_tool()
+    result = json.loads(tool.reject_action(request_id, rejector_name, reason))
+    
+    if not result.get("success"):
+        raise HTTPException(status_code=400, detail=result.get("error", "Failed to reject"))
+    
+    return result
+
+
+@app.get("/n8n/approvals/{request_id}")
+async def get_n8n_approval_status(request_id: str):
+    """
+    Get the status of an n8n action approval request.
+    """
+    connector = get_n8n_connector()
+    
+    if request_id not in connector.approval_store:
+        raise HTTPException(status_code=404, detail="Request not found")
+    
+    req = connector.approval_store[request_id]
+    
+    return {
+        "request_id": req.request_id,
+        "action": req.action,
+        "system": req.system,
+        "risk_level": req.risk_level.value,
+        "status": req.status,
+        "requested_by": req.requested_by,
+        "requested_at": req.requested_at.isoformat(),
+        "approved_by": req.approved_by,
+        "approved_at": req.approved_at.isoformat() if req.approved_at else None,
+        "parameters": req.parameters,
+        "result": req.result,
+    }
+
+
 @app.get("/knowledge/stats")
 async def get_knowledge_stats():
     """Get knowledge base statistics."""
