@@ -31,10 +31,18 @@
 └─────────────────────┼───────────────────────────────────────────────────────────────────────┘
                       │
 ┌─────────────────────┼───────────────────────────────────────────────────────────────────────┐
-│                     │                         Supervisor API (FastAPI)                    │
+│                     │                         Supervisor API v2 (FastAPI)                  │
 │                     │                                                                             │
 │                     │  ┌──────────────────────────────────────────────────────────────────┐   │
-│                     └──→│ 1. Input Normalizer & Sanitizer                                 │   │
+│                     └──→│ 0. v2 Query Cache (LRU)                                          │   │
+│                        │    - Check cache first: cache_key = user_id:query[:100]          │   │
+│                        │    - TTL: 600 seconds (10 min)                                    │   │
+│                        │    - If HIT → Return cached response immediately                  │   │
+│                        └────┬────────────────────────────────────────────────────────────────┘   │
+│                             │ (cache miss)                                                  │
+│                             ↓                                                                    │
+│                        ┌────┴────────────────────────────────────────────────────────────────┐   │
+│                        │ 1. Input Normalizer & Sanitizer                                 │   │
 │                        │    - Validate payload                                              │   │
 │                        │    - Sanitize PII (email, phone, etc.)                             │   │
 │                        │    - Check webhook secret                                          │   │
@@ -66,10 +74,10 @@
 │                             │                                                                    │
 │                             ↓                                                                    │
 │                        ┌────┴────────────────────────────────────────────────────────────────┐   │
-│                        │ 5. Model Selection                                                │   │
-│                        │    - Select LLM model based on intent type                      │   │
-│                        │    - FAQ→llama3, Policy→llama3, Support→llama3                 │   │
-│                        │    - Analysis→llama3, Executive→llama3                          │   │
+│                        │ 5. Agent Router (v2 Enhancement)                                  │   │
+│                        │    - Determine optimal agent path based on query type            │   │
+│                        │    - policy→[policy], support→[context,qa],                       │   │
+│                        │      general→[context,policy,knowledge,draft,qa]                 │   │
 │                        └────┬────────────────────────────────────────────────────────────────┘   │
 │                             │                                                                    │
 │                             ↓                                                                    │
@@ -90,7 +98,7 @@
 │                        │             │               ↓               ↓                       │   │
 │                        │             │        ┌────────────┐  ┌─────────────┐              │   │
 │                        │             │        │Policy Agent│  │Knowledge    │              │   │
-│                        │             │        │(Guide Det.)│  │Agent(SystemQ)│              │   │
+│                        │             │        │(Guide Det.)│  │Agent(BM25) │              │   │
 │                        │             │        └────────────┘  └─────────────┘              │   │
 │                        │             │               │               │                       │   │
 │                        │             │               └───────┬───────┘                       │   │
@@ -99,8 +107,9 @@
 │                        │             │               │               │                       │   │
 │                        │             │               ↓               ↓                       │   │
 │                        │             │        ┌────────────┐  ┌─────────────┐              │   │
-│                        │             │        │Draft Agent │  │ QAAgent    │              │   │
-│                        │             │        └────────────┘  └─────────────┘              │   │
+│                        │             │        │Draft Agent │  │ QAAgent     │              │   │
+│                        │             │        └────────────┘  │(Bayesian)  │              │   │
+│                        │             │                       └─────────────┘              │   │
 │                        │             │               │               │                       │   │
 │                        │             └───────────────┼───────────────┘                       │   │
 │                        │                             │                                       │   │
@@ -108,7 +117,16 @@
 │                                                     │                                            │
 │                                                     ↓                                            │
 │                        ┌────────────────────────────┴────────────────────────────────────┐   │
-│                        │ 7. Approval Check (Confidence < 90%)                              │   │
+│                        │ 7. Bayesian Confidence Validation (v2 Enhancement)              │   │
+│                        │    - Calculate confidence using Bayesian inference               │   │
+│                        │    - Factors: context_relevance, policy_match,                   │   │
+│                        │      knowledge_freshness, user_satisfaction                     │   │
+│                        │    - More accurate than rule-based scoring                       │   │
+│                        └────┬────────────────────────────────────────────────────────────────┘   │
+│                             │                                                                    │
+│                             ↓                                                                    │
+│                        ┌────┴────────────────────────────────────────────────────────────────┐   │
+│                        │ 8. Approval Check (Confidence < 90%)                              │   │
 │                        │                                                                       │   │
 │                        │    ┌─────────────────────────────────────────┐                   │   │
 │                        │    │ Confidence >= 90%?                        │                   │   │
@@ -126,7 +144,7 @@
 │                                                                  │                              │
 │                                                                  ↓                              │
 │                        ┌────────────────────────────────────────┴──────────────────────────┐   │
-│                        │ 7. Memory Commit                                               │   │
+│                        │ 9. Memory Commit                                               │   │
 │                        │    - Save message to Postgres                                    │   │
 │                        │    - Update conversation summary                                 │   │
 │                        │    - Update user profile                                        │   │
@@ -135,18 +153,25 @@
 │                        └────────────────────────────────────────┬──────────────────────────┘   │
 │                                                                 │                               │
 │                                                                 ↓                               │
-└─────────────────────────────────────────────────────────────────┼───────────────────────────────┘
-                                                                  │
-┌─────────────────────────────────────────────────────────────────┼───────────────────────────────┐
-│                                                                 │                               │
-│                                    ┌────────────────────────────┴─────────────────────────┐   │
-│                                    │ 8. Output Response                                    │   │
-│                                    │                                                       │   │
+│                        ┌────────────────────────────────────────┴──────────────────────────┐   │
+│                        │ 10. v2 Cache & Output                                           │   │
+│                        │     - Cache response (confidence >= 60%)                        │   │
+│                        │     - AUTO-SEND to Power Automate (v2 Enhancement)               │   │
+│                        └────────────────────────────────────────┬──────────────────────────┘   │
+│                                                                     │                           │
+└─────────────────────────────────────────────────────────────────────┼───────────────────────────┘
+                                                                      │
+┌─────────────────────────────────────────────────────────────────────┼───────────────────────────┐
+│                                                                     │                           │
+│                                    ┌────────────────────────────────┴────────────────────────┐   │
+│                                    │ Output Response (AUTO-SEND)                              │   │
+│                                    │                                                           │   │
 │         ┌──────────────┐          │    ┌─────────────────────────────────────────┐       │   │
-│         │ Power        │←────────┤────│ POST to /output/power-automate          │       │   │
-│         │ Automate     │          │    └─────────────────────────────────────────┘       │   │
-│         │ (Outgoing)  │          │                                                       │   │
-│         └──────────────┘          │    OR (if pending_approval):                       │   │
+│         │ Power        │←────────┤────│ POST to Power Automate Webhook           │       │   │
+│         │ Automate     │          │    │ (AUTO - no manual trigger needed)        │       │   │
+│         │ (Outgoing)  │          │    └─────────────────────────────────────────┘       │   │
+│         └──────────────┘          │                                                           │   │
+│                                   │    OR (if pending_approval):                           │   │
 │                                   │    ┌─────────────────────────────────────────┐       │   │
 │                                   │    │ Return to client: status=pending_approval│       │   │
 │                                   │    │ + approval_id                            │       │   │
@@ -300,8 +325,22 @@ User asks: "case của tôi", "ai đang xử lý", "trạng thái"
 
 | Trigger | Detection | Processing | Output |
 |---------|-----------|------------|--------|
-| Teams → Power Automate → n8n | `/webhook/n8n` | Full pipeline | Webhook callback |
-| Direct chat | `/chat` | Full pipeline | JSON response |
+| Teams → Power Automate → n8n | `/webhook/n8n` | Full pipeline v2 (Cache→Router→BM25→LLM→Bayesian) | AUTO-SEND to Power Automate |
+| Direct chat | `/chat` | Full pipeline v2 | AUTO-SEND to Power Automate |
 | Guide request | `guide_requested` flag | Priority processing | Guide delivery |
 | System query | `system_query` flag | Direct query | System info |
 | Low confidence (<90%) | Approval check | Queue for approval | Pending status |
+
+## v2 Enhancements Summary
+
+### Supervisor v2 Modules:
+1. **LRU Cache** - Query response caching (TTL: 600s)
+2. **BM25 Search** - Hybrid search (BM25 70% + TF-IDF 30%)
+3. **Bayesian Confidence** - Probabilistic confidence scoring
+4. **Agent Router** - Dynamic agent path selection
+
+### Auto-Send to Power Automate:
+- Enabled by default for `/chat` and `/webhook/n8n` endpoints
+- Configured via `POWER_AUTOMATE_WEBHOOK_URL` environment variable
+- Retry 3 times with exponential backoff
+- Formats response for Power Automate consumption

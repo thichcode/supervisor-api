@@ -517,6 +517,52 @@ async def send_to_power_automate(payload: OutputPayload):
         raise HTTPException(status_code=502, detail="Failed to reach Power Automate")
 
 
+# NEW: Auto-send helper for integrated sending
+async def _auto_send_to_power_automate(payload: OutputPayload) -> bool:
+    """Auto-send response to Power Automate (called automatically after chat)"""
+    if not settings.power_automate_webhook_url:
+        return False
+
+    import httpx
+    from tenacity import retry, stop_after_attempt, wait_exponential
+
+    # Format payload for Power Automate
+    pa_payload = {
+        "request_id": getattr(payload, 'request_id', ''),
+        "message": payload.message.text if payload.message else "",
+        "confidence": payload.confidence,
+        "intent": payload.intent.intent.value if payload.intent else "unknown",
+        "risk_level": payload.risk.risk_level.value if payload.risk else "unknown",
+        "agents_used": payload.agents_used,
+        "status": payload.status,
+        "processing_time_ms": payload.processing_time_ms,
+        "metadata": payload.metadata,
+    }
+
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=10))
+    async def _send():
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                settings.power_automate_webhook_url,
+                json=pa_payload,
+                timeout=settings.webhook_timeout,
+            )
+            response.raise_for_status()
+            return response.status_code
+
+    try:
+        status_code = await _send()
+        logger.info("Auto-sent to Power Automate", 
+                 request_id=getattr(payload, 'request_id', ''),
+                 status_code=status_code)
+        return True
+    except Exception as e:
+        logger.error("Auto-send to Power Automate failed", 
+                   request_id=getattr(payload, 'request_id', ''),
+                   error=str(e))
+        return False
+
+
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
     """Direct user chat endpoint for real-time messaging with users.
@@ -590,6 +636,13 @@ async def chat(request: ChatRequest):
             },
         )
     
+    # Auto-send to Power Automate after successful response (if configured)
+    if result.status == "completed" and settings.power_automate_webhook_url:
+        try:
+            await _auto_send_to_power_automate(result)
+        except Exception as e:
+            logger.warning("Auto-send to Power Automate failed", error=str(e))
+
     return ChatResponse(
         request_id=request_id,
         status=result.status,

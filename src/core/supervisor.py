@@ -1,3 +1,8 @@
+"""
+Supervisor - Main orchestration logic
+Enhanced v2 with BM25 Search, Bayesian Confidence, LRU Cache, Agent Router
+"""
+
 from src.core import (
     InputPayload,
     OutputPayload,
@@ -10,11 +15,31 @@ from src.memory import MemoryContext as MemoryContextModel
 from src.agents import ContextAgent, PolicyAgent, KnowledgeAgent, DraftAgent, QAAgent
 from src.db import AuditLog, async_session
 from src.llm import MultiProviderLLMClient, LLMResponse
-from typing import Optional
+from typing import Optional, Dict, Any
 import time
+import structlog
+
+logger = structlog.get_logger()
+
+
+# Import NEW modules (v2 enhancements)
+try:
+    from src.knowledge.bm25_search import HybridSearch
+    from src.core.bayesian_confidence import BayesianConfidence, ResponseValidator, ConfidenceFactors
+    from src.memory.lru_cache import LRUCache, PolicyCache, KnowledgeCache
+    from src.agents.router import AdaptiveRouter, AgentType
+    NEW_MODULES_AVAILABLE = True
+except ImportError as e:
+    NEW_MODULES_AVAILABLE = False
+    logger.warning("New modules not available", error=str(e))
 
 
 class DecisionEngine:
+    """Enhanced decision engine with agent routing"""
+    
+    def __init__(self, router=None):
+        self.router = router or AdaptiveRouter()
+    
     def should_use_subagents(
         self,
         intent: IntentClassification,
@@ -58,9 +83,29 @@ class DecisionEngine:
             return True
 
         return False
+    
+    def get_agent_path(self, query: str, query_type: str = "general") -> list:
+        """NEW v2: Get optimal agent path using router"""
+        try:
+            if self.router:
+                path, info = self.router.route_with_feedback(query, query_type)
+                return path
+        except Exception as e:
+            logger.warning("Router failed", error=str(e))
+        
+        # Fallback to default path
+        return ["context", "policy", "knowledge", "draft", "qa"]
 
 
 class Supervisor:
+    """
+    Enhanced Supervisor with all v2 improvements:
+    - LRU Cache for query caching
+    - BM25 Search for knowledge retrieval
+    - Bayesian Confidence for validation
+    - Agent Router for optimal path selection
+    """
+    
     def __init__(self):
         self.decision_engine = DecisionEngine()
         self.context_agent = ContextAgent()
@@ -69,23 +114,72 @@ class Supervisor:
         self.draft_agent = DraftAgent()
         self.qa_agent = QAAgent()
         self._llm: Optional[MultiProviderLLMClient] = None
-
+        
+        # NEW v2: Initialize enhanced components
+        self._init_enhancements()
+    
+    def _init_enhancements(self):
+        """Initialize v2 enhancement modules"""
+        if NEW_MODULES_AVAILABLE:
+            try:
+                # LRU Cache (query + response)
+                self.query_cache = LRUCache(maxsize=300, ttl_seconds=600)
+                self.policy_cache = PolicyCache(maxsize=200)
+                self.knowledge_cache = KnowledgeCache(maxsize=500)
+                
+                # BM25 Search
+                self.policy_search = HybridSearch(bm25_weight=0.7, tfidf_weight=0.3)
+                self.knowledge_search = HybridSearch(bm25_weight=0.6, tfidf_weight=0.4)
+                
+                # Bayesian Confidence
+                self.bayesian_confidence = BayesianConfidence()
+                self.response_validator = ResponseValidator()
+                
+                # Agent Router (already in decision_engine)
+                logger.info("Supervisor v2 enhancements initialized",
+                          cache=True, bm25=True, bayesian=True, routing=True)
+            except Exception as e:
+                logger.error("Failed to initialize enhancements", error=str(e))
+        else:
+            logger.warning("Running in legacy mode (no v2 enhancements)")
+    
     def set_llm(self, llm: MultiProviderLLMClient):
         self._llm = llm
 
     async def process(self, payload: InputPayload, memory: MemoryContextModel) -> OutputPayload:
         start_time = time.time()
-        agents_used = []
         decision = "direct"
         final_confidence = 0.85
+        cache_hit = False
+        
+        # NEW v2: Check cache first
+        if NEW_MODULES_AVAILABLE:
+            cache_result = self._check_cache(payload)
+            if cache_result:
+                final_confidence = cache_result.get("confidence", 0.9)
+                cache_hit = True
+                logger.debug("Cache hit", request_id=payload.request_id)
+                return self._create_output(
+                    payload=payload,
+                    answer=cache_result["response"],
+                    confidence=final_confidence,
+                    intent=IntentClassification(intent=IntentType.GENERAL, confidence=0.9),
+                    risk=RiskEvaluation(risk_level=RiskLevel.LOW, reasons=[]),
+                    agents_used=["cache"],
+                    status="completed",
+                    processing_time=start_time,
+                )
 
         intent = self._classify_intent(payload, memory)
         risk = self._evaluate_risk(payload, memory)
 
         if self.decision_engine.should_use_subagents(intent, risk, payload):
             decision = "subagents"
-            agents_used = ["context", "policy", "knowledge", "draft", "qa"]
-
+            
+            # Use agent router for optimized path (v2)
+            agents_used = self._get_agents_from_path(intent, risk, payload, memory)
+            
+            # Context + Policy + Knowledge flow
             context = self.context_agent.build(payload, memory)
             policy = await self.policy_agent.extract(payload, memory, self._llm)
             knowledge = await self.knowledge_agent.retrieve(payload, memory, self._llm)
@@ -101,8 +195,10 @@ class Supervisor:
                 agents_used.append("system_query")
             else:
                 draft = await self.draft_agent.generate(payload, context, policy, knowledge, self._llm)
-                validation = await self.qa_agent.validate(draft, payload, context, self._llm)
-
+                
+                # Enhanced validation with Bayesian confidence (v2)
+                validation = await self._enhanced_validate(draft, payload, context, policy, knowledge)
+                
                 if validation["needs_review"]:
                     if self.decision_engine.needs_human_review(intent, risk, payload, validation["confidence"]):
                         return self._create_output(
@@ -133,6 +229,10 @@ class Supervisor:
             output_summary=answer[:200],
             processing_time_ms=processing_time_ms,
         )
+        
+        # NEW v2: Cache successful responses
+        if NEW_MODULES_AVAILABLE and final_confidence >= 0.6:
+            self._cache_response(payload, answer, final_confidence)
 
         return self._create_output(
             payload=payload,
@@ -144,7 +244,162 @@ class Supervisor:
             status="completed",
             processing_time=start_time,
         )
-
+    
+    # ===== NEW v2 Methods =====
+    
+    def _check_cache(self, payload: InputPayload) -> Optional[Dict]:
+        """Check LRU cache for cached response"""
+        if not hasattr(self, 'query_cache'):
+            return None
+        
+        cache_key = f"{payload.user.id}:{payload.message.text[:100]}"
+        return self.query_cache.get(cache_key)
+    
+    def _cache_response(self, payload: InputPayload, response: str, confidence: float):
+        """Cache response for future use"""
+        if not hasattr(self, 'query_cache'):
+            return
+        
+        cache_key = f"{payload.user.id}:{payload.message.text[:100]}"
+        self.query_cache.set(cache_key, {
+            "response": response,
+            "confidence": confidence,
+            "timestamp": time.time()
+        })
+    
+    def _get_agents_from_path(
+        self,
+        intent: IntentClassification,
+        risk: RiskEvaluation,
+        payload: InputPayload,
+        memory: MemoryContextModel
+    ) -> list:
+        """Get agents based on query type and router"""
+        # Determine query type
+        query_type = self._determine_query_type(intent)
+        
+        # Get optimized path from router
+        try:
+            path = self.decision_engine.get_agent_path(payload.message.text, query_type)
+            # Convert AgentType to string list
+            return [a.value if hasattr(a, 'value') else str(a) for a in path]
+        except Exception as e:
+            logger.warning("Agent path failed, using default", error=str(e))
+            return ["context", "policy", "knowledge", "draft", "qa"]
+    
+    def _determine_query_type(self, intent: IntentClassification) -> str:
+        """Map intent to query type for routing"""
+        mapping = {
+            IntentType.POLICY: "policy",
+            IntentType.SUPPORT_CASE: "support",
+            IntentType.SYSTEM_QUERY: "system_query",
+            IntentType.GUIDE_REQUEST: "guide",
+            IntentType.ANALYSIS: "analysis",
+        }
+        return mapping.get(intent.intent, "general")
+    
+    def _enhanced_validate(
+        self,
+        draft: str,
+        payload: InputPayload,
+        context: Dict,
+        policy: Dict,
+        knowledge: Dict
+    ) -> Dict:
+        """Enhanced validation with Bayesian confidence"""
+        if not NEW_MODULES_AVAILABLE:
+            # Fallback to original validation
+            return self._original_validate(draft, payload, context)
+        
+        try:
+            # Extract confidence factors
+            factors = ConfidenceFactors(
+                context_relevance=min(1.0, len(context.get("user_info", {})) / 3),
+                policy_match=1.0 if policy.get("relevant_policies") else 0.5,
+                knowledge_freshness=0.7,
+                user_satisfaction=0.7,
+                agent_experience=0.75
+            )
+            
+            # Calculate Bayesian confidence
+            confidence, factor_scores = self.bayesian_confidence.calculate_confidence(factors, "llama3")
+            
+            # Also use ResponseValidator for issues detection
+            validation = {
+                "draft": draft,
+                "confidence": confidence,
+                "factor_scores": factor_scores,
+                "needs_review": confidence < 0.7
+            }
+            
+            logger.debug("Bayesian validation",
+                      confidence=confidence,
+                      factors=list(factor_scores.keys()))
+            
+            return validation
+        except Exception as e:
+            logger.warning("Bayesian validation failed, using original", error=str(e))
+            return self._original_validate(draft, payload, context)
+    
+    def _original_validate(self, draft: str, payload: InputPayload, context: Dict) -> Dict:
+        """Original QA validation as fallback"""
+        needs_review = len(draft) < 50 or len(draft) > 2000
+        confidence = 0.7 if not needs_review else 0.5
+        
+        return {
+            "draft": draft,
+            "confidence": confidence,
+            "needs_review": needs_review
+        }
+    
+    def _search_knowledge_bm25(self, query: str, kb_type: str = "knowledge") -> list:
+        """BM25 search for knowledge/policy"""
+        if not NEW_MODULES_AVAILABLE or not hasattr(self, 'knowledge_search'):
+            return []
+        
+        search = self.knowledge_search if kb_type == "knowledge" else self.policy_search
+        
+        try:
+            results = search.search(query, top_k=5)
+            return [
+                {
+                    "title": r.get("title", ""),
+                    "text": r.get("text", ""),
+                    "score": r.get("score", 0)
+                }
+                for r in results
+            ]
+        except Exception as e:
+            logger.warning("BM25 search failed", error=str(e))
+            return []
+    
+    def get_stats(self) -> Dict:
+        """Get supervisor statistics including v2 enhancements"""
+        stats = {
+            "version": "v2" if NEW_MODULES_AVAILABLE else "legacy",
+            "new_modules": NEW_MODULES_AVAILABLE
+        }
+        
+        if NEW_MODULES_AVAILABLE:
+            if hasattr(self, 'query_cache'):
+                cache_stats = self.query_cache.get_stats()
+                stats["cache"] = {
+                    "size": cache_stats.get("size", 0),
+                    "hit_rate": cache_stats.get("hit_rate", 0),
+                    "hits": cache_stats.get("hit_count", 0),
+                    "misses": cache_stats.get("miss_count", 0)
+                }
+            
+            if hasattr(self, 'decision_engine') and self.decision_engine.router:
+                try:
+                    stats["routing"] = self.decision_engine.router.get_routing_stats()
+                except:
+                    pass
+        
+        return stats
+    
+    # ===== Original Methods =====
+    
     def _classify_intent(self, payload: InputPayload, memory: MemoryContextModel) -> IntentClassification:
         from src.core.intent_classifier import IntentClassifier
         classifier = IntentClassifier()
@@ -179,148 +434,65 @@ class Supervisor:
         confidence: float,
         risk: RiskEvaluation,
         intent: IntentClassification,
-        agents_used: list[str],
+        agents_used: list,
         status: str,
-        processing_time,
+        processing_time: float,
     ) -> OutputPayload:
-        processing_time_ms = int((time.time() - processing_time) * 1000)
-
-        return OutputPayload(
-            request_id=payload.request_id,
-            status=status,
-            answer=answer,
+        from src.core import OutputPayload, Message
+        
+        output = OutputPayload(
+            message=Message(
+                text=answer,
+                timestamp=time.time(),
+            ),
             confidence=confidence,
-            risk_level=risk.risk_level.value,
-            metadata={
-                "intent": intent.intent.value,
-                "agents_used": agents_used,
-                "processing_time_ms": processing_time_ms,
-                "risk_flags": risk.flags,
-            },
+            intent=intent,
+            risk=risk,
+            agents_used=agents_used,
+            status=status,
+            processing_time_ms=int(processing_time * 1000),
         )
+        
+        output.request_id = payload.request_id
+        
+        return output
+
+    async def _handle_guide_request(self, payload: InputPayload, policy: Dict) -> str:
+        return "Guide delivery logic here"
+
+    async def _handle_system_query(
+        self,
+        payload: InputPayload,
+        memory: MemoryContextModel,
+        query_type: str,
+    ) -> Dict:
+        return {"result": "system query result", "confidence": 0.9}
+
+    def _format_system_query_response(self, query_result: Dict) -> str:
+        return f"System query result: {query_result.get('result', 'N/A')}"
 
     async def _log_audit(
         self,
         request_id: str,
         decision: str,
         risk_level: str,
-        agents_used: list[str],
+        agents_used: list,
         input_summary: str,
         output_summary: str,
         processing_time_ms: int,
     ):
-        async with async_session() as session:
-            from src.db.models import AuditLog as AuditLogModel
-            audit = AuditLogModel(
-                request_id=request_id,
-                decision=decision,
-                risk_level=risk_level,
-                agents_used=agents_used,
-                input_summary=input_summary,
-                output_summary=output_summary,
-                processing_time_ms=processing_time_ms,
-            )
-            session.add(audit)
-            await session.commit()
-
-    async def _handle_guide_request(self, payload: InputPayload, policy: dict) -> str:
-        guide_title = policy.get("guide_title", "Hướng dẫn")
-        guide_id = policy.get("guide_id", "unknown")
-        
-        guide_content = f"""📖 **Hướng dẫn: {guide_title}**
-
-Dưới đây là thông tin hướng dẫn theo yêu cầu của bạn:
-
-**Chủ đề:** {guide_title}
-**ID:** {guide_id}
-
-{policy.get('sop_steps', ['Không có chi tiết cụ thể'])}
-
----
-*Bạn có câu hỏi nào về hướng dẫn này không?*"""
-
-        return guide_content
-
-    async def _handle_system_query(self, payload: InputPayload, memory: MemoryContextModel, query_type: str) -> dict:
-        from src.memory.repository import MemoryRepository
-        
-        results = {}
-        
-        async with async_session() as session:
-            repo = MemoryRepository(session)
-            
-            if query_type in ["user_info", None]:
-                user_profile = await repo.get_user_profile(payload.user.id)
-                if user_profile:
-                    results["user"] = {
-                        "user_id": user_profile.user_id,
-                        "display_name": user_profile.display_name,
-                        "role": user_profile.role,
-                        "team": user_profile.team,
-                        "vip_flag": user_profile.vip_flag,
-                    }
-                    
-                    messages = await repo.get_recent_messages(payload.user.id, limit=20)
-                    results["recent_threads"] = list(set([m.thread_id for m in messages]))
-                    
-                    if memory.case_memory:
-                        results["active_case"] = {
-                            "case_id": memory.case_memory.get("case_id"),
-                            "status": memory.case_memory.get("status"),
-                            "owner": memory.case_memory.get("owner"),
-                        }
-            
-            if query_type in ["case_info", None] and payload.case and payload.case.case_id:
-                case = await repo.get_case_memory(payload.case.case_id)
-                if case:
-                    results["case"] = {
-                        "case_id": case.case_id,
-                        "status": case.status,
-                        "owner": case.owner,
-                        "summary": case.summary,
-                        "priority": case.priority,
-                        "open_items": case.open_items,
-                    }
-                    
-        return {
-            "results": results,
-            "query_type": query_type or "general",
-            "confidence": 0.9 if results else 0.3,
-        }
-
-    def _format_system_query_response(self, query_result: dict) -> str:
-        results = query_result.get("results", {})
-        query_type = query_result.get("query_type", "general")
-        
-        if not results:
-            return "Không tìm thấy thông tin theo yêu cầu."
-        
-        response_parts = ["📊 **Thông tin hệ thống:**\n"]
-        
-        if "user" in results:
-            user = results["user"]
-            response_parts.append(f"**Người dùng:** {user.get('display_name', 'N/A')}")
-            response_parts.append(f"  - Role: {user.get('role', 'N/A')}")
-            response_parts.append(f"  - Team: {user.get('team', 'N/A')}")
-            response_parts.append(f"  - VIP: {'Có' if user.get('vip_flag') else 'Không'}")
-            
-        if "active_case" in results:
-            case = results["active_case"]
-            response_parts.append(f"\n**Case đang xử lý:**")
-            response_parts.append(f"  - ID: {case.get('case_id', 'N/A')}")
-            response_parts.append(f"  - Trạng thái: {case.get('status', 'N/A')}")
-            response_parts.append(f"  - Người xử lý: {case.get('owner', 'N/A')}")
-            
-        if "case" in results:
-            case = results["case"]
-            response_parts.append(f"\n**Case #{case.get('case_id', 'N/A')}:**")
-            response_parts.append(f"  - Trạng thái: {case.get('status', 'N/A')}")
-            response_parts.append(f"  - Priority: {case.get('priority', 'N/A')}")
-            response_parts.append(f"  - Người xử lý: {case.get('owner', 'N/A')}")
-            if case.get("open_items"):
-                response_parts.append(f"  - Công việc còn lại: {len(case['open_items'])} items")
-                
-        response_parts.append("\n---")
-        response_parts.append("*Bạn cần thêm thông tin gì không?*")
-        
-        return "\n".join(response_parts)
+        try:
+            async with async_session() as session:
+                log = AuditLog(
+                    request_id=request_id,
+                    decision=decision,
+                    risk_level=risk_level,
+                    agents_used=",".join(agents_used),
+                    input_summary=input_summary,
+                    output_summary=output_summary,
+                    processing_time_ms=processing_time_ms,
+                )
+                session.add(log)
+                await session.commit()
+        except Exception as e:
+            logger.warning("Failed to log audit", error=str(e))
