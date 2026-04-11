@@ -85,29 +85,34 @@ supervisor-api/
 │   ├── api.py              # FastAPI app + routes
 │   ├── config.py           # Settings from env
 │   ├── llm/
-│   │   ├── __init__.py
-│   │   ├── client.py       # LLM abstraction
-│   │   └── client_v2.py    # Enhanced with JSON mode
+│   │   └── provider.py      # Multi-provider LLM (Ollama/OpenAI/Azure)
 │   ├── agents/
 │   │   ├── __init__.py
-│   │   ├── supervisor.py   # Main supervisor
-│   │   ├── context.py      # Context agent
-│   │   ├── policy.py       # Policy agent
-│   │   ├── knowledge.py    # Knowledge agent
-│   │   ├── draft.py        # Draft agent
-│   │   └── qa.py           # QA agent
+│   │   └── subagents.py     # Context, Policy, Knowledge, Draft, QA agents
+│   ├── knowledge/           # Knowledge Base layer (NEW)
+│   │   ├── schemas.py       # Pydantic models
+│   │   ├── repository.py    # CRUD operations
+│   │   └── service.py       # RAG-style retrieval
 │   ├── memory/
+│   │   ├── service.py       # Memory service
+│   │   ├── cache.py         # Redis cache
+│   │   └── repository.py   # Memory repository
+│   ├── core/
 │   │   ├── __init__.py
-│   │   ├── postgres.py     # PostgreSQL operations
-│   │   └── redis.py        # Redis caching
-│   └── core/
-│       ├── __init__.py
-│       ├── auth.py          # JWT/HMAC authentication
-│       ├── tracing.py       # OpenTelemetry tracing
-│       ├── metrics.py       # Prometheus metrics
-│       ├── circuit_breaker.py
-│       ├── dlq.py           # Dead letter queue
-│       └── error_handler.py
+│   │   ├── supervisor.py   # Main supervisor + decision engine
+│   │   ├── schemas.py       # Pydantic models (Input/Output, Chat, Approval)
+│   │   ├── intent_classifier.py   # Intent classification
+│   │   ├── risk_evaluator.py      # Risk evaluation
+│   │   ├── approval.py           # Approval workflow
+│   │   ├── auth.py          # JWT/HMAC authentication
+│   │   ├── tracing.py       # OpenTelemetry tracing
+│   │   ├── metrics.py       # Prometheus metrics
+│   │   ├── circuit_breaker.py
+│   │   ├── dlq.py           # Dead letter queue
+│   │   └── error_handler.py
+│   └── db/
+│       ├── models.py        # SQLAlchemy models (Message, UserProfile, CaseMemory, KB, Alert, Config)
+│       └── session.py      # Database session
 ├── tests/
 ├── load_test/
 ├── config/

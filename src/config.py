@@ -74,6 +74,19 @@ class Settings(BaseSettings):
     rate_limit_window: int = 60
 
     log_level: str = "INFO"
+    
+    # Recommended AI Models for different use cases
+    # Override via LLM_MODEL env var
+    recommended_models: dict = {
+        "faq": "llama3",           # Quick factual answers
+        "policy": "llama3",        # Policy interpretation
+        "support_case": "llama3", # Technical support
+        "analysis": "llama3",     # Data analysis
+        "executive": "llama3",    # High-priority executive
+        "default": "llama3",
+    }
+    
+    # Keyword patterns for intent classification and risk evaluation
     executive_keywords: list[str] = [
         # English
         "ceo", "cto", "cfo", "coo", "director", "vp", "head of", "manager",

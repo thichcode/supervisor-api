@@ -52,7 +52,8 @@
 │                        ┌────┴────────────────────────────────────────────────────────────────┐   │
 │                        │ 3. Intent Classification                                          │   │
 │                        │    - FAQ, Policy, Support Case, Analysis, Executive               │   │
-│                        │    - LLM-based or rule-based                                      │   │
+│                        │    - Role-based context boost (PM→Analysis, HR→Policy, IT→Case) │   │
+│                        │    - 150+ keyword patterns (EN+VI)                                │   │
 │                        └────┬────────────────────────────────────────────────────────────────┘   │
 │                             │                                                                    │
 │                             ↓                                                                    │
@@ -60,11 +61,20 @@
 │                        │ 4. Risk Evaluation                                                │   │
 │                        │    - Flags: legal, financial, vip, executive, commitment        │   │
 │                        │    - Risk Level: low, medium, high                               │   │
+│                        │    - 50+ keywords for outsourcing company                        │   │
 │                        └────┬────────────────────────────────────────────────────────────────┘   │
 │                             │                                                                    │
 │                             ↓                                                                    │
 │                        ┌────┴────────────────────────────────────────────────────────────────┐   │
-│                        │ 5. Decision Engine                                                │   │
+│                        │ 5. Model Selection                                                │   │
+│                        │    - Select LLM model based on intent type                      │   │
+│                        │    - FAQ→llama3, Policy→llama3, Support→llama3                 │   │
+│                        │    - Analysis→llama3, Executive→llama3                          │   │
+│                        └────┬────────────────────────────────────────────────────────────────┘   │
+│                             │                                                                    │
+│                             ↓                                                                    │
+│                        ┌────┴────────────────────────────────────────────────────────────────┐   │
+│                        │ 6. Decision Engine                                                │   │
 │                        │                                                                       │   │
 │                        │    ┌────────────────┐    ┌─────────────────────┐                 │   │
 │                        │    │ Direct Answer  │    │ Subagent Pipeline  │                 │   │
@@ -98,7 +108,7 @@
 │                                                     │                                            │
 │                                                     ↓                                            │
 │                        ┌────────────────────────────┴────────────────────────────────────┐   │
-│                        │ 6. Approval Check (Confidence < 90%)                              │   │
+│                        │ 7. Approval Check (Confidence < 90%)                              │   │
 │                        │                                                                       │   │
 │                        │    ┌─────────────────────────────────────────┐                   │   │
 │                        │    │ Confidence >= 90%?                        │                   │   │
