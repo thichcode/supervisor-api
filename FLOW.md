@@ -431,5 +431,299 @@ Action is QUERY?
 #### Environment Variables:
 ```bash
 N8N_BASE_URL=http://localhost:5678    # n8n server URL
-N8N_API_KEY=your_api_key              # Optional API key
+N8N_API_KEY=***              # Optional API key
+```
+
+---
+
+## Supervisor Tools Overview
+
+Complete set of production-ready tools for the supervisor API.
+
+### Tool Summary
+
+| Tool | File | Purpose |
+|------|------|---------|
+| URL Fetcher | `url_fetcher.py` | Auto-detect and fetch URLs from messages |
+| n8n Connector | `n8n_connector.py` | Connect to internal systems via webhooks |
+| n8n Tool | `n8n_tool.py` | LLM tool wrapper for n8n actions |
+| RAG Pipeline | `rag_pipeline.py` | Hybrid search (BM25 + Vector) |
+| File Processor | `file_processor.py` | Extract data from PDF/Excel/CSV/OCR |
+| API Client | `api_client.py` | HTTP client with retry/circuit breaker |
+| Scheduler | `scheduler.py` | Cron jobs and scheduled tasks |
+| Notification | `notification.py` | Multi-channel notifications |
+| Audit Logger | `audit_logger.py` | Structured audit logs for compliance |
+| Validators | `validators.py` | Input/output validation |
+
+### 1. RAG Pipeline
+
+Hybrid search combining keyword (BM25) and semantic (Vector) search.
+
+```python
+from src.tools import RAGPipeline, Document
+
+# Initialize
+rag = RAGPipeline()
+
+# Add documents
+doc = Document(
+    id="1",
+    content="Backup policy: follow 3-2-1 rule",
+    metadata={"category": "policy", "service": "backup"}
+)
+rag.add_document(doc)
+
+# Search
+results = rag.search("backup policy")
+for result in results:
+    print(f"{result.score}: {result.document.content}")
+```
+
+Features:
+- BM25 ranking for keyword matching
+- Vector embeddings for semantic search
+- ChromaDB, Qdrant, or Pinecone support
+- Configurable weights (default: 30% BM25, 50% Vector)
+- Sentence transformers for embeddings
+
+### 2. File Processor
+
+Extract data from various file formats.
+
+```python
+from src.tools import FileProcessor
+
+processor = FileProcessor(ocr_enabled=True)
+
+# Process file
+content = processor.process_file("report.xlsx")
+
+# Access extracted data
+print(content.content)      # Markdown table
+print(content.content_type) # "table"
+print(content.metadata)     # {rows, columns, ...}
+```
+
+Supported formats:
+| Format | Library | Features |
+|--------|---------|----------|
+| PDF | pdfplumber | Text + tables extraction |
+| Excel | pandas/openpyxl | Multi-sheet support |
+| CSV | pandas | Auto delimiter detection |
+| JSON | json | Structured parsing |
+| Images | PaddleOCR/Tesseract | OCR with Vietnamese |
+
+### 3. API Client
+
+HTTP client with resilience patterns.
+
+```python
+from src.tools import APIClient
+
+client = APIClient(
+    base_url="https://api.example.com",
+    api_key="your_key",
+    retry_config=RetryConfig(max_attempts=3),
+    circuit_config=CircuitBreakerConfig(failure_threshold=5),
+)
+
+# Automatic retry + circuit breaker
+response = await client.get("/data")
+if response.ok:
+    print(response.data)
+```
+
+Features:
+- Automatic retry with exponential backoff
+- Circuit breaker to prevent cascading failures
+- Token bucket rate limiting
+- Response caching
+- Status code based retry logic
+
+### 4. Scheduler
+
+Cron job scheduler for automated tasks.
+
+```python
+from src.tools import Scheduler, get_scheduler
+
+scheduler = get_scheduler()
+
+# Register callback
+async def daily_report():
+    print("Generating report...")
+scheduler.register_callback("generate_report", daily_report)
+
+# Add cron job
+scheduler.add_cron_job(
+    name="Daily Report",
+    func_name="generate_report",
+    cron_expr="0 8 * * *",  # 8 AM daily
+)
+
+# Add interval job
+scheduler.add_interval_job(
+    name="Data Sync",
+    func_name="sync_data",
+    interval_seconds=300,  # Every 5 minutes
+)
+
+# Start scheduler
+await scheduler.start()
+```
+
+Cron expressions:
+```
+* * * * *     Every minute
+*/5 * * * *   Every 5 minutes
+0 8 * * *     Every day at 8 AM
+0 0 * * 1     Every Monday at midnight
+```
+
+### 5. Notification
+
+Multi-channel notification sender.
+
+```python
+from src.tools import NotificationSender, Channel
+
+sender = NotificationSender(config)
+
+# Send to multiple channels
+await sender.send(NotificationMessage(
+    channel=Channel.EMAIL,
+    subject="Alert",
+    body="Server down!",
+    recipients=["admin@company.com"],
+))
+
+# Or use convenience methods
+sender.send_telegram(
+    chat_id="@alerts",
+    text="Alert: High CPU usage"
+)
+```
+
+Channels:
+- Email (SMTP)
+- Telegram
+- Slack
+- Microsoft Teams
+- SMS (via API)
+- Generic Webhook
+
+### 6. Audit Logger
+
+Structured audit logging for compliance.
+
+```python
+from src.tools import AuditLogger, AuditEventType, RiskLevel
+
+audit = AuditLogger(service_name="supervisor")
+
+# Log events
+audit.log_user_action(
+    user_id="user123",
+    user_name="John Doe",
+    action="view_report",
+    details={"report_id": "RPT-001"}
+)
+
+# Log AI queries
+audit.log_ai_query(
+    user_id="user123",
+    query="Show backup status",
+    response="Backup is running...",
+    confidence=0.95,
+    agents_used=["context", "knowledge", "draft"]
+)
+
+# Query audit trail
+events = audit.get_events(
+    user_id="user123",
+    risk_level=RiskLevel.HIGH,
+    limit=50
+)
+```
+
+Compliance tags:
+- `gdpr` - GDPR-related
+- `pii` - Personal data
+- `sox` - SOX compliance
+- `hipaa` - Healthcare data
+
+### 7. Validators
+
+Input validation and sanitization.
+
+```python
+from src.tools import SchemaValidator, validate, DataSanitizer
+
+# Validate with schema
+result = validate("approval_request", {
+    "action": "server_restart",
+    "user_id": "user123",
+    "risk_level": "critical"
+})
+
+if not result.valid:
+    print(result.errors)
+
+# Field validation
+from src.tools import CommonValidators
+
+validator = CommonValidators.email()
+result = validator.validate("user@company.com")
+
+# Sanitize input
+clean = DataSanitizer.sanitize_html("<script>alert(1)</script>")
+# Result: "alert(1)"
+
+# Remove PII
+safe = DataSanitizer.remove_pii("Contact john@email.com, 555-1234")
+# Result: "Contact [EMAIL], [PHONE]"
+```
+
+Pre-built schemas:
+- `chat_message`
+- `approval_request`
+- `n8n_action`
+
+### Quick Reference
+
+```python
+# Import all tools
+from src.tools import (
+    RAGPipeline,
+    FileProcessor,
+    APIClient,
+    Scheduler,
+    NotificationSender,
+    AuditLogger,
+    SchemaValidator,
+    N8NConnector,
+    URLFetcher,
+)
+
+# Get singleton instances
+rag = get_rag_pipeline()
+processor = get_file_processor()
+scheduler = get_scheduler()
+audit = get_audit_logger()
+n8n = get_n8n_connector()
+```
+
+### Dependencies
+
+```bash
+pip install \
+    chromadb \
+    sentence-transformers \
+    pandas openpyxl \
+    pdfplumber \
+    paddleocr \
+    pytesseract \
+    httpx \
+    croniter \
+    structlog
 ```
