@@ -362,3 +362,74 @@ User asks: "case của tôi", "ai đang xử lý", "trạng thái"
 - **Trusted External URLs**: GitHub, GitLab, StackOverflow, official docs sites
 - **Extracted Data**: Title, description, HTTP status
 - **Context Injection**: URL info injected into LLM prompt for better understanding
+
+### n8n Connector - Internal System Actions:
+Connect to internal systems via n8n webhooks with approval workflow.
+
+#### Action Types:
+| Type | Risk | Approval | Example |
+|------|------|----------|---------|
+| QUERY | Low | No | backup_status, monitor_status |
+| ACTION | Medium/High/Critical | Yes | server_restart, backup_restore |
+
+#### Risk Levels:
+- 🟢 LOW: Safe operations (create ticket, unlock account)
+- 🟡 MEDIUM: Moderate risk (update ticket, acknowledge alert)
+- 🟠 HIGH: Risky operations (backup restore, reset password)
+- 🔴 CRITICAL: Very risky, needs senior approval (server restart)
+
+#### Available Actions:
+| Action | System | Type | Risk | Description |
+|--------|--------|------|------|-------------|
+| backup_status | backup | QUERY | LOW | Check backup status |
+| backup_restore | backup | ACTION | HIGH | Restore from backup |
+| monitor_status | monitoring | QUERY | LOW | Check monitoring status |
+| monitor_alert_ack | monitoring | ACTION | MEDIUM | Acknowledge alert |
+| ticket_create | itsm | ACTION | LOW | Create IT ticket |
+| ticket_update | itsm | ACTION | MEDIUM | Update ticket status |
+| server_restart | infrastructure | ACTION | CRITICAL | Restart server |
+| server_status | infrastructure | QUERY | LOW | Check server status |
+| account_unlock | iam | ACTION | MEDIUM | Unlock locked account |
+| account_reset_password | iam | ACTION | HIGH | Reset user password |
+
+#### API Endpoints:
+```
+GET  /n8n/actions              - List all available actions
+POST /n8n/query                - Execute read-only query (no approval)
+POST /n8n/action/request      - Request action (creates approval)
+GET  /n8n/approvals/pending   - List pending approvals
+POST /n8n/approvals/{id}/approve - Approve and execute action
+POST /n8n/approvals/{id}/reject   - Reject action request
+```
+
+#### Workflow:
+```
+User requests action
+       ↓
+Bot detects action (via LLM tool call)
+       ↓
+Action is QUERY?
+  ├── Yes → Execute directly via n8n webhook
+  │         ↓
+  │    Return result to user
+  │
+  └── No → Create approval request
+            ↓
+      Ask user: "This action requires approval"
+            ↓
+      Risk Level: CRITICAL/HIGH?
+        ├── Yes → Alert admin, require senior approval
+        └── No → Normal approval flow
+            ↓
+      Admin approves?
+        ├── Yes → Execute via n8n webhook
+        │         ↓
+        │    Return result to user
+        └── No → Reject, notify user
+```
+
+#### Environment Variables:
+```bash
+N8N_BASE_URL=http://localhost:5678    # n8n server URL
+N8N_API_KEY=your_api_key              # Optional API key
+```
