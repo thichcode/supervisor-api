@@ -133,6 +133,18 @@ class Settings(BaseSettings):
     enable_url_fetcher: bool = True
     enable_tools: bool = True
 
+    # Extended Tools (Disabled by default - for future use)
+    # Enable via env vars: ENABLE_RAG_PIPELINE=true, etc.
+    enable_rag_pipeline: bool = False   # Hybrid search for knowledge base
+    enable_file_processor: bool = False  # Process PDF/Excel/CSV attachments
+    enable_scheduler: bool = False       # Cron jobs for automation
+    enable_api_client: bool = False       # External API integrations
+    enable_audit_logger: bool = False    # Compliance audit logging
+    enable_validators: bool = False      # Input validation
+
+    # Notification - enabled if any notification config is set
+    enable_notification: bool = False    # Master toggle (auto-enabled if email/sms/teams configured)
+
     # n8n Configuration
     n8n_base_url: str = "http://localhost:5678"
     n8n_api_key: str = ""
@@ -143,6 +155,14 @@ class Settings(BaseSettings):
     notification_sms_enabled: bool = False
     notification_teams_enabled: bool = True
     notification_webhook_url: str = ""
+    
+    # Extended SMTP config (for email notifications)
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    from_email: str = ""
+    teams_webhook_url: str = ""
 
     # Scheduler Configuration
     scheduler_enabled: bool = False

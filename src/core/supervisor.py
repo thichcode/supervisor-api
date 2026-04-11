@@ -159,15 +159,56 @@ class Supervisor:
                     from src.tools import get_n8n_connector
                     self.n8n_connector = get_n8n_connector()
                 
-                # Notification - only if enabled
-                if settings.enable_tools and (settings.notification_email_enabled or settings.notification_teams_enabled):
-                    from src.tools import NotificationSender
-                    self.notification_sender = NotificationSender(
-                        email_enabled=settings.notification_email_enabled,
-                        sms_enabled=settings.notification_sms_enabled,
-                        teams_enabled=settings.notification_teams_enabled,
-                        webhook_url=settings.notification_webhook_url,
+                # Extended Tools - Disabled by default (for future use)
+                # RAG Pipeline - Hybrid search for knowledge base
+                if settings.enable_rag_pipeline:
+                    from src.tools.rag_pipeline import get_rag_pipeline
+                    self.rag_pipeline = get_rag_pipeline()
+                
+                # File Processor - Process PDF/Excel/CSV attachments
+                if settings.enable_file_processor:
+                    from src.tools.file_processor import get_file_processor
+                    self.file_processor = get_file_processor()
+                
+                # Scheduler - Cron jobs for automation
+                if settings.enable_scheduler:
+                    from src.tools.scheduler import get_scheduler
+                    self.scheduler = get_scheduler()
+                
+                # Notification - Multi-channel notifications (auto-enabled if any config set)
+                notification_configured = (
+                    settings.notification_email_enabled or 
+                    settings.notification_sms_enabled or 
+                    settings.notification_teams_enabled or
+                    settings.notification_webhook_url
+                )
+                if settings.enable_notification or notification_configured:
+                    from src.tools.notification import NotificationSender, ChannelConfig
+                    config = ChannelConfig(
+                        smtp_host=settings.smtp_host or "",
+                        smtp_port=settings.smtp_port or 587,
+                        smtp_user=settings.smtp_user or "",
+                        smtp_password=settings.smtp_password or "",
+                        from_email=settings.from_email or "",
+                        teams_webhook_url=settings.teams_webhook_url or "",
+                        webhook_url=settings.notification_webhook_url or "",
                     )
+                    self.notification_sender = NotificationSender(config=config)
+                
+                # API Client - External API integrations
+                if settings.enable_api_client:
+                    from src.tools.api_client import create_api_client
+                    self.api_client = create_api_client()
+                
+                # Audit Logger - Compliance audit logging
+                if settings.enable_audit_logger:
+                    from src.tools.audit_logger import get_audit_logger
+                    self.audit_logger = get_audit_logger()
+                
+                # Validators - Input validation
+                if settings.enable_validators:
+                    from src.tools.validators import SchemaValidator
+                    self.validators = SchemaValidator()
                 
                 logger.info("Supervisor v2 enhancements initialized",
                           cache=settings.enable_lru_cache, 
@@ -175,7 +216,15 @@ class Supervisor:
                           bayesian=settings.enable_bayesian_confidence, 
                           routing=settings.enable_agent_router, 
                           url_fetcher=settings.enable_url_fetcher,
-                          tools=settings.enable_tools)
+                          tools=settings.enable_tools,
+                          # Extended tools (disabled by default)
+                          rag_pipeline=settings.enable_rag_pipeline,
+                          file_processor=settings.enable_file_processor,
+                          scheduler=settings.enable_scheduler,
+                          notification=settings.enable_notification,
+                          api_client=settings.enable_api_client,
+                          audit_logger=settings.enable_audit_logger,
+                          validators=settings.enable_validators)
             except Exception as e:
                 logger.error("Failed to initialize enhancements", error=str(e))
         else:
