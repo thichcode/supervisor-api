@@ -125,6 +125,29 @@ class Settings(BaseSettings):
         "tranh chấp", "vi phạm", "quyền sở hữu", "bản quyền",
     ]
 
+    # v2 Enhancements Configuration
+    enable_bm25_search: bool = True
+    enable_bayesian_confidence: bool = True
+    enable_lru_cache: bool = True
+    enable_agent_router: bool = True
+    enable_url_fetcher: bool = True
+    enable_tools: bool = True
+
+    # n8n Configuration
+    n8n_base_url: str = "http://localhost:5678"
+    n8n_api_key: str = ""
+    n8n_webhook_secret: str = ""
+
+    # Notification Configuration
+    notification_email_enabled: bool = False
+    notification_sms_enabled: bool = False
+    notification_teams_enabled: bool = True
+    notification_webhook_url: str = ""
+
+    # Scheduler Configuration
+    scheduler_enabled: bool = False
+    scheduler_cron_default: str = "0 9 * * *"  # 9 AM daily
+
     @property
     def database_url(self) -> str:
         return f"postgresql+asyncpg://{self.db_user}:{self.db_password}@{self.db_host}:{self.db_port}/{self.db_name}"

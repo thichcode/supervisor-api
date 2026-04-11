@@ -15,6 +15,7 @@ from src.memory import MemoryContext as MemoryContextModel
 from src.agents import ContextAgent, PolicyAgent, KnowledgeAgent, DraftAgent, QAAgent
 from src.db import AuditLog, async_session
 from src.llm import MultiProviderLLMClient, LLMResponse
+from src.config import get_settings
 from typing import Optional, Dict, Any
 import time
 import structlog
@@ -116,21 +117,65 @@ class Supervisor:
         self.qa_agent = QAAgent()
         self._llm: Optional[MultiProviderLLMClient] = None
         
-        # NEW v2: Initialize enhanced components
+        # NEW v2: Initialize enhanced components (based on config)
         self._init_enhancements()
     
     def _init_enhancements(self):
-        """Initialize v2 enhancement modules"""
+        """Initialize v2 enhancement modules based on config"""
+        settings = get_settings()
+        
         if NEW_MODULES_AVAILABLE:
             try:
-                # LRU Cache (query + response)
-                self.query_cache = LRUCache(maxsize=300, ttl_seconds=600)
-                self.policy_cache = PolicyCache(maxsize=200)
-                self.knowledge_cache = KnowledgeCache(maxsize=500)
+                # LRU Cache (query + response) - only if enabled
+                if settings.enable_lru_cache:
+                    self.query_cache = LRUCache(maxsize=300, ttl_seconds=600)
+                    self.policy_cache = PolicyCache(maxsize=200)
+                    self.knowledge_cache = KnowledgeCache(maxsize=500)
                 
-                # BM25 Search
-                self.policy_search = HybridSearch(bm25_weight=0.7, tfidf_weight=0.3)
-                self.knowledge_search = HybridSearch(bm25_weight=0.6, tfidf_weight=0.4)
+                # BM25 Search - only if enabled
+                if settings.enable_bm25_search:
+                    self.policy_search = HybridSearch(bm25_weight=0.7, tfidf_weight=0.3)
+                    self.knowledge_search = HybridSearch(bm25_weight=0.6, tfidf_weight=0.4)
+                
+                # Bayesian Confidence - only if enabled
+                if settings.enable_bayesian_confidence:
+                    self.bayesian_confidence = BayesianConfidence()
+                    self.response_validator = ResponseValidator()
+                
+                # Agent Router - only if enabled
+                if settings.enable_agent_router:
+                    self.agent_router = AdaptiveRouter()
+                
+                # URL Fetcher - only if enabled
+                if settings.enable_url_fetcher:
+                    from src.tools.url_fetcher import URLFetcher
+                    self.url_fetcher = URLFetcher(
+                        timeout=10,
+                        max_urls=5
+                    )
+                
+                # n8n Connector - only if enabled
+                if settings.enable_tools and settings.n8n_base_url:
+                    from src.tools import get_n8n_connector
+                    self.n8n_connector = get_n8n_connector()
+                
+                # Notification - only if enabled
+                if settings.enable_tools and (settings.notification_email_enabled or settings.notification_teams_enabled):
+                    from src.tools import NotificationSender
+                    self.notification_sender = NotificationSender(
+                        email_enabled=settings.notification_email_enabled,
+                        sms_enabled=settings.notification_sms_enabled,
+                        teams_enabled=settings.notification_teams_enabled,
+                        webhook_url=settings.notification_webhook_url,
+                    )
+                
+                logger.info("Supervisor v2 enhancements initialized",
+                          cache=settings.enable_lru_cache, 
+                          bm25=settings.enable_bm25_search, 
+                          bayesian=settings.enable_bayesian_confidence, 
+                          routing=settings.enable_agent_router, 
+                          url_fetcher=settings.enable_url_fetcher,
+                          tools=settings.enable_tools)
                 
                 # Bayesian Confidence
                 self.bayesian_confidence = BayesianConfidence()
@@ -480,10 +525,11 @@ class Supervisor:
         status: str,
         processing_time: float,
     ) -> OutputPayload:
-        from src.core import OutputPayload, Message
+        from src.db.models import Message
+        from src.core.schemas import MessageInfo
         
         output = OutputPayload(
-            message=Message(
+            message=MessageInfo(
                 text=answer,
                 timestamp=time.time(),
             ),

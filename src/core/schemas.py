@@ -14,6 +14,8 @@ class IntentType(str, Enum):
     SUPPORT_CASE = "support_case"
     ANALYSIS = "analysis"
     EXECUTIVE_REQUEST = "executive_request"
+    SYSTEM_QUERY = "system_query"
+    GUIDE_REQUEST = "guide_request"
 
 
 class RiskLevel(str, Enum):
@@ -68,16 +70,17 @@ class InputPayload(BaseModel):
 
 
 class OutputPayload(BaseModel):
-    request_id: str
+    request_id: str = ""
     status: str = "completed"
-    answer: str
-    confidence: float = Field(ge=0.0, le=1.0)
-    risk_level: str
+    answer: str = ""
+    confidence: float = Field(default=0.5, ge=0.0, le=1.0)
+    risk_level: str = "low"
     metadata: dict = Field(default_factory=lambda: {
         "intent": "",
         "agents_used": [],
         "processing_time_ms": 0
     })
+    message: Optional[MessageInfo] = None
 
 
 class IntentClassification(BaseModel):
