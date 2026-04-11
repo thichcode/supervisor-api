@@ -1,27 +1,27 @@
 # Multi-Agent Supervisor System
 
-[![Version](https://img.shields.io/badge/version-v1.2.3-blue.svg)](https://github.com/thichcode/supervisor-api/releases)
+[![Version](https://img.shields.io/badge/version-v1.1.0-blue.svg)](https://github.com/thichcode/supervisor-api/releases)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.11+-orange.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.104+-cyan.svg)](https://fastapi.tiangolo.com/)
 
-AI agent system with long-term memory for Microsoft Teams integration.
+AI agent system with long-term memory for Microsoft Teams integration. Designed for Vietnamese outsourcing companies with comprehensive intent classification and risk evaluation.
 
 ## Production Status
 
 | Component | Status | Version |
 |-----------|--------|---------|
-| Core API | ✅ Production Ready | v1.2.3 |
+| Core API | ✅ Production Ready | v1.1.0 |
 | Multi-Provider LLM | ✅ Ollama/llama.cpp/OpenAI/Azure | v1.2.0+ |
+| Knowledge Base | ✅ Policies/FAQs/Guides/Documents | v1.1.0 |
+| Approval System | ✅ Confidence-based workflow | v1.0.0 |
 | Circuit Breaker | ✅ Implemented | v1.0.0 |
 | Dead Letter Queue | ✅ Implemented | v1.0.0 |
 | Authentication | ✅ Implemented | v1.0.0 |
-| Distributed Tracing | ✅ Implemented | v1.0.0 |
-| Load Testing | ✅ Implemented | v1.0.0 |
-| Prometheus Alerts | ✅ Implemented | v1.0.0 |
-| External Memory Provider Registry | ✅ Multi-backend + Routed Prototype | v1.0.0+ |
+| Monitoring & Alerts | ✅ Dashboard/Health/Metrics | v1.1.0 |
+| User/Config Management | ✅ CRUD Admin APIs | v1.1.0 |
 
-**Production Readiness Score: 9.2/10** ✅
+**Production Readiness Score: 9.5/10** ✅
 
 ---
 
@@ -172,14 +172,52 @@ python -m src.api.app
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | POST | `/webhook/n8n` | Receive requests from n8n |
+| POST | `/chat` | Direct user chat |
+| POST | `/system/query` | Query user/case info |
+| POST | `/guide/deliver` | Deliver guideline to user |
+| POST | `/callback/send` | Send async callback |
 | GET | `/health` | Health check |
 | GET | `/health/ready` | Readiness check |
+| GET | `/health/detailed` | Detailed system stats |
 | GET | `/metrics` | Prometheus metrics |
+| GET | `/metrics/dashboard` | Dashboard metrics |
+
+### Approval Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/approvals` | List all approvals |
+| GET | `/approvals/{id}` | Get approval details |
+| POST | `/approvals/{id}/action` | Approve or reject |
+
+### Knowledge Base Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/knowledge/stats` | KB statistics |
+| POST | `/knowledge/search` | Search KB |
+| POST | `/knowledge/search/enhanced` | LLM-enhanced search |
+| POST | `/knowledge/bulk-import` | Bulk import KB |
+| POST/GET/PUT/DELETE | `/knowledge/policies/{id}` | Policy CRUD |
+| POST/GET/PUT/DELETE | `/knowledge/faqs/{id}` | FAQ CRUD |
+| POST/GET/PUT/DELETE | `/knowledge/guides/{id}` | Guide CRUD |
+| POST/GET/PUT/DELETE | `/knowledge/documents/{id}` | Document CRUD |
+
+### Alert Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/alerts` | Create alert |
+| GET | `/alerts` | List alerts |
+| PUT | `/alerts/{id}/acknowledge` | Acknowledge alert |
+| DELETE | `/alerts/{id}` | Delete alert |
 
 ### Admin Endpoints (Require Auth)
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
+| POST/GET/PUT/DELETE | `/admin/users` | User CRUD |
+| POST/GET/PUT/DELETE | `/admin/config` | Config CRUD |
 | GET | `/admin/errors/dlq` | List DLQ entries |
 | POST | `/admin/errors/dlq/{id}/retry` | Retry failed message |
 | DELETE | `/admin/errors/dlq/{id}` | Delete DLQ entry |
@@ -217,7 +255,19 @@ python -m src.api.app
 
 ---
 
-## Load Testing
+## Intent Classification
+
+The system uses comprehensive keyword patterns for Vietnamese outsourcing companies:
+
+| Intent | Keywords (sample) |
+|--------|-------------------|
+| **FAQ** | "là gì", "như thế nào", "cái gì", "cách làm" |
+| **POLICY** | "quy định", "chính sách", "hướng dẫn", "quy trình", "nghỉ phép" |
+| **SUPPORT_CASE** | "lỗi", "hỏng", "không được", "cần hỗ trợ", "bị lỗi" |
+| **ANALYSIS** | "phân tích", "báo cáo", "thống kê", "số liệu" |
+| **EXECUTIVE** | "sếp", "giám đốc", "gấp", "khẩn", "doanh thu" |
+
+Role-based context boost: Project Manager → Analysis, HR → Policy, IT → Support
 
 ```bash
 # Quick test
