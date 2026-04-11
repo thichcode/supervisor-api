@@ -2,7 +2,7 @@ import redis.asyncio as redis
 from redis.asyncio.connection import ConnectionPool
 from src.config import get_settings
 import json
-from typing import Optional
+from typing import Optional, Set, Union
 from datetime import datetime
 import structlog
 
@@ -128,7 +128,7 @@ class RedisCache:
             logger.warning("Redis SADD failed", key=key, error=str(e))
             return 0
 
-    async def smembers(self, key: str) -> set[str]:
+    async def smembers(self, key: str) -> "Set[str]":
         if not self._client:
             return set()
         try:

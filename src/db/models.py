@@ -164,7 +164,7 @@ class KnowledgeDocument(Base):
     doc_type = Column(String(50), nullable=False, index=True)
     category = Column(String(100), nullable=False, index=True)
     tags = Column(JSON, default=list)
-    metadata = Column(JSON, default=dict)
+    extra_metadata = Column(JSON, default=dict)
     embedding = Column(JSON, nullable=True)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=func.now())
