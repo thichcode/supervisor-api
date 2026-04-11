@@ -176,22 +176,6 @@ class Supervisor:
                           routing=settings.enable_agent_router, 
                           url_fetcher=settings.enable_url_fetcher,
                           tools=settings.enable_tools)
-                
-                # Bayesian Confidence
-                self.bayesian_confidence = BayesianConfidence()
-                self.response_validator = ResponseValidator()
-                
-                # Agent Router (already in decision_engine)
-                
-                # URL Fetcher (v2 new)
-                from src.tools.url_fetcher import URLFetcher
-                self.url_fetcher = URLFetcher(
-                    timeout=10,
-                    max_urls=5
-                )
-                
-                logger.info("Supervisor v2 enhancements initialized",
-                          cache=True, bm25=True, bayesian=True, routing=True, url_fetcher=True)
             except Exception as e:
                 logger.error("Failed to initialize enhancements", error=str(e))
         else:
@@ -217,7 +201,7 @@ class Supervisor:
                     payload=payload,
                     answer=cache_result["response"],
                     confidence=final_confidence,
-                    intent=IntentClassification(intent=IntentType.GENERAL, confidence=0.9),
+                    intent=IntentClassification(intent=IntentType.FAQ, confidence=0.9),
                     risk=RiskEvaluation(risk_level=RiskLevel.LOW, reasons=[]),
                     agents_used=["cache"],
                     status="completed",
