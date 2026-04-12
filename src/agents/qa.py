@@ -156,7 +156,7 @@ Trả về JSON:
 
     def refine(self, validation: dict, payload: InputPayload) -> str:
         draft = validation["draft"]
-        issues = validation["issues"]
+        issues = validation.get("issues", [])
         user_name = payload.user.display_name
 
         if not draft.strip():

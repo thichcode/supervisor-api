@@ -300,9 +300,11 @@ class Supervisor:
                 
                 if validation["needs_review"]:
                     if self.decision_engine.needs_human_review(intent, risk, payload, validation["confidence"]):
+                        # Even if needs review, still refine the draft through QA agent
+                        answer = self.qa_agent.refine(validation, payload)
                         return self._create_output(
                             payload=payload,
-                            answer=validation["draft"],
+                            answer=answer,
                             confidence=validation["confidence"],
                             risk=risk,
                             intent=intent,
@@ -562,6 +564,7 @@ class Supervisor:
         from src.core.schemas import MessageInfo
         
         output = OutputPayload(
+            answer=answer,
             message=MessageInfo(
                 text=answer,
                 timestamp=time.time(),
