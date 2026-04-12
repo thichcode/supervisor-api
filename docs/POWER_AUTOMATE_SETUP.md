@@ -124,11 +124,37 @@ Trigger: When a HTTP request is received
 
 ### Thêm Action: Parse JSON
 
+**quan trọng: Content phải là `@triggerBody()` - đây là cách lấy toàn bộ HTTP body**
+
 ```
 Action: Parse JSON
-- Content: @triggerBody()
-- Schema:
+- Content: @triggerBody()     ← quan trọng nhất!
+- Schema: (dùng nút "Generate from sample" paste payload mẫu bên dưới)
 ```
+
+### Sample Payload để paste vào Power Automate
+
+Click **"Generate from sample"** trong Parse JSON action và paste:
+
+```json
+{
+  "type": "approval_request",
+  "approval_id": "test-123",
+  "request_id": "req-456",
+  "user_id": "thuong",
+  "display_name": "Thuong",
+  "original_message": "xin chào",
+  "ai_response": "Xin chào! Tôi là Supervisor",
+  "confidence": 38.0,
+  "threshold": 90.0,
+  "message": "⚠️ Cần duyệt phản hồi cho Thuong",
+  "timestamp": "2026-04-12T12:00:00"
+}
+```
+
+**GIẢI THÍCH:**
+- `@triggerBody()` - lấy toàn bộ JSON body từ HTTP request Supervisor gửi
+- Parse JSON sẽ tự tạo schema khớp với payload
 
 ```json
 {
