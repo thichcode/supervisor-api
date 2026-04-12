@@ -27,6 +27,7 @@ from src.core.schemas import (
     CaseInfo,
     ApprovalStatus,
     ApprovalActionRequest,
+    ApprovalVoteRequest,
     ApprovalRequest,
     ApprovalRequestResponse,
     ApprovalListResponse,
@@ -920,6 +921,47 @@ async def approve_or_reject(approval_id: str, action: ApprovalActionRequest):
         }
     
     raise HTTPException(status_code=400, detail="Invalid action. Use 'approve' or 'reject'")
+
+
+@app.post("/approvals/{approval_id}/vote")
+async def vote_on_approval(
+    approval_id: str,
+    vote_request: ApprovalVoteRequest,
+):
+    """Vote on an approved response (agree, change, or skip).
+    
+    This is called when user votes on the response sent after approval.
+    Results are stored for KB quality tracking.
+    """
+    from src.core.approval import approval_service
+    
+    approval = await approval_service.get_approval(approval_id)
+    if not approval:
+        raise HTTPException(status_code=404, detail="Approval not found")
+    
+    # Only allow voting on approved responses
+    if approval.status != ApprovalStatus.APPROVED:
+        raise HTTPException(status_code=400, detail=f"Cannot vote on approval with status: {approval.status}")
+    
+    # Save vote to approval
+    await approval_service.record_vote(
+        approval_id=approval_id,
+        vote=vote_request.vote,
+        user_id=vote_request.user_id,
+        feedback=vote_request.feedback,
+    )
+    
+    logger.info("Vote recorded", 
+                approval_id=approval_id, 
+                vote=vote_request.vote, 
+                user_id=vote_request.user_id)
+    
+    return {
+        "status": "success",
+        "approval_id": approval_id,
+        "vote": vote_request.vote,
+        "message": "Vote recorded successfully"
+    }
 
 
 # =============================================================================

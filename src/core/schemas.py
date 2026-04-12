@@ -205,6 +205,11 @@ class ApprovalRequest(BaseModel):
     reviewed_by: Optional[str] = None
     reviewed_at: Optional[datetime] = None
     review_comment: Optional[str] = None
+    # Vote fields for KB quality tracking
+    voted_by: Optional[str] = None
+    voted_at: Optional[datetime] = None
+    vote: Optional[str] = None
+    user_feedback: Optional[str] = None
 
 
 class ApprovalRequestResponse(BaseModel):
@@ -227,3 +232,10 @@ class ApprovalActionRequest(BaseModel):
     action: str = Field(..., description="approve or reject")
     comment: Optional[str] = None
     reviewed_by: str = Field(..., description="Who is approving/rejecting")
+
+
+class ApprovalVoteRequest(BaseModel):
+    """Request body for voting on an approved response"""
+    vote: str = Field(..., description="Vote: agree, change, or skip")
+    user_id: str = Field(..., description="User who is voting")
+    feedback: Optional[str] = Field(None, description="Optional feedback comment")

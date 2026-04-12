@@ -210,6 +210,37 @@ class ApprovalService:
         
         return approval
     
+    async def record_vote(
+        self,
+        approval_id: str,
+        vote: str,
+        user_id: str,
+        feedback: Optional[str] = None,
+    ) -> Optional[ApprovalRequest]:
+        """Record user vote on an approved response"""
+        approval = await self.get_approval(approval_id)
+        
+        if not approval:
+            logger.warning("approval_not_found", approval_id=approval_id)
+            return None
+        
+        # Update vote fields
+        approval.vote = vote
+        approval.voted_by = user_id
+        approval.voted_at = datetime.now()
+        approval.user_feedback = feedback
+        
+        await self._save_approval(approval)
+        
+        logger.info(
+            "vote_recorded",
+            approval_id=approval_id,
+            vote=vote,
+            user_id=user_id,
+        )
+        
+        return approval
+    
     async def needs_approval(self, confidence: float) -> bool:
         return confidence < self.default_threshold
     
