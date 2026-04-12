@@ -50,6 +50,9 @@ class ApprovalService:
         
         await self._save_approval(approval)
         
+        # Send notification to Power Automate for Teams approval request
+        await self._notify_approval_request(approval)
+        
         logger.info(
             "approval_created",
             approval_id=approval.id,
@@ -59,6 +62,45 @@ class ApprovalService:
         )
         
         return approval
+    
+    async def _notify_approval_request(self, approval: ApprovalRequest):
+        """Send approval request notification to Power Automate"""
+        if not settings.power_automate_webhook_url:
+            logger.debug("Power Automate webhook not configured, skipping notification")
+            return
+        
+        import httpx
+        
+        payload = {
+            "type": "approval_request",
+            "approval_id": approval.id,
+            "request_id": approval.request_id,
+            "user_id": approval.user_id,
+            "display_name": approval.display_name,
+            "original_message": approval.original_message[:200] if approval.original_message else "",
+            "ai_response": approval.ai_response,
+            "confidence": round(approval.confidence * 100, 1),
+            "threshold": round(approval.threshold * 100, 1),
+            "message": f"⚠️ Cần duyệt phản hồi cho {approval.display_name}\n\n"
+                      f"Confidence: {round(approval.confidence * 100, 1)}% (threshold: {round(approval.threshold * 100, 1)}%)\n\n"
+                      f"**Tin nhắn gốc:** {approval.original_message[:100] if approval.original_message else 'N/A'}...\n\n"
+                      f"**Phản hồi AI:**\n{approval.ai_response[:300]}...",
+            "timestamp": datetime.now().isoformat(),
+        }
+        
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    settings.power_automate_webhook_url,
+                    json=payload,
+                    timeout=settings.webhook_timeout,
+                )
+                response.raise_for_status()
+                logger.info("Approval notification sent to Power Automate", 
+                          approval_id=approval.id, status=response.status_code)
+        except httpx.HTTPError as e:
+            logger.warning("Failed to send approval notification", 
+                         approval_id=approval.id, error=str(e))
     
     async def _save_approval(self, approval: ApprovalRequest):
         key = f"approval:{approval.id}"

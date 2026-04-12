@@ -418,7 +418,7 @@ class Supervisor:
             logger.warning("URL fetch failed", error=str(e))
             return ""
     
-    def _enhanced_validate(
+    async def _enhanced_validate(
         self,
         draft: str,
         payload: InputPayload,
