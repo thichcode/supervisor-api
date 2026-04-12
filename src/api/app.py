@@ -883,7 +883,10 @@ async def approve_or_reject(approval_id: str, action: ApprovalActionRequest):
         if settings.power_automate_webhook_url:
             payload = {
                 "request_id": approval.request_id,
+                "approval_id": approval_id,
                 "user_id": approval.user_id,
+                "display_name": approval.display_name,
+                "thread_id": approval.metadata.get("thread_id", ""),
                 "message": approval.ai_response,
                 "message_type": approval.action_type,
                 "approved_by": action.reviewed_by,

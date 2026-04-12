@@ -77,6 +77,7 @@ class ApprovalService:
             "request_id": approval.request_id,
             "user_id": approval.user_id,
             "display_name": approval.display_name,
+            "thread_id": approval.metadata.get("thread_id", ""),
             "original_message": approval.original_message[:200] if approval.original_message else "",
             "ai_response": approval.ai_response,
             "confidence": round(approval.confidence * 100, 1),
