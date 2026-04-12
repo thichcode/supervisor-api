@@ -15,6 +15,7 @@ from .lifecycle import LifecycleHooks, HookType, HookEvent, HookRegistration
 from .context_manager import ContextManager, ContextConfig, CompactionRecord
 from .planner import Planner, Plan, PlanStep, StrategyType, ExecutionTrace
 from .evaluator import Evaluator, MetricType, MetricResult, EvaluationResult, BenchmarkRun
+from .supervisor_agent import SupervisorAgent, SupervisorAgentConfig, HarnessSupervisorBridge
 
 __all__ = [
     # Harness
@@ -50,4 +51,8 @@ __all__ = [
     "MetricResult",
     "EvaluationResult",
     "BenchmarkRun",
+    # Supervisor Bridge
+    "SupervisorAgent",
+    "SupervisorAgentConfig",
+    "HarnessSupervisorBridge",
 ]

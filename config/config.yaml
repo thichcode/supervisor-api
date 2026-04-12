@@ -1,7 +1,19 @@
+# ============================================
+# Supervisor API Configuration
+# Reference only - actual runtime uses src/config.py (Pydantic)
+# ============================================
+
 app:
+  name: "Multi-Agent Supervisor System"
+  version: "1.2.3"
   host: "0.0.0.0"
   port: 8000
   debug: false
+  workers: 4
+  env: "development"
+  cors_allowed_origins:
+    - "http://localhost:3000"
+    - "http://localhost:8000"
 
 database:
   host: "localhost"
@@ -10,29 +22,121 @@ database:
   user: "postgres"
   password: "${DB_PASSWORD}"
   pool_size: 10
+  max_overflow: 20
+  pool_timeout: 30
 
 redis:
   host: "localhost"
   port: 6379
   db: 0
   password: "${REDIS_PASSWORD}"
+  pool_size: 10
 
 webhook:
   input_secret: "${WEBHOOK_INPUT_SECRET}"
   output_url: "${POWER_AUTOMATE_WEBHOOK_URL}"
   timeout: 30
 
+llm:
+  provider: "ollama"  # ollama, openai, azure
+  model: "llama3"
+  temperature: 0.7
+  max_tokens: 2000
+
+  # Ollama/llama.cpp
+  ollama_base_url: "http://localhost:8088"
+  ollama_default_model: "llama3"
+  ollama_timeout: 320
+
+  # OpenAI (optional)
+  openai_api_key: "${OPENAI_API_KEY}"
+
+  # Azure (optional)
+  azure_endpoint: "${AZURE_OPENAI_ENDPOINT}"
+  azure_api_key: "${AZURE_OPENAI_KEY}"
+  azure_api_version: "2024-02-01"
+  azure_deployment_name: "${AZURE_DEPLOYMENT_NAME}"
+
 agents:
-  timeout: 3
+  timeout: 10
   retry: 1
 
 memory:
-  conversation_ttl: 86400
-  summary_ttl: 604800
+  conversation_ttl: 86400      # 24 hours
+  summary_ttl: 604800      # 7 days
   max_tokens: 4000
 
+# v2 Enhancements (enabled by default)
+enhancements:
+  bm25_search: true
+  bayesian_confidence: true
+  lru_cache: true
+  agent_router: true
+  url_fetcher: true
+  tools: true
+
+# Extended Tools (disabled by default)
+extended:
+  rag_pipeline: false
+  file_processor: true
+  scheduler: false
+  api_client: false
+  audit_logger: false
+  validators: false
+  notification: false
+
+# Risk Keywords
 risk:
-  executive_keywords: ["ceo", "cto", "cfo", "director", "vp", "manager", "sếp", "giám đốc"]
-  commitment_keywords: ["cam kết", "đảm bảo", "chắc chắn", "sẽ làm", "hứa"]
-  financial_keywords: ["tiền", "thanh toán", "chi phí", "báo cáo tài chính"]
-  legal_keywords: ["hợp đồng", "pháp lý", "luật", "quy định"]
+  executive_keywords:
+    - "ceo", "cto", "cfo", "director", "vp", "manager"
+    - "sếp", "giám đốc", "trưởng phòng", "quản lý"
+    - "urgent", "asap", "critical", "gấp", "khẩn"
+
+  commitment_keywords:
+    - "commit", "guarantee", "promise", "hứa"
+    - "cam kết", "đảm bảo", "chắc chắn"
+
+  financial_keywords:
+    - "financial", "budget", "revenue", "profit"
+    - "tài chính", "ngân sách", "doanh thu"
+
+  legal_keywords:
+    - "legal", "contract", "compliance"
+    - "pháp lý", "hợp đồng", "luật"
+
+# Rate Limiting
+rate_limit:
+  requests: 100
+  window: 60  # seconds
+
+# n8n Integration
+n8n:
+  base_url: "http://localhost:5678"
+  api_key: "${N8N_API_KEY}"
+  webhook_secret: "${N8N_WEBHOOK_SECRET}"
+
+# Notification
+notification:
+  email_enabled: false
+  sms_enabled: false
+  teams_enabled: true
+  webhook_url: "${NOTIFICATION_WEBHOOK_URL}"
+
+  # SMTP
+  smtp_host: ""
+  smtp_port: 587
+  smtp_user: ""
+  smtp_password: ""
+  from_email: ""
+
+  # MS Teams
+  teams_webhook_url: "${TEAMS_WEBHOOK_URL}"
+
+# Scheduler
+scheduler:
+  enabled: false
+  cron_default: "0 9 * * *"  # 9 AM daily
+
+# Logging
+logging:
+  level: "INFO"

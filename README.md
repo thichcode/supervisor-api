@@ -180,7 +180,8 @@ python -m src.api.app
 | GET | `/health/ready` | Readiness check |
 | GET | `/health/detailed` | Detailed system stats |
 | GET | `/metrics` | Prometheus metrics |
-| GET | `/metrics/dashboard` | Dashboard metrics |
+| GET | `/metrics/dashboard` | Dashboard metrics (JSON) |
+| GET | `/metrics/dashboard/html` | Dashboard metrics (HTML with charts) |
 
 ### Approval Endpoints
 
@@ -298,14 +299,51 @@ Access at `GET /metrics`:
 | `supervisor_circuit_breaker_state` | Gauge | CB state (0/1/2) |
 | `supervisor_dlq_pending_total` | Gauge | Pending DLQ messages |
 
+### Dashboard Metrics
+
+Access at `GET /metrics/dashboard` (JSON) or `GET /metrics/dashboard/html` (HTML with charts):
+
+```json
+{
+  "overview": {
+    "total_approvals": 15,
+    "auto_sent": 0,
+    "need_manual_review": 15,
+    "auto_send_rate": 0.0
+  },
+  "approvals": {
+    "pending": 9,
+    "approved": 6,
+    "rejected": 0,
+    "approve_rate": 100.0
+  },
+  "ai_quality": {
+    "avg_confidence": 43.5,
+    "high_confidence_count": 0,
+    "low_confidence_count": 15
+  },
+  "user_satisfaction": {
+    "total_votes": 1,
+    "agree": 1,
+    "satisfaction_rate": 100.0
+  }
+}
+```
+
+**HTML Dashboard Features:**
+- Dark theme with glassmorphism cards
+- Chart.js for visualizations (doughnut charts)
+- Confidence bar with threshold indicator (90%)
+- User satisfaction voting bar
+- Responsive design
+
 ---
-
 ## Documentation
-
 - [Changelog](./CHANGELOG.md) - Version history
 - [Release Notes](./RELEASES/) - Detailed release notes
 - [Configuration Guide](./CONFIGURATION_GUIDE.md) - Config precedence
-- [API Documentation](./docs/api.md) - API reference
+- [API Documentation](./docs/api.md) - Full API reference
+- [Deploy Guide](./DEPLOY_GUIDE.md) - Production deployment
 
 ---
 

@@ -24,6 +24,9 @@ from src.config import get_settings
 settings = get_settings()
 logger = logging.getLogger("harness")
 
+# Import HookType from lifecycle
+from .lifecycle import HookType
+
 
 class HarnessStatus(Enum):
     """Harness operational status"""

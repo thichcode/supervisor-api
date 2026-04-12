@@ -9,6 +9,7 @@ import time
 
 from fastapi import FastAPI, HTTPException, Header, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse, StreamingResponse
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
@@ -86,9 +87,19 @@ async def lifespan(app: FastAPI):
         # App continues without LLM - uses fallback responses
         supervisor.set_llm(None)
     
+    # Initialize Agent Harness with Supervisor
+    init_harness(supervisor)
+    logger.info("Agent Harness initialized", harness_status="ready")
+    
     metrics.record_memory("startup", "success")
     yield
     logger.info("Shutting down Multi-Agent Supervisor System")
+    
+    # Shutdown harness
+    harness_bridge = get_harness_bridge()
+    if harness_bridge:
+        await harness_bridge.harness.shutdown()
+    
     await llm_client.close()
     await redis_cache.close()
     await close_db()
@@ -248,76 +259,290 @@ async def health_detailed():
 
 @app.get("/metrics/dashboard")
 async def dashboard_metrics():
-    """Dashboard metrics for monitoring."""
+    """Dashboard metrics for monitoring - FULL VERSION with all analytics."""
     import src.api as api_module
-    from sqlalchemy import select, func, text
-    from src.db.models import Message, UserProfile, CaseMemory, AuditLog, ApprovalRequest
-
+    from src.core.approval import approval_service
+    
     stats = {
         "timestamp": datetime.now().isoformat(),
-        "conversations": {},
-        "users": {},
-        "cases": {},
-        "approvals": {},
+        "overview": {},
         "performance": {},
+        "ai_quality": {},
+        "user_satisfaction": {},
+        "approvals": {},
     }
 
     try:
-        async with api_module.async_session() as session:
-            # Conversation stats
-            total_msgs = await session.scalar(select(func.count(Message.id)))
-            today_msgs = await session.scalar(
-                select(func.count(Message.id)).where(text("created_at > NOW() - INTERVAL '24 hours'"))
-            )
-
-            stats["conversations"] = {
-                "total_messages": total_msgs or 0,
-                "messages_last_24h": today_msgs or 0,
-            }
-
-            # User stats
-            total_users = await session.scalar(select(func.count(UserProfile.id)))
-            vip_users = await session.scalar(
-                select(func.count(UserProfile.id)).where(UserProfile.vip_flag == True)
-            )
-
-            stats["users"] = {
-                "total": total_users or 0,
-                "vip": vip_users or 0,
-            }
-
-            # Case stats
-            total_cases = await session.scalar(select(func.count(CaseMemory.id)))
-            open_cases = await session.scalar(
-                select(func.count(CaseMemory.id)).where(CaseMemory.status == "open")
-            )
-
-            stats["cases"] = {
-                "total": total_cases or 0,
-                "open": open_cases or 0,
-            }
-
-            # Approval stats
-            pending_approvals = await session.scalar(
-                select(func.count(ApprovalRequest.id)).where(ApprovalRequest.status == "pending")
-            )
-            approved_approvals = await session.scalar(
-                select(func.count(ApprovalRequest.id)).where(ApprovalRequest.status == "approved")
-            )
-            rejected_approvals = await session.scalar(
-                select(func.count(ApprovalRequest.id)).where(ApprovalRequest.status == "rejected")
-            )
-
-            stats["approvals"] = {
-                "pending": pending_approvals or 0,
-                "approved": approved_approvals or 0,
-                "rejected": rejected_approvals or 0,
-            }
+        # Get approvals from Redis-based approval service
+        all_approvals = await approval_service.get_all_approvals()
+        
+        pending_count = sum(1 for a in all_approvals if a.status == "pending")
+        approved_count = sum(1 for a in all_approvals if a.status == "approved")
+        rejected_count = sum(1 for a in all_approvals if a.status == "rejected")
+        
+        # AI Quality metrics
+        confidences = [a.confidence for a in all_approvals if a.confidence]
+        avg_confidence = sum(confidences) / len(confidences) if confidences else 0
+        
+        auto_send = sum(1 for a in all_approvals if a.confidence >= 0.9)
+        need_approval = sum(1 for a in all_approvals if a.confidence < 0.9)
+        
+        # User satisfaction (votes)
+        votes_agree = sum(1 for a in all_approvals if a.vote == "agree")
+        votes_change = sum(1 for a in all_approvals if a.vote == "change")
+        votes_skip = sum(1 for a in all_approvals if a.vote == "skip")
+        total_voted = votes_agree + votes_change + votes_skip
+        
+        stats["overview"] = {
+            "total_approvals": len(all_approvals),
+            "auto_sent": auto_send,
+            "need_manual_review": need_approval,
+            "auto_send_rate": round(auto_send / len(all_approvals) * 100, 1) if all_approvals else 0,
+        }
+        
+        stats["approvals"] = {
+            "pending": pending_count,
+            "approved": approved_count,
+            "rejected": rejected_count,
+            "approve_rate": round(approved_count / (approved_count + rejected_count) * 100, 1) 
+                if (approved_count + rejected_count) > 0 else 0,
+        }
+        
+        stats["ai_quality"] = {
+            "avg_confidence": round(avg_confidence * 100, 1),
+            "high_confidence_count": sum(1 for c in confidences if c >= 0.9),
+            "low_confidence_count": sum(1 for c in confidences if c < 0.9),
+            "auto_send_count": auto_send,
+            "approval_needed_count": need_approval,
+        }
+        
+        stats["user_satisfaction"] = {
+            "total_votes": total_voted,
+            "agree": votes_agree,
+            "change": votes_change,
+            "skip": votes_skip,
+            "satisfaction_rate": round(votes_agree / total_voted * 100, 1) if total_voted > 0 else 0,
+        }
+        
+        # Performance - simplified (approvals based)
+        stats["performance"] = {
+            "total_approvals": len(all_approvals),
+            "avg_processing_time_sec": "N/A",
+        }
 
     except Exception as e:
         stats["error"] = str(e)
 
     return stats
+
+
+@app.get("/metrics/dashboard/html")
+async def dashboard_html():
+    """Full analytics dashboard with charts - HTML version."""
+    import src.api as api_module
+    from src.core.approval import approval_service
+    
+    # Get data
+    try:
+        all_approvals = await approval_service.get_all_approvals()
+        
+        pending = sum(1 for a in all_approvals if a.status == "pending")
+        approved = sum(1 for a in all_approvals if a.status == "approved")
+        rejected = sum(1 for a in all_approvals if a.status == "rejected")
+        
+        confidences = [a.confidence for a in all_approvals if a.confidence]
+        avg_conf = sum(confidences) / len(confidences) * 100 if confidences else 0
+        
+        auto_send = sum(1 for a in all_approvals if a.confidence >= 0.9)
+        
+        votes_agree = sum(1 for a in all_approvals if a.vote == "agree")
+        votes_change = sum(1 for a in all_approvals if a.vote == "change")
+        votes_skip = sum(1 for a in all_approvals if a.vote == "skip")
+        total_votes = votes_agree + votes_change + votes_skip
+        
+        sat_rate = round(votes_agree / total_votes * 100, 1) if total_votes > 0 else 0
+        approve_rate = round(approved / (approved + rejected) * 100, 1) if (approved + rejected) > 0 else 0
+        
+    except Exception as e:
+        error_msg = str(e)
+        pending = approved = rejected = 0
+        avg_conf = auto_send = 0
+        votes_agree = votes_change = votes_skip = total_votes = sat_rate = approve_rate = 0
+    
+    html = f"""
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Supervisor Analytics Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); min-height: 100vh; padding: 20px; }}
+        .container {{ max-width: 1400px; margin: 0 auto; }}
+        
+        header {{ text-align: center; margin-bottom: 30px; color: #fff; }}
+        header h1 {{ font-size: 2.5rem; margin-bottom: 10px; text-shadow: 0 0 20px rgba(0,255,255,0.3); }}
+        header p {{ color: #aaa; font-size: 1rem; }}
+        
+        .stats-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; margin-bottom: 30px; }}
+        
+        .stat-card {{ background: rgba(255,255,255,0.1); backdrop-filter: blur(10px); border-radius: 20px; padding: 25px; border: 1px solid rgba(255,255,255,0.1); transition: transform 0.3s, box-shadow 0.3s; }}
+        .stat-card:hover {{ transform: translateY(-5px); box-shadow: 0 20px 40px rgba(0,0,0,0.3); }}
+        .stat-card h3 {{ color: #aaa; font-size: 0.9rem; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 10px; }}
+        .stat-card .value {{ font-size: 2.5rem; font-weight: bold; }}
+        .stat-card .sub {{ color: #888; font-size: 0.85rem; margin-top: 5px; }}
+        
+        .stat-card.green .value {{ color: #00ff88; }}
+        .stat-card.yellow .value {{ color: #ffd700; }}
+        .stat-card.red .value {{ color: #ff6b6b; }}
+        .stat-card.blue .value {{ color: #00d4ff; }}
+        .stat-card.purple .value {{ color: #a855f7; }}
+        
+        .charts-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); gap: 25px; }}
+        
+        .chart-card {{ background: rgba(255,255,255,0.05); backdrop-filter: blur(10px); border-radius: 20px; padding: 25px; border: 1px solid rgba(255,255,255,0.1); }}
+        .chart-card h3 {{ color: #fff; font-size: 1.1rem; margin-bottom: 20px; padding-bottom: 10px; border-bottom: 1px solid rgba(255,255,255,0.1); }}
+        
+        .satisfaction-bar {{ display: flex; height: 40px; border-radius: 20px; overflow: hidden; margin: 15px 0; }}
+        .satisfaction-bar .agree {{ background: #00ff88; display: flex; align-items: center; justify-content: center; color: #000; font-weight: bold; }}
+        .satisfaction-bar .change {{ background: #ffd700; display: flex; align-items: center; justify-content: center; color: #000; font-weight: bold; }}
+        .satisfaction-bar .skip {{ background: #666; display: flex; align-items: center; justify-content: center; color: #fff; font-weight: bold; }}
+        
+        .confidence-bar {{ height: 30px; background: rgba(255,255,255,0.1); border-radius: 15px; overflow: hidden; position: relative; margin: 15px 0; }}
+        .confidence-bar .fill {{ height: 100%; background: linear-gradient(90deg, #ff6b6b, #ffd700, #00ff88); border-radius: 15px; transition: width 1s; }}
+        .confidence-bar .marker {{ position: absolute; left: 90%; top: 0; height: 100%; width: 2px; background: #fff; }}
+        
+        .metric-row {{ display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid rgba(255,255,255,0.1); }}
+        .metric-row:last-child {{ border-bottom: none; }}
+        .metric-row .label {{ color: #aaa; }}
+        .metric-row .val {{ color: #fff; font-weight: bold; }}
+        
+        @media (max-width: 768px) {{ .charts-grid {{ grid-template-columns: 1fr; }} .stat-card .value {{ font-size: 2rem; }} }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>📊 Supervisor Analytics Dashboard</h1>
+            <p>Cập nhật: {datetime.now().strftime('%H:%M:%S %d/%m/%Y')}</p>
+        </header>
+        
+        <div class="stats-grid">
+            <div class="stat-card green">
+                <h3>📨 Tổng Requests</h3>
+                <div class="value">{len(all_approvals) if 'all_approvals' in dir() else 0}</div>
+                <div class="sub">Tất cả approval requests</div>
+            </div>
+            <div class="stat-card blue">
+                <h3>✅ Auto Send</h3>
+                <div class="value">{round(auto_send / len(all_approvals) * 100, 1) if 'all_approvals' in dir() and all_approvals else 0}%</div>
+                <div class="sub">Gửi tự động (confidence ≥ 90%)</div>
+            </div>
+            <div class="stat-card purple">
+                <h3>🤖 AI Confidence</h3>
+                <div class="value">{round(avg_conf, 1)}%</div>
+                <div class="sub">Trung bình</div>
+            </div>
+            <div class="stat-card yellow">
+                <h3>⭐ User Satisfaction</h3>
+                <div class="value">{sat_rate}%</div>
+                <div class="sub">{total_votes} votes</div>
+            </div>
+        </div>
+        
+        <div class="charts-grid">
+            <div class="chart-card">
+                <h3>📋 Approval Status</h3>
+                <canvas id="approvalChart"></canvas>
+            </div>
+            
+            <div class="chart-card">
+                <h3>📈 AI Quality Metrics</h3>
+                <div class="metric-row">
+                    <span class="label">High Confidence (≥90%)</span>
+                    <span class="val" style="color:#00ff88">{sum(1 for c in confidences if c >= 0.9) if 'confidences' in dir() else 0}</span>
+                </div>
+                <div class="metric-row">
+                    <span class="label">Low Confidence (<90%)</span>
+                    <span class="val" style="color:#ff6b6b">{sum(1 for c in confidences if c < 0.9) if 'confidences' in dir() else 0}</span>
+                </div>
+                <div class="metric-row">
+                    <span class="label">Approve Rate</span>
+                    <span class="val" style="color:#00d4ff">{approve_rate}%</span>
+                </div>
+                <div class="metric-row">
+                    <span class="label">Reject Rate</span>
+                    <span class="val" style="color:#ff6b6b">{100 - approve_rate}%</span>
+                </div>
+                <div class="confidence-bar">
+                    <div class="fill" style="width: {avg_conf}%"></div>
+                    <div class="marker"></div>
+                </div>
+                <p style="color:#888;font-size:0.8rem">Vertical line = 90% threshold</p>
+            </div>
+            
+            <div class="chart-card">
+                <h3>👤 User Satisfaction</h3>
+                <div class="satisfaction-bar">
+                    <div class="agree" style="width: {votes_agree / max(total_votes,1) * 100}%">{votes_agree}</div>
+                    <div class="change" style="width: {votes_change / max(total_votes,1) * 100}%">{votes_change}</div>
+                    <div class="skip" style="width: {votes_skip / max(total_votes,1) * 100}%">{votes_skip}</div>
+                </div>
+                <div class="metric-row">
+                    <span class="label">👍 Agree</span>
+                    <span class="val" style="color:#00ff88">{votes_agree}</span>
+                </div>
+                <div class="metric-row">
+                    <span class="label">✋ Need Change</span>
+                    <span class="val" style="color:#ffd700">{votes_change}</span>
+                </div>
+                <div class="metric-row">
+                    <span class="label">⏭️ Skip</span>
+                    <span class="val" style="color:#666">{votes_skip}</span>
+                </div>
+            </div>
+            
+            <div class="chart-card">
+                <h3>⚡ Performance</h3>
+                <div class="metric-row">
+                    <span class="label">Pending</span>
+                    <span class="val" style="color:#ffd700">{pending}</span>
+                </div>
+                <div class="metric-row">
+                    <span class="label">Approved</span>
+                    <span class="val" style="color:#00ff88">{approved}</span>
+                </div>
+                <div class="metric-row">
+                    <span class="label">Rejected</span>
+                    <span class="val" style="color:#ff6b6b">{rejected}</span>
+                </div>
+                <canvas id="pieChart"></canvas>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        // Approval Status Chart
+        new Chart(document.getElementById('approvalChart'), {{
+            type: 'doughnut',
+            data: {{
+                labels: ['Pending', 'Approved', 'Rejected'],
+                datasets: [{{
+                    data: [{pending}, {approved}, {rejected}],
+                    backgroundColor: ['#ffd700', '#00ff88', '#ff6b6b'],
+                    borderWidth: 0
+                }}]
+            }},
+            options: {{ responsive: true, plugins: {{ legend: {{ position: 'bottom', labels: {{ color: '#fff' }} }} }} }}
+        }});
+    </script>
+</body>
+</html>
+"""
+    
+    return HTMLResponse(content=html, media_type="text/html")
 
 
 @app.post("/alerts")
@@ -655,6 +880,122 @@ async def chat(request: ChatRequest):
         message_type=request.message_type,
         confidence=result.confidence,
         metadata=result.metadata,
+    )
+
+
+@app.post("/chat/harness", response_model=ChatResponse)
+async def chat_via_harness(request: ChatRequest):
+    """Chat endpoint that routes through Agent Harness.
+    
+    This endpoint uses the Agent Harness framework to wrap the Supervisor,
+    providing:
+    - Lifecycle hooks (pre/post execution)
+    - Context management and compaction
+    - Planning for complex tasks
+    - Evaluation and benchmarking
+    
+    If confidence < 90%, the response will be queued for approval.
+    """
+    import uuid
+    from src.core.schemas import UserInfo, ConversationInfo, MessageInfo, InputPayload
+    from src.core.approval import approval_service
+    
+    request_id = str(uuid.uuid4())
+    thread_id = request.thread_id or f"chat-harness-{request.user_id}-{int(time.time())}"
+    
+    payload = InputPayload(
+        request_id=request_id,
+        source="harness_chat",
+        timestamp=datetime.now().isoformat(),
+        user=UserInfo(
+            id=request.user_id,
+            display_name=request.display_name,
+            role=request.metadata.get("role"),
+            team=request.metadata.get("team"),
+            vip_flag=request.metadata.get("vip_flag", False),
+        ),
+        conversation=ConversationInfo(
+            thread_id=thread_id,
+            message_id=f"msg-{request_id}",
+        ),
+        case=CaseInfo(case_id=request.case_id) if request.case_id else None,
+        message=MessageInfo(text=request.message),
+    )
+    
+    import src.api as api_module
+    
+    async with api_module.async_session() as session:
+        memory_service = MemoryService(session, api_module.redis_cache)
+        memory = await memory_service.retrieve(payload)
+        
+        # Get harness bridge
+        harness_bridge = get_harness_bridge()
+        if harness_bridge:
+            result = await harness_bridge.process(payload, memory)
+        else:
+            # Fallback to direct supervisor
+            result = await api_module.supervisor.process(payload, memory)
+        
+        await memory_service.commit(payload)
+    
+    # Extract harness metrics if available
+    harness_metrics = result.metadata.get("harness_metrics") if hasattr(result, 'metadata') else {}
+    harness_evaluation = result.metadata.get("harness_evaluation") if hasattr(result, 'metadata') else {}
+    
+    needs_approval = await approval_service.needs_approval(result.confidence)
+    
+    if needs_approval:
+        approval = await approval_service.create_approval(
+            request_id=request_id,
+            user_id=request.user_id,
+            display_name=request.display_name,
+            original_message=request.message,
+            ai_response=result.answer,
+            confidence=result.confidence,
+            action_type="send_message",
+            metadata={
+                "thread_id": thread_id,
+                "case_id": request.case_id,
+                "agents_used": result.metadata.get("agents_used", []),
+                "intent": result.metadata.get("intent"),
+                "harness_execution_id": harness_metrics.get("execution_id") if harness_metrics else None,
+            },
+        )
+        
+        return ChatResponse(
+            request_id=request_id,
+            status="pending_approval",
+            message=f"⚠️ Phản hồi AI (confidence: {result.confidence:.0%}) cần được duyệt trước khi gửi cho user.\n\nHarness: {harness_metrics.get('execution_id', 'N/A') if harness_metrics else 'N/A'}",
+            message_type=request.message_type,
+            confidence=result.confidence,
+            metadata={
+                **result.metadata,
+                "approval_id": approval.id,
+                "approval_required": True,
+                "threshold": 0.9,
+                "harness_metrics": harness_metrics,
+                "harness_evaluation": harness_evaluation,
+            },
+        )
+    
+    # Auto-send to Power Automate after successful response (if configured)
+    if result.status == "completed" and settings.power_automate_webhook_url:
+        try:
+            await _auto_send_to_power_automate(result)
+        except Exception as e:
+            logger.warning("Auto-send to Power Automate failed", error=str(e))
+
+    return ChatResponse(
+        request_id=request_id,
+        status=result.status,
+        message=result.answer,
+        message_type=request.message_type,
+        confidence=result.confidence,
+        metadata={
+            **result.metadata,
+            "harness_metrics": harness_metrics,
+            "harness_evaluation": harness_evaluation,
+        },
     )
 
 
@@ -2338,7 +2679,7 @@ async def get_supported_formats():
 
 
 # =============================================================================
-# Agent Harness Endpoints - Testing and Evaluation
+# Agent Harness Integration - Supervisor wrapped by Harness
 # =============================================================================
 
 from src.harness import (
@@ -2352,7 +2693,26 @@ from src.harness import (
     Planner,
     Evaluator,
     HookType,
+    SupervisorAgent,
+    SupervisorAgentConfig,
+    HarnessSupervisorBridge,
 )
+
+# Global harness bridge (initialized in lifespan)
+_harness_bridge: Optional[HarnessSupervisorBridge] = None
+
+
+def init_harness(supervisor_instance):
+    """Initialize harness with supervisor"""
+    global _harness_bridge
+    _harness_bridge = HarnessSupervisorBridge(supervisor_instance)
+    logger.info("Harness initialized with Supervisor bridge")
+    return _harness_bridge
+
+
+def get_harness_bridge() -> HarnessSupervisorBridge:
+    """Get the harness bridge instance"""
+    return _harness_bridge
 
 
 @app.get("/harness/status")
