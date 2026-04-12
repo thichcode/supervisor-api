@@ -85,6 +85,21 @@ COMMAND_REGISTRY = [
         aliases=(),
         args_hint="<type>",
     ),
+    # Skill commands
+    CommandDef(
+        "skills",
+        "List available skills",
+        "Skills",
+        aliases=("skill list",),
+        args_hint="[category]",
+    ),
+    CommandDef(
+        "skill",
+        "Load or manage a skill",
+        "Skills",
+        aliases=(),
+        args_hint="<action> [name]",
+    ),
 ]
 
 
