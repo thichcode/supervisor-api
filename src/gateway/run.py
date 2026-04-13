@@ -136,7 +136,10 @@ class GatewayRunner:
         platform: str,
         user_id: str,
         message: str,
-        session_id: Optional[str] = None
+        session_id: Optional[str] = None,
+        display_name: Optional[str] = None,
+        thread_id: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> str:
         """
         Process a message through Supervisor
@@ -167,11 +170,13 @@ class GatewayRunner:
             
             async with httpx.AsyncClient() as client:
                 response = await client.post(
-                    f"{self.config.supervisor_url}/api/v1/chat",
+                    f"{self.config.supervisor_url}/chat",
                     json={
-                        "message": message,
                         "user_id": user_id,
-                        "session_id": session_id,
+                        "display_name": display_name or user_id,
+                        "message": message,
+                        "thread_id": thread_id or session_id,
+                        "metadata": metadata or {"platform": platform, "group_chat": False},
                     },
                     headers={"Authorization": f"Bearer {self.config.supervisor_api_key}"} if self.config.supervisor_api_key else {},
                     timeout=30.0
@@ -179,7 +184,7 @@ class GatewayRunner:
                 
                 if response.status_code == 200:
                     result = response.json()
-                    reply = result.get("response", "")
+                    reply = result.get("message", result.get("response", ""))
                 else:
                     reply = f"Error: {response.status_code}"
                     
@@ -188,11 +193,12 @@ class GatewayRunner:
             reply = "Xin lỗi, có lỗi xảy ra. Vui lòng thử lại sau."
         
         # Add assistant message
-        self.session_store.add_message(
-            session_id=session_id,
-            role="assistant",
-            content=reply
-        )
+        if reply:
+            self.session_store.add_message(
+                session_id=session_id,
+                role="assistant",
+                content=reply
+            )
         
         return reply
     

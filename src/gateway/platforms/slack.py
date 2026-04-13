@@ -96,6 +96,17 @@ class SlackAdapter:
             user = event.get("user")
             text = event.get("text", "")
             channel = event.get("channel")
+            channel_type = event.get("channel_type", "")
+            display_name = event.get("username") or user
+            thread_ts = event.get("thread_ts") or event.get("ts") or "root"
+            thread_id = f"slack_{channel}_{thread_ts}"
+            metadata = {
+                "platform": "slack",
+                "channel": channel,
+                "channel_type": channel_type,
+                "group_chat": channel_type in {"channel", "group", "mpim"} or (isinstance(channel, str) and channel[:1] in {"C", "G"}),
+                "thread_ts": thread_ts,
+            }
             
             if not user or not text:
                 return None
@@ -105,8 +116,9 @@ class SlackAdapter:
                 return None
             
             # Process message
-            session_id = f"slack_{channel}_{user}"
-            reply = await self._call_supervisor(user, text, session_id)
+            reply = await self._call_supervisor(user, display_name, text, thread_id, metadata)
+            if not reply:
+                return None
             
             # Send reply
             await self._send_message(channel, reply)
@@ -115,13 +127,23 @@ class SlackAdapter:
             user = event.get("user")
             text = event.get("text", "")
             channel = event.get("channel")
+            channel_type = event.get("channel_type", "")
+            display_name = event.get("username") or user
+            thread_ts = event.get("thread_ts") or event.get("ts") or "root"
+            thread_id = f"slack_{channel}_{thread_ts}"
+            metadata = {
+                "platform": "slack",
+                "channel": channel,
+                "channel_type": channel_type,
+                "group_chat": channel_type in {"channel", "group", "mpim"} or (isinstance(channel, str) and channel[:1] in {"C", "G"}),
+                "thread_ts": thread_ts,
+            }
             
             # Remove mention from text
             import re
             text = re.sub(r"<@[A-Z0-9]+>", "", text).strip()
             
-            session_id = f"slack_{channel}_{user}"
-            reply = await self._call_supervisor(user, text, session_id)
+            reply = await self._call_supervisor(user, display_name, text, thread_id, metadata)
             
             await self._send_message(channel, reply)
         
@@ -141,9 +163,16 @@ class SlackAdapter:
         
         # Process action through supervisor
         user_id = user.get("id", "") if isinstance(user, dict) else ""
-        session_id = f"slack_{channel.get('id', '')}_{user_id}"
+        display_name = user.get("name", user_id) if isinstance(user, dict) else user_id
+        thread_id = f"slack_{channel.get('id', '')}_{action.get('action_ts', 'action')}"
+        metadata = {
+            "platform": "slack",
+            "channel": channel.get("id", ""),
+            "group_chat": True,
+            "action": action.get("action_id", ""),
+        }
         
-        reply = await self._call_supervisor(user_id, action_value, session_id)
+        reply = await self._call_supervisor(user_id, display_name, action_value, thread_id, metadata)
         
         return {
             "response_action": "update",
@@ -159,10 +188,15 @@ class SlackAdapter:
         cmd = parts[0] if parts else ""
         args = " ".join(parts[1:]) if len(parts) > 1 else ""
         
-        session_id = f"slack_{channel_id}_{user_id}"
+        thread_id = f"slack_{channel_id}_{user_id}"
+        metadata = {
+            "platform": "slack",
+            "channel": channel_id,
+            "group_chat": channel_id[:1] in {"C", "G"},
+        }
         
         if cmd == "/supervisor":
-            reply = await self._call_supervisor(user_id, args, session_id)
+            reply = await self._call_supervisor(user_id, user_id, args, thread_id, metadata)
         else:
             reply = f"Unknown command: {cmd}"
         
@@ -171,25 +205,37 @@ class SlackAdapter:
             "text": reply
         }
     
-    async def _call_supervisor(self, user_id: str, message: str, session_id: str) -> str:
+    async def _call_supervisor(
+        self,
+        user_id: str,
+        display_name: str,
+        message: str,
+        thread_id: str,
+        metadata: Dict[str, Any],
+    ) -> str:
         """Call Supervisor API"""
         import httpx
         
         try:
             async with httpx.AsyncClient() as client:
                 response = await client.post(
-                    f"{self.supervisor_url}/api/v1/chat",
+                    f"{self.supervisor_url}/chat",
                     json={
-                        "message": message,
                         "user_id": user_id,
-                        "session_id": session_id,
+                        "display_name": display_name,
+                        "message": message,
+                        "thread_id": thread_id,
+                        "metadata": metadata,
                     },
                     headers={"Authorization": f"Bearer {self.api_key}"} if self.api_key else {},
                     timeout=30.0
                 )
                 
                 if response.status_code == 200:
-                    return response.json().get("response", "No response")
+                    payload = response.json()
+                    if payload.get("status") == "skipped":
+                        return ""
+                    return payload.get("message", payload.get("response", "No response"))
                 else:
                     return f"Error: {response.status_code}"
                     

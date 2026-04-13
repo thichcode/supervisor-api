@@ -17,6 +17,7 @@ from pydantic import BaseModel
 
 from src.config import get_settings
 from src.core import InputPayload, OutputPayload
+from src.core.thread_targeting import GroupChatTargetResolver
 from src.core.schemas import (
     ChatRequest,
     ChatResponse,
@@ -66,6 +67,7 @@ setup_logging()
 
 limiter = Limiter(key_func=get_remote_address)
 supervisor = Supervisor()
+group_chat_resolver = GroupChatTargetResolver()
 
 
 @asynccontextmanager
@@ -824,15 +826,72 @@ async def chat(request: ChatRequest):
         case=CaseInfo(case_id=request.case_id) if request.case_id else None,
         message=MessageInfo(text=request.message),
     )
-    
+
+    is_group_chat = bool(request.metadata.get("group_chat", False))
+
     import src.api as api_module
-    
+
     async with api_module.async_session() as session:
         memory_service = MemoryService(session, api_module.redis_cache)
         memory = await memory_service.retrieve(payload)
+
+        target_decision = group_chat_resolver.resolve(
+            current_text=request.message,
+            history_texts=[
+                *memory.recent_messages,
+                memory.conversation_summary or "",
+            ],
+            group_chat=is_group_chat,
+        )
+
+        if is_group_chat and target_decision.should_skip:
+            await memory_service.commit(payload)
+            return ChatResponse(
+                request_id=request_id,
+                status="skipped",
+                message="",
+                message_type=request.message_type,
+                confidence=target_decision.confidence,
+                metadata={
+                    "group_chat": True,
+                    "group_chat_target": target_decision.target.value,
+                    "group_chat_reason": target_decision.reason,
+                    "skipped": True,
+                },
+            )
+
+        if is_group_chat and target_decision.should_clarify:
+            await memory_service.commit(payload)
+            return ChatResponse(
+                request_id=request_id,
+                status="needs_clarification",
+                message="Chưa rõ message này đang nhắm tới Thuong hay workflow bot. Bạn xác nhận giúp mình?",
+                message_type=request.message_type,
+                confidence=target_decision.confidence,
+                metadata={
+                    "group_chat": True,
+                    "group_chat_target": target_decision.target.value,
+                    "group_chat_reason": target_decision.reason,
+                    "needs_clarification": True,
+                },
+            )
+
         result = await api_module.supervisor.process(payload, memory)
         await memory_service.commit(payload)
-    
+
+    group_chat_metadata = {}
+    if is_group_chat:
+        group_chat_metadata = {
+            "group_chat": True,
+            "group_chat_target": target_decision.target.value,
+            "group_chat_reason": target_decision.reason,
+            "group_chat_confidence": target_decision.confidence,
+        }
+        result.metadata = {
+            **(result.metadata or {}),
+            **group_chat_metadata,
+        }
+
     needs_approval = await approval_service.needs_approval(result.confidence)
     
     if needs_approval:
@@ -849,6 +908,7 @@ async def chat(request: ChatRequest):
                 "case_id": request.case_id,
                 "agents_used": result.metadata.get("agents_used", []),
                 "intent": result.metadata.get("intent"),
+                **group_chat_metadata,
             },
         )
         

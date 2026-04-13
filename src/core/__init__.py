@@ -26,6 +26,11 @@ from .schemas import (
     ApprovalListResponse,
     ApprovalActionRequest,
 )
+from .thread_targeting import (
+    GroupChatTargetResolver,
+    TargetDecision,
+    TargetType,
+)
 
 __all__ = [
     "IntentType",
@@ -54,4 +59,7 @@ __all__ = [
     "ApprovalRequestResponse",
     "ApprovalListResponse",
     "ApprovalActionRequest",
+    "GroupChatTargetResolver",
+    "TargetDecision",
+    "TargetType",
 ]

@@ -105,6 +105,20 @@ class TelegramAdapter:
         user_id = str(message.get("from", {}).get("id", ""))
         chat_id = str(message.get("chat", {}).get("id", ""))
         text = message.get("text", "")
+        display_name = (
+            message.get("from", {}).get("first_name")
+            or message.get("from", {}).get("username")
+            or user_id
+        )
+        chat_type = message.get("chat", {}).get("type", "private")
+        group_chat = chat_type in {"group", "supergroup"}
+        thread_id = f"telegram_{chat_id}"
+        metadata = {
+            "platform": "telegram",
+            "chat_id": chat_id,
+            "chat_type": chat_type,
+            "group_chat": group_chat,
+        }
         
         if not text:
             return
@@ -115,10 +129,9 @@ class TelegramAdapter:
             return
         
         # Process as regular message
-        session_id = f"telegram_{user_id}"
-        
-        # Call supervisor
-        reply = await self._call_supervisor(user_id, text, session_id)
+        reply = await self._call_supervisor(user_id, display_name, text, thread_id, metadata)
+        if not reply:
+            return
         
         # Send response
         await self._send_message(chat_id, reply)
@@ -140,25 +153,37 @@ class TelegramAdapter:
         else:
             await self._send_message(chat_id, f"Unknown command: {command}")
     
-    async def _call_supervisor(self, user_id: str, message: str, session_id: str) -> str:
+    async def _call_supervisor(
+        self,
+        user_id: str,
+        display_name: str,
+        message: str,
+        thread_id: str,
+        metadata: Dict[str, Any],
+    ) -> str:
         """Call Supervisor API"""
         import httpx
         
         try:
             async with httpx.AsyncClient() as client:
                 response = await client.post(
-                    f"{self.supervisor_url}/api/v1/chat",
+                    f"{self.supervisor_url}/chat",
                     json={
-                        "message": message,
                         "user_id": user_id,
-                        "session_id": session_id,
+                        "display_name": display_name,
+                        "message": message,
+                        "thread_id": thread_id,
+                        "metadata": metadata,
                     },
                     headers={"Authorization": f"Bearer {self.api_key}"} if self.api_key else {},
                     timeout=30.0
                 )
                 
                 if response.status_code == 200:
-                    return response.json().get("response", "No response")
+                    payload = response.json()
+                    if payload.get("status") == "skipped":
+                        return ""
+                    return payload.get("message", payload.get("response", "No response"))
                 else:
                     return f"Lỗi: {response.status_code}"
                     

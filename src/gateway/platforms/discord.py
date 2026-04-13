@@ -79,6 +79,16 @@ class DiscordAdapter:
             
             user_id = str(payload.get("member", {}).get("user", {}).get("id", ""))
             guild_id = str(payload.get("guild_id", ""))
+            channel_id = str(payload.get("channel_id", ""))
+            user = payload.get("member", {}).get("user", {})
+            display_name = user.get("global_name") or user.get("username") or user_id
+            thread_id = f"discord_{guild_id or channel_id or user_id}"
+            metadata = {
+                "platform": "discord",
+                "guild_id": guild_id,
+                "channel_id": channel_id,
+                "group_chat": bool(guild_id),
+            }
             
             # Build message from command
             message = f"/{command_name}"
@@ -86,8 +96,9 @@ class DiscordAdapter:
                 message += f" {opt.get('value', '')}"
             
             # Process through supervisor
-            session_id = f"discord_{guild_id}_{user_id}"
-            reply = await self._call_supervisor(user_id, message, session_id)
+            reply = await self._call_supervisor(user_id, display_name, message, thread_id, metadata)
+            if not reply:
+                return {"type": 5}
             
             return {
                 "type": 4,  # Channel message with source
@@ -98,25 +109,37 @@ class DiscordAdapter:
         
         return {"type": 5}  # Unknown
     
-    async def _call_supervisor(self, user_id: str, message: str, session_id: str) -> str:
+    async def _call_supervisor(
+        self,
+        user_id: str,
+        display_name: str,
+        message: str,
+        thread_id: str,
+        metadata: Dict[str, Any],
+    ) -> str:
         """Call Supervisor API"""
         import httpx
         
         try:
             async with httpx.AsyncClient() as client:
                 response = await client.post(
-                    f"{self.supervisor_url}/api/v1/chat",
+                    f"{self.supervisor_url}/chat",
                     json={
-                        "message": message,
                         "user_id": user_id,
-                        "session_id": session_id,
+                        "display_name": display_name,
+                        "message": message,
+                        "thread_id": thread_id,
+                        "metadata": metadata,
                     },
                     headers={"Authorization": f"Bearer {self.api_key}"} if self.api_key else {},
                     timeout=30.0
                 )
                 
                 if response.status_code == 200:
-                    return response.json().get("response", "No response")
+                    payload = response.json()
+                    if payload.get("status") == "skipped":
+                        return ""
+                    return payload.get("message", payload.get("response", "No response"))
                 else:
                     return f"Error: {response.status_code}"
                     
