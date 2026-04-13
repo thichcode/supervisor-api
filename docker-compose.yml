@@ -19,7 +19,7 @@ services:
       - REDIS_PASSWORD=${REDIS_PASSWORD:-}
       # LLM Configuration
       - LLM_PROVIDER=${LLM_PROVIDER:-ollama}
-      - LLM_MODEL=${LLM_MODEL:-llama3}
+      - LLM_MODEL=${LLM_MODEL:-gemma2:latest}
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://llama-cpp:8080}
       - OLLAMA_TIMEOUT=${OLLAMA_TIMEOUT:-320}
       - LLM_TEMPERATURE=${LLM_TEMPERATURE:-0.7}
@@ -52,35 +52,6 @@ services:
         reservations:
           cpus: '0.5'
           memory: 512M
-
-  # llama.cpp Server (OpenAI-compatible API)
-  llama-cpp:
-    image: ghcr.io/ggerganov/llama.cpp:server
-    container_name: llama-cpp
-    ports:
-      - "8080:8080"
-    volumes:
-      - llama_models:/models
-    command: >
-      sh -c '
-        if [ ! -f /models/llama-3.1-8b-instruct-q4_k_m.gguf ]; then
-          echo "Downloading model...";
-          huggingface-cli download unsloth/Llama-3.1-8B-Instruct-GGUF Llama-3.1-8B-Instruct-Q4_K_M.gguf --local-dir /models --local-dir-use-symlinks=False;
-        fi;
-        llama-server -m /models/Llama-3.1-8B-Instruct-Q4_K_M.gguf -h 0.0.0.0 -p 8080 --ctx-size 4096 --parallel 4
-      '
-    environment:
-      - HF_TOKEN=${HF_TOKEN:-}
-    restart: unless-stopped
-    deploy:
-      resources:
-        limits:
-          cpus: '4'
-          memory: 8G
-        reservations:
-          cpus: '2'
-          memory: 4G
-
   postgres:
     image: postgres:16-alpine
     container_name: supervisor-postgres
