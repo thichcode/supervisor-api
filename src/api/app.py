@@ -57,6 +57,7 @@ from src.db import init_db, close_db, async_session
 from src.llm import llm_client
 from src.memory import redis_cache
 from src.memory.service import MemoryService
+from src.api.routers.feedback import router as feedback_router
 from datetime import datetime
 from typing import Optional
 import structlog
@@ -133,6 +134,8 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "DELETE"],
     allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
 )
+
+app.include_router(feedback_router)
 
 
 @app.get("/health")
@@ -3021,4 +3024,3 @@ async def reset_harness():
     harness.planner.clear_cache() if harness.planner else None
     
     return {"status": "reset", "message": "Harness state cleared"}
-

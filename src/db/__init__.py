@@ -1,5 +1,21 @@
 from .session import Base, engine, async_session, get_db, init_db, close_db
-from .models import Message, ConversationSummary, UserProfile, CaseMemory, MemoryItem, AuditLog
+from .models import (
+    Message,
+    ConversationThread,
+    ConversationSummary,
+    UserProfile,
+    UserStyleProfile,
+    UserStyleSignal,
+    CaseMemory,
+    MemoryItem,
+    AuditLog,
+    InteractionLog,
+    FeedbackLog,
+    ResponseLearningEvent,
+    KnowledgeCandidate,
+    ThreadTicketLink,
+    ApprovalRequestRecord,
+)
 from .models import KnowledgePolicy, KnowledgeFAQ, KnowledgeGuide, KnowledgeDocument, Alert, Config
 
 __all__ = [
@@ -10,11 +26,20 @@ __all__ = [
     "init_db",
     "close_db",
     "Message",
+    "ConversationThread",
     "ConversationSummary",
     "UserProfile",
+    "UserStyleProfile",
+    "UserStyleSignal",
     "CaseMemory",
     "MemoryItem",
     "AuditLog",
+    "InteractionLog",
+    "FeedbackLog",
+    "ResponseLearningEvent",
+    "KnowledgeCandidate",
+    "ThreadTicketLink",
+    "ApprovalRequestRecord",
     "KnowledgePolicy",
     "KnowledgeFAQ",
     "KnowledgeGuide",

@@ -12,13 +12,34 @@ class Message(Base):
     request_id = Column(String(100), nullable=False, index=True)
     user_id = Column(String(100), nullable=False, index=True)
     thread_id = Column(String(100), nullable=False, index=True)
+    ticket_id = Column(String(255), nullable=True, index=True)
+    ticket_system = Column(String(50), nullable=True, index=True)
     message_text = Column(Text, nullable=False)
     direction = Column(String(10), nullable=False)
     created_at = Column(DateTime, default=func.now())
 
     __table_args__ = (
         Index("idx_messages_thread_created", "thread_id", "created_at"),
+        Index("idx_messages_thread_ticket", "thread_id", "ticket_id"),
     )
+
+
+class ConversationThread(Base):
+    __tablename__ = "conversation_threads"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    thread_id = Column(String(255), nullable=False, unique=True, index=True)
+    channel = Column(String(50), nullable=True)
+    platform = Column(String(50), nullable=True)
+    user_id = Column(String(255), nullable=True, index=True)
+    team_id = Column(String(255), nullable=True, index=True)
+    title = Column(Text, nullable=True)
+    primary_ticket_id = Column(String(255), nullable=True, index=True)
+    ticket_system = Column(String(50), nullable=True, index=True)
+    last_message_at = Column(DateTime, default=func.now())
+    status = Column(String(50), default="active", index=True)
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 
 
 class ConversationSummary(Base):
@@ -90,6 +111,166 @@ class AuditLog(Base):
     output_summary = Column(Text)
     processing_time_ms = Column(Integer)
     created_at = Column(DateTime, default=func.now())
+
+
+class InteractionLog(Base):
+    __tablename__ = "interaction_logs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    request_id = Column(String(255), nullable=False, unique=True, index=True)
+    thread_id = Column(String(255), nullable=False, index=True)
+    user_id = Column(String(255), nullable=False, index=True)
+    ticket_id = Column(String(255), nullable=True, index=True)
+    ticket_system = Column(String(50), nullable=True, index=True)
+    input_text = Column(Text, nullable=False)
+    output_text = Column(Text, nullable=True)
+    intent = Column(String(50), nullable=True, index=True)
+    risk_level = Column(String(20), nullable=True, index=True)
+    confidence_score = Column(Float, default=0.0)
+    model_provider = Column(String(50), nullable=True)
+    model_name = Column(String(100), nullable=True)
+    kb_hit_count = Column(Integer, default=0)
+    kb_sources = Column(JSON, default=list)
+    approval_required = Column(Boolean, default=False)
+    approval_status = Column(String(50), nullable=True)
+    processing_latency_ms = Column(Integer, nullable=True)
+    outcome_status = Column(String(50), nullable=True, index=True)
+    extra_metadata = Column(JSON, default=dict)
+    created_at = Column(DateTime, default=func.now())
+
+    __table_args__ = (
+        Index("idx_interaction_logs_thread_ticket", "thread_id", "ticket_id"),
+    )
+
+
+class UserStyleProfile(Base):
+    __tablename__ = "user_style_profiles"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(String(255), nullable=False, unique=True, index=True)
+    preferred_tone = Column(String(50), nullable=True)
+    preferred_verbosity = Column(String(50), nullable=True)
+    preferred_format = Column(String(50), nullable=True)
+    preferred_language = Column(String(20), nullable=True)
+    response_persona_hint = Column(Text, nullable=True)
+    confidence_score = Column(Float, default=0.0)
+    sample_count = Column(Integer, default=0)
+    last_inferred_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+
+class UserStyleSignal(Base):
+    __tablename__ = "user_style_signals"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(String(255), nullable=False, index=True)
+    request_id = Column(String(255), nullable=True, index=True)
+    signal_type = Column(String(50), nullable=False, index=True)
+    signal_value = Column(String(100), nullable=False)
+    signal_strength = Column(Float, default=0.5)
+    source = Column(String(50), nullable=False)
+    evidence = Column(JSON, default=dict)
+    created_at = Column(DateTime, default=func.now())
+
+    __table_args__ = (
+        Index("idx_style_signals_user_created", "user_id", "created_at"),
+    )
+
+
+class FeedbackLog(Base):
+    __tablename__ = "feedback_logs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    request_id = Column(String(255), nullable=False, index=True)
+    thread_id = Column(String(255), nullable=True, index=True)
+    user_id = Column(String(255), nullable=True, index=True)
+    ticket_id = Column(String(255), nullable=True, index=True)
+    ticket_system = Column(String(50), nullable=True, index=True)
+    feedback_type = Column(String(50), nullable=False, index=True)
+    feedback_score = Column(Float, nullable=True)
+    feedback_label = Column(String(100), nullable=True)
+    feedback_text = Column(Text, nullable=True)
+    edited_output_text = Column(Text, nullable=True)
+    reviewer_id = Column(String(255), nullable=True)
+    extra_metadata = Column(JSON, default=dict)
+    created_at = Column(DateTime, default=func.now())
+
+
+class ResponseLearningEvent(Base):
+    __tablename__ = "response_learning_events"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    request_id = Column(String(255), nullable=False, index=True)
+    user_id = Column(String(255), nullable=True, index=True)
+    thread_id = Column(String(255), nullable=True, index=True)
+    ticket_id = Column(String(255), nullable=True, index=True)
+    ticket_system = Column(String(50), nullable=True, index=True)
+    event_type = Column(String(50), nullable=False, index=True)
+    event_payload = Column(JSON, nullable=False, default=dict)
+    processed = Column(Boolean, default=False, index=True)
+    created_at = Column(DateTime, default=func.now())
+    processed_at = Column(DateTime, nullable=True)
+
+
+class KnowledgeCandidate(Base):
+    __tablename__ = "knowledge_candidates"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    source_request_id = Column(String(255), nullable=False, index=True)
+    source_thread_id = Column(String(255), nullable=True, index=True)
+    ticket_id = Column(String(255), nullable=True, index=True)
+    ticket_system = Column(String(50), nullable=True, index=True)
+    extracted_title = Column(Text, nullable=True)
+    extracted_content = Column(Text, nullable=False)
+    category = Column(String(100), nullable=True, index=True)
+    tags = Column(JSON, default=list)
+    confidence_score = Column(Float, default=0.0)
+    status = Column(String(50), default="pending", index=True)
+    reviewer_id = Column(String(255), nullable=True)
+    review_note = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=func.now())
+    reviewed_at = Column(DateTime, nullable=True)
+    promoted_at = Column(DateTime, nullable=True)
+
+
+class ThreadTicketLink(Base):
+    __tablename__ = "thread_ticket_links"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    thread_id = Column(String(255), nullable=False, index=True)
+    ticket_id = Column(String(255), nullable=False, index=True)
+    ticket_system = Column(String(50), nullable=False, default="servicedesk_plus", index=True)
+    relation_type = Column(String(50), nullable=False, default="primary")
+    confidence_score = Column(Float, default=1.0)
+    linked_by = Column(String(50), nullable=False, default="system")
+    extra_metadata = Column(JSON, default=dict)
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        Index("idx_thread_ticket_unique", "thread_id", "ticket_id", "ticket_system", unique=True),
+    )
+
+
+class ApprovalRequestRecord(Base):
+    __tablename__ = "approval_requests"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    request_id = Column(String(255), nullable=False, index=True)
+    thread_id = Column(String(255), nullable=True, index=True)
+    user_id = Column(String(255), nullable=True, index=True)
+    ticket_id = Column(String(255), nullable=True, index=True)
+    ticket_system = Column(String(50), nullable=True, index=True)
+    proposed_response = Column(Text, nullable=False)
+    reason = Column(Text, nullable=True)
+    risk_level = Column(String(20), nullable=True)
+    confidence_score = Column(Float, default=0.0)
+    status = Column(String(50), default="pending", index=True)
+    approver_id = Column(String(255), nullable=True)
+    action_note = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=func.now())
+    acted_at = Column(DateTime, nullable=True)
 
 
 class KnowledgePolicy(Base):

@@ -1,209 +1,29 @@
+"""Lazy tool exports.
+
+Keep optional integrations out of the import path for the core API.
+This prevents one missing optional dependency from breaking app startup.
 """
-Supervisor Tools Package
-Collection of tools for the supervisor API
-"""
 
-# RAG Pipeline
-from src.tools.rag_pipeline import (
-    RAGPipeline,
-    RAGConfig,
-    Document,
-    SearchResult,
-    BM25Indexer,
-    EmbeddingModel,
-    get_rag_pipeline,
-    create_document,
-)
+from importlib import import_module
 
-# File Processor
-from src.tools.file_processor import (
-    FileProcessor,
-    FileContent,
-    TableData,
-    get_file_processor,
-)
+_EXPORT_MAP = {
+    "get_n8n_connector": ("src.tools.n8n_connector", "get_n8n_connector"),
+    "N8NConnector": ("src.tools.n8n_connector", "N8NConnector"),
+    "ActionType": ("src.tools.n8n_connector", "ActionType"),
+    "RiskLevel": ("src.tools.n8n_connector", "RiskLevel"),
+    "URLFetcher": ("src.tools.url_fetcher", "URLFetcher"),
+    "URLInfo": ("src.tools.url_fetcher", "URLInfo"),
+    "INTERNAL_DOMAINS": ("src.tools.url_fetcher", "INTERNAL_DOMAINS"),
+    "TRUSTED_DOMAINS": ("src.tools.url_fetcher", "TRUSTED_DOMAINS"),
+}
 
-# API Client
-from src.tools.api_client import (
-    APIClient,
-    APIResponse,
-    CircuitBreaker,
-    CircuitBreakerConfig,
-    CircuitState,
-    CircuitOpenError,
-    RateLimiter,
-    RetryConfig,
-    RateLimitConfig,
-    create_api_client,
-)
 
-# Scheduler
-from src.tools.scheduler import (
-    Scheduler,
-    Job,
-    JobResult,
-    JobStatus,
-    JobType,
-    get_scheduler,
-    schedule_report_generation,
-    schedule_data_sync,
-    CRON_EXAMPLES,
-)
+def __getattr__(name: str):
+    if name not in _EXPORT_MAP:
+        raise AttributeError(f"module 'src.tools' has no attribute {name}")
+    module_name, attr_name = _EXPORT_MAP[name]
+    module = import_module(module_name)
+    return getattr(module, attr_name)
 
-# Notification
-from src.tools.notification import (
-    NotificationSender,
-    NotificationMessage,
-    ChannelConfig,
-    Channel,
-    TemplateRenderer,
-    get_notification_sender,
-    create_telegram_sender,
-    create_slack_sender,
-    create_teams_sender,
-    create_email_sender,
-)
 
-# Audit Logger
-from src.tools.audit_logger import (
-    AuditLogger,
-    AuditEvent,
-    AuditEventType,
-    RiskLevel,
-    get_audit_logger,
-    audited,
-)
-
-# Validators
-from src.tools.validators import (
-    ValidationError,
-    ValidationResult,
-    FieldValidator,
-    SchemaValidator,
-    JSONSchemaValidator,
-    DataSanitizer,
-    OutputFormatter,
-    CommonValidators,
-    validate,
-    validate_email,
-    validate_json,
-    validate_uuid,
-    SCHEMAS,
-)
-
-# n8n Connector
-from src.tools.n8n_connector import (
-    N8NConnector,
-    ActionType,
-    RiskLevel as N8NRiskLevel,
-    ActionRequest,
-    SystemAction,
-    SYSTEM_ACTIONS,
-    get_n8n_connector,
-)
-
-from src.tools.n8n_tool import (
-    N8NTool,
-    get_n8n_tool,
-)
-
-# URL Fetcher
-from src.tools.url_fetcher import (
-    URLFetcher,
-    URLInfo,
-    INTERNAL_DOMAINS,
-    TRUSTED_DOMAINS,
-)
-
-__all__ = [
-    # RAG
-    "RAGPipeline",
-    "RAGConfig",
-    "Document",
-    "SearchResult",
-    "BM25Indexer",
-    "EmbeddingModel",
-    "get_rag_pipeline",
-    "create_document",
-    
-    # File
-    "FileProcessor",
-    "FileContent",
-    "TableData",
-    "get_file_processor",
-    
-    # API Client
-    "APIClient",
-    "APIResponse",
-    "CircuitBreaker",
-    "CircuitBreakerConfig",
-    "CircuitState",
-    "CircuitOpenError",
-    "RateLimiter",
-    "RetryConfig",
-    "RateLimitConfig",
-    "create_api_client",
-    
-    # Scheduler
-    "Scheduler",
-    "Job",
-    "JobResult",
-    "JobStatus",
-    "JobType",
-    "get_scheduler",
-    "schedule_report_generation",
-    "schedule_data_sync",
-    "CRON_EXAMPLES",
-    
-    # Notification
-    "NotificationSender",
-    "NotificationMessage",
-    "ChannelConfig",
-    "Channel",
-    "TemplateRenderer",
-    "get_notification_sender",
-    "create_telegram_sender",
-    "create_slack_sender",
-    "create_teams_sender",
-    "create_email_sender",
-    
-    # Audit
-    "AuditLogger",
-    "AuditEvent",
-    "AuditEventType",
-    "RiskLevel",
-    "get_audit_logger",
-    "audited",
-    
-    # Validators
-    "ValidationError",
-    "ValidationResult",
-    "FieldValidator",
-    "SchemaValidator",
-    "JSONSchemaValidator",
-    "DataSanitizer",
-    "OutputFormatter",
-    "CommonValidators",
-    "validate",
-    "validate_email",
-    "validate_json",
-    "validate_uuid",
-    "SCHEMAS",
-    
-    # n8n
-    "N8NConnector",
-    "ActionType",
-    "N8NRiskLevel",
-    "ActionRequest",
-    "SystemAction",
-    "SYSTEM_ACTIONS",
-    "get_n8n_connector",
-    "N8NTool",
-    "get_n8n_tool",
-    
-    # URL Fetcher
-    "URLFetcher",
-    "URLInfo",
-    "INTERNAL_DOMAINS",
-    "TRUSTED_DOMAINS",
-]
+__all__ = list(_EXPORT_MAP.keys())

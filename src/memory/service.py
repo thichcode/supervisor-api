@@ -238,6 +238,8 @@ class MemoryService:
         thread_id = payload.conversation.thread_id
         user_id = payload.user.id
         case_id = payload.case.case_id if payload.case else None
+        ticket_id = payload.case.ticket_id if payload.case else None
+        ticket_system = payload.case.ticket_system if payload.case else None
 
         await self.repo.save_message(
             request_id=payload.request_id,
@@ -245,7 +247,29 @@ class MemoryService:
             thread_id=thread_id,
             message_text=payload.message.text,
             direction="inbound",
+            ticket_id=ticket_id,
+            ticket_system=ticket_system,
         )
+
+        await self.repo.upsert_conversation_thread(
+            thread_id=thread_id,
+            user_id=user_id,
+            team_id=payload.user.team,
+            platform=payload.source,
+            channel=payload.source,
+            primary_ticket_id=ticket_id,
+            ticket_system=ticket_system,
+            title=(payload.message.text[:120] if payload.message and payload.message.text else None),
+        )
+
+        if ticket_id:
+            await self.repo.link_thread_ticket(
+                thread_id=thread_id,
+                ticket_id=ticket_id,
+                ticket_system=ticket_system or "servicedesk_plus",
+                relation_type="primary",
+                linked_by="system",
+            )
 
         if case_state_changed and case_id:
             await self.repo.upsert_case_memory(case_id)

@@ -49,6 +49,8 @@ class ConversationInfo(BaseModel):
 
 class CaseInfo(BaseModel):
     case_id: Optional[str] = None
+    ticket_id: Optional[str] = None
+    ticket_system: Optional[str] = None
     priority: Optional[str] = None
     status: Optional[str] = None
     owner: Optional[str] = None
@@ -130,6 +132,8 @@ class ChatRequest(BaseModel):
     message: str
     thread_id: Optional[str] = None
     case_id: Optional[str] = None
+    ticket_id: Optional[str] = None
+    ticket_system: Optional[str] = None
     message_type: MessageType = MessageType.TEXT
     metadata: dict = Field(default_factory=dict)
 
@@ -239,3 +243,47 @@ class ApprovalVoteRequest(BaseModel):
     vote: str = Field(..., description="Vote: agree, change, or skip")
     user_id: str = Field(..., description="User who is voting")
     feedback: Optional[str] = Field(None, description="Optional feedback comment")
+
+
+class FeedbackType(str, Enum):
+    EXPLICIT_RATING = "explicit_rating"
+    APPROVAL = "approval"
+    REJECTION = "rejection"
+    HUMAN_EDIT = "human_edit"
+    USER_REPLY = "user_reply"
+
+
+class FeedbackCreateRequest(BaseModel):
+    request_id: str
+    thread_id: Optional[str] = None
+    user_id: Optional[str] = None
+    ticket_id: Optional[str] = None
+    ticket_system: Optional[str] = "servicedesk_plus"
+    feedback_type: FeedbackType
+    feedback_score: Optional[float] = None
+    feedback_label: Optional[str] = None
+    feedback_text: Optional[str] = None
+    edited_output_text: Optional[str] = None
+    reviewer_id: Optional[str] = None
+    metadata: dict = Field(default_factory=dict)
+
+
+class FeedbackResponse(BaseModel):
+    id: int
+    request_id: str
+    feedback_type: FeedbackType
+    feedback_label: Optional[str] = None
+    stored: bool = True
+    learning_event_created: bool = True
+
+
+class UserStyleProfileResponse(BaseModel):
+    user_id: str
+    preferred_tone: Optional[str] = None
+    preferred_verbosity: Optional[str] = None
+    preferred_format: Optional[str] = None
+    preferred_language: Optional[str] = None
+    response_persona_hint: Optional[str] = None
+    confidence_score: float = 0.0
+    sample_count: int = 0
+    updated_at: Optional[datetime] = None

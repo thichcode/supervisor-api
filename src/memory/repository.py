@@ -12,6 +12,8 @@ def utc_now() -> datetime:
 
 from src.db.models import (
     Message,
+    ConversationThread,
+    ThreadTicketLink,
     ConversationSummary,
     UserProfile,
     CaseMemory,
@@ -31,11 +33,15 @@ class MemoryRepository:
         thread_id: str,
         message_text: str,
         direction: str,
+        ticket_id: Optional[str] = None,
+        ticket_system: Optional[str] = None,
     ) -> Message:
         msg = Message(
             request_id=request_id,
             user_id=user_id,
             thread_id=thread_id,
+            ticket_id=ticket_id,
+            ticket_system=ticket_system,
             message_text=message_text,
             direction=direction,
         )
@@ -43,6 +49,101 @@ class MemoryRepository:
         await self.session.commit()
         await self.session.refresh(msg)
         return msg
+
+    async def upsert_conversation_thread(
+        self,
+        thread_id: str,
+        user_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        platform: Optional[str] = None,
+        channel: Optional[str] = None,
+        primary_ticket_id: Optional[str] = None,
+        ticket_system: Optional[str] = None,
+        title: Optional[str] = None,
+    ) -> ConversationThread:
+        result = await self.session.execute(
+            select(ConversationThread).where(ConversationThread.thread_id == thread_id)
+        )
+        existing = result.scalar_one_or_none()
+
+        if existing:
+            if user_id:
+                existing.user_id = user_id
+            if team_id:
+                existing.team_id = team_id
+            if platform:
+                existing.platform = platform
+            if channel:
+                existing.channel = channel
+            if primary_ticket_id:
+                existing.primary_ticket_id = primary_ticket_id
+            if ticket_system:
+                existing.ticket_system = ticket_system
+            if title:
+                existing.title = title
+            existing.last_message_at = utc_now()
+            existing.updated_at = utc_now()
+            await self.session.commit()
+            await self.session.refresh(existing)
+            return existing
+
+        thread = ConversationThread(
+            thread_id=thread_id,
+            user_id=user_id,
+            team_id=team_id,
+            platform=platform,
+            channel=channel,
+            primary_ticket_id=primary_ticket_id,
+            ticket_system=ticket_system,
+            title=title,
+            last_message_at=utc_now(),
+        )
+        self.session.add(thread)
+        await self.session.commit()
+        await self.session.refresh(thread)
+        return thread
+
+    async def link_thread_ticket(
+        self,
+        thread_id: str,
+        ticket_id: str,
+        ticket_system: str = "servicedesk_plus",
+        relation_type: str = "primary",
+        linked_by: str = "system",
+        confidence_score: float = 1.0,
+        metadata: Optional[dict] = None,
+    ) -> ThreadTicketLink:
+        result = await self.session.execute(
+            select(ThreadTicketLink).where(
+                ThreadTicketLink.thread_id == thread_id,
+                ThreadTicketLink.ticket_id == ticket_id,
+                ThreadTicketLink.ticket_system == ticket_system,
+            )
+        )
+        existing = result.scalar_one_or_none()
+        if existing:
+            existing.relation_type = relation_type
+            existing.linked_by = linked_by
+            existing.confidence_score = confidence_score
+            existing.extra_metadata = metadata or existing.extra_metadata
+            existing.updated_at = utc_now()
+            await self.session.commit()
+            await self.session.refresh(existing)
+            return existing
+
+        link = ThreadTicketLink(
+            thread_id=thread_id,
+            ticket_id=ticket_id,
+            ticket_system=ticket_system,
+            relation_type=relation_type,
+            linked_by=linked_by,
+            confidence_score=confidence_score,
+            extra_metadata=metadata or {},
+        )
+        self.session.add(link)
+        await self.session.commit()
+        await self.session.refresh(link)
+        return link
 
     async def get_recent_messages(self, thread_id: str, limit: int = 10) -> list[Message]:
         result = await self.session.execute(

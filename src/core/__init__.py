@@ -25,6 +25,11 @@ from .schemas import (
     ApprovalRequestResponse,
     ApprovalListResponse,
     ApprovalActionRequest,
+    ApprovalVoteRequest,
+    FeedbackType,
+    FeedbackCreateRequest,
+    FeedbackResponse,
+    UserStyleProfileResponse,
 )
 from .thread_targeting import GroupChatTargetResolver
 from .teams_targeting import (
@@ -62,6 +67,11 @@ __all__ = [
     "ApprovalRequestResponse",
     "ApprovalListResponse",
     "ApprovalActionRequest",
+    "ApprovalVoteRequest",
+    "FeedbackType",
+    "FeedbackCreateRequest",
+    "FeedbackResponse",
+    "UserStyleProfileResponse",
     "GroupChatTargetResolver",
     "TeamsSignal",
     "TeamsTargetResolver",
