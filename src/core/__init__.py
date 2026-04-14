@@ -26,10 +26,13 @@ from .schemas import (
     ApprovalListResponse,
     ApprovalActionRequest,
 )
-from .thread_targeting import (
-    GroupChatTargetResolver,
+from .thread_targeting import GroupChatTargetResolver
+from .teams_targeting import (
+    TeamsSignal,
+    TeamsTargetResolver,
     TargetDecision,
     TargetType,
+    extract_teams_signal,
 )
 
 __all__ = [
@@ -60,6 +63,9 @@ __all__ = [
     "ApprovalListResponse",
     "ApprovalActionRequest",
     "GroupChatTargetResolver",
+    "TeamsSignal",
+    "TeamsTargetResolver",
     "TargetDecision",
     "TargetType",
+    "extract_teams_signal",
 ]

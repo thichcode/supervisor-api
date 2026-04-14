@@ -18,6 +18,7 @@ from pydantic import BaseModel
 from src.config import get_settings
 from src.core import InputPayload, OutputPayload
 from src.core.thread_targeting import GroupChatTargetResolver
+from src.core.teams_targeting import TeamsTargetResolver, extract_teams_signal
 from src.core.schemas import (
     ChatRequest,
     ChatResponse,
@@ -68,6 +69,7 @@ setup_logging()
 limiter = Limiter(key_func=get_remote_address)
 supervisor = Supervisor()
 group_chat_resolver = GroupChatTargetResolver()
+teams_target_resolver = TeamsTargetResolver()
 
 
 @asynccontextmanager
@@ -828,6 +830,9 @@ async def chat(request: ChatRequest):
     )
 
     is_group_chat = bool(request.metadata.get("group_chat", False))
+    is_teams_message = request.source == "ms_teams" or request.metadata.get("platform") == "teams" or any(
+        key in request.metadata for key in ("conversation_type", "conversationType", "mention_targets", "mentions", "reply_target", "replyToTarget", "sender_is_bot", "from_bot")
+    )
 
     import src.api as api_module
 
@@ -835,58 +840,108 @@ async def chat(request: ChatRequest):
         memory_service = MemoryService(session, api_module.redis_cache)
         memory = await memory_service.retrieve(payload)
 
-        target_decision = group_chat_resolver.resolve(
-            current_text=request.message,
-            history_texts=[
-                *memory.recent_messages,
-                memory.conversation_summary or "",
-            ],
-            group_chat=is_group_chat,
-        )
+        history_texts = [
+            *memory.recent_messages,
+            memory.conversation_summary or "",
+        ]
 
-        if is_group_chat and target_decision.should_skip:
-            await memory_service.commit(payload)
-            return ChatResponse(
-                request_id=request_id,
-                status="skipped",
-                message="",
-                message_type=request.message_type,
-                confidence=target_decision.confidence,
-                metadata={
-                    "group_chat": True,
-                    "group_chat_target": target_decision.target.value,
-                    "group_chat_reason": target_decision.reason,
-                    "skipped": True,
-                },
-            )
+        routing_metadata = {}
+        target_decision = None
 
-        if is_group_chat and target_decision.should_clarify:
-            await memory_service.commit(payload)
-            return ChatResponse(
-                request_id=request_id,
-                status="needs_clarification",
-                message="Chưa rõ message này đang nhắm tới Thuong hay workflow bot. Bạn xác nhận giúp mình?",
-                message_type=request.message_type,
-                confidence=target_decision.confidence,
-                metadata={
-                    "group_chat": True,
-                    "group_chat_target": target_decision.target.value,
-                    "group_chat_reason": target_decision.reason,
-                    "needs_clarification": True,
-                },
+        if is_teams_message:
+            teams_signal = extract_teams_signal(request.metadata)
+            teams_decision = teams_target_resolver.resolve(
+                current_text=request.message,
+                signal=teams_signal,
+                history_texts=history_texts,
             )
+            routing_metadata = {
+                "teams_target": teams_decision.target.value,
+                "teams_reason": teams_decision.reason,
+                "teams_confidence": teams_decision.confidence,
+            }
+
+            if teams_decision.should_skip:
+                await memory_service.commit(payload)
+                return ChatResponse(
+                    request_id=request_id,
+                    status="skipped",
+                    message="",
+                    message_type=request.message_type,
+                    confidence=teams_decision.confidence,
+                    metadata={
+                        **routing_metadata,
+                        "teams_message": True,
+                        "skipped": True,
+                    },
+                )
+
+            if teams_decision.should_clarify:
+                await memory_service.commit(payload)
+                return ChatResponse(
+                    request_id=request_id,
+                    status="needs_clarification",
+                    message="Chưa rõ message này đang nhắm tới Thuong hay workflow bot. Bạn xác nhận giúp mình?",
+                    message_type=request.message_type,
+                    confidence=teams_decision.confidence,
+                    metadata={
+                        **routing_metadata,
+                        "teams_message": True,
+                        "needs_clarification": True,
+                    },
+                )
+
+            if teams_decision.should_respond:
+                target_decision = teams_decision
+
+        if target_decision is None:
+            target_decision = group_chat_resolver.resolve(
+                current_text=request.message,
+                history_texts=history_texts,
+                group_chat=is_group_chat,
+            )
+            routing_metadata = {
+                **routing_metadata,
+                "group_chat": is_group_chat,
+                "group_chat_target": target_decision.target.value,
+                "group_chat_reason": target_decision.reason,
+                "group_chat_confidence": target_decision.confidence,
+            }
+
+            if is_group_chat and target_decision.should_skip:
+                await memory_service.commit(payload)
+                return ChatResponse(
+                    request_id=request_id,
+                    status="skipped",
+                    message="",
+                    message_type=request.message_type,
+                    confidence=target_decision.confidence,
+                    metadata={
+                        **routing_metadata,
+                        "skipped": True,
+                    },
+                )
+
+            if is_group_chat and target_decision.should_clarify:
+                await memory_service.commit(payload)
+                return ChatResponse(
+                    request_id=request_id,
+                    status="needs_clarification",
+                    message="Chưa rõ message này đang nhắm tới Thuong hay workflow bot. Bạn xác nhận giúp mình?",
+                    message_type=request.message_type,
+                    confidence=target_decision.confidence,
+                    metadata={
+                        **routing_metadata,
+                        "needs_clarification": True,
+                    },
+                )
 
         result = await api_module.supervisor.process(payload, memory)
         await memory_service.commit(payload)
 
-    group_chat_metadata = {}
-    if is_group_chat:
-        group_chat_metadata = {
-            "group_chat": True,
-            "group_chat_target": target_decision.target.value,
-            "group_chat_reason": target_decision.reason,
-            "group_chat_confidence": target_decision.confidence,
-        }
+    group_chat_metadata = routing_metadata if (is_group_chat or is_teams_message) else {}
+
+    if group_chat_metadata:
         result.metadata = {
             **(result.metadata or {}),
             **group_chat_metadata,
