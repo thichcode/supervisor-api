@@ -1,9 +1,22 @@
 from typing import Optional, List
+import re
+
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, or_
 from sqlalchemy.orm import selectinload
 
-from src.db.models import KnowledgePolicy, KnowledgeFAQ, KnowledgeGuide, KnowledgeDocument
+from src.db.models import KnowledgeDocument, KnowledgeFAQ, KnowledgeGuide, KnowledgePolicy
+
+
+_MAX_SEARCH_QUERY_LEN = 512
+
+
+def _normalize_query(query: str) -> str:
+    """Collapse whitespace and cap query length for SQL LIKE searches."""
+    compact = re.sub(r"\s+", " ", query).strip()
+    if len(compact) > _MAX_SEARCH_QUERY_LEN:
+        return compact[:_MAX_SEARCH_QUERY_LEN]
+    return compact
 
 
 class KnowledgeBaseRepository:
@@ -41,6 +54,7 @@ class KnowledgeBaseRepository:
             stmt = stmt.where(KnowledgePolicy.tags.contains(tags))
 
         if query:
+            query = _normalize_query(query)
             stmt = stmt.where(
                 or_(
                     KnowledgePolicy.title.ilike(f"%{query}%"),
@@ -123,6 +137,7 @@ class KnowledgeBaseRepository:
             stmt = stmt.where(KnowledgeFAQ.keywords.overlap(keywords))
 
         if query:
+            query = _normalize_query(query)
             stmt = stmt.where(
                 or_(
                     KnowledgeFAQ.question.ilike(f"%{query}%"),
@@ -181,6 +196,7 @@ class KnowledgeBaseRepository:
             stmt = stmt.where(KnowledgeGuide.tags.contains(tags))
 
         if query:
+            query = _normalize_query(query)
             stmt = stmt.where(
                 or_(
                     KnowledgeGuide.title.ilike(f"%{query}%"),
@@ -208,14 +224,16 @@ class KnowledgeBaseRepository:
         self,
         query: Optional[str] = None,
         doc_type: Optional[str] = None,
+        document_type: Optional[str] = None,
         category: Optional[str] = None,
         tags: Optional[List[str]] = None,
         limit: int = 5,
     ) -> List[KnowledgeDocument]:
         stmt = select(KnowledgeDocument).where(KnowledgeDocument.is_active == True)
 
-        if doc_type:
-            stmt = stmt.where(KnowledgeDocument.doc_type == doc_type)
+        resolved_type = document_type or doc_type
+        if resolved_type:
+            stmt = stmt.where(KnowledgeDocument.document_type == resolved_type)
 
         if category:
             stmt = stmt.where(KnowledgeDocument.category == category)
@@ -224,6 +242,7 @@ class KnowledgeBaseRepository:
             stmt = stmt.where(KnowledgeDocument.tags.contains(tags))
 
         if query:
+            query = _normalize_query(query)
             stmt = stmt.where(
                 or_(
                     KnowledgeDocument.title.ilike(f"%{query}%"),

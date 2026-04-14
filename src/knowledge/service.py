@@ -30,15 +30,19 @@ class KnowledgeRetrievalService:
     ) -> KnowledgeSearchResponse:
         results: List[KnowledgeSearchResult] = []
 
+        normalized_query = re.sub(r"\s+", " ", query).strip()
+        if len(normalized_query) > 512:
+            normalized_query = normalized_query[:512]
+
         search_types = self._resolve_search_types(search_type)
 
         for kb_type in search_types:
             kb_results = await self._search_knowledge_base(
-                kb_type, query, category, tags, limit
+                kb_type, normalized_query, category, tags, limit
             )
             results.extend(kb_results)
 
-        results = self._deduplicate_and_rank(results, query)
+        results = self._deduplicate_and_rank(results, normalized_query)
 
         return KnowledgeSearchResponse(
             results=results[:limit],
@@ -111,13 +115,13 @@ class KnowledgeRetrievalService:
             for d in docs:
                 results.append(KnowledgeSearchResult(
                     knowledge_type=KnowledgeType.DOCUMENT,
-                    id=d.doc_id,
+                    id=d.document_id,
                     title=d.title,
                     content=d.content,
                     category=d.category,
                     tags=d.tags or [],
                     similarity=self._calculate_text_similarity(query, d.title + " " + d.content),
-                    metadata={"doc_type": d.doc_type},
+                    metadata={"doc_type": d.document_type},
                 ))
 
         return results

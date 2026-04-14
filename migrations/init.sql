@@ -184,10 +184,10 @@ CREATE INDEX IF NOT EXISTS idx_guides_type_category ON knowledge_guides(guide_ty
 -- Knowledge Documents
 CREATE TABLE IF NOT EXISTS knowledge_documents (
     id SERIAL PRIMARY KEY,
-    doc_id VARCHAR(100) UNIQUE NOT NULL,
+    document_id VARCHAR(100) UNIQUE NOT NULL,
     title VARCHAR(255) NOT NULL,
     content TEXT NOT NULL,
-    doc_type VARCHAR(50) NOT NULL,
+    document_type VARCHAR(50) NOT NULL,
     category VARCHAR(100) NOT NULL,
     tags JSONB DEFAULT '[]',
     metadata JSONB DEFAULT '{}',
@@ -197,8 +197,8 @@ CREATE TABLE IF NOT EXISTS knowledge_documents (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX IF NOT EXISTS idx_documents_doc_id ON knowledge_documents(doc_id);
-CREATE INDEX IF NOT EXISTS idx_documents_type ON knowledge_documents(doc_type);
+CREATE INDEX IF NOT EXISTS idx_documents_document_id ON knowledge_documents(document_id);
+CREATE INDEX IF NOT EXISTS idx_documents_type ON knowledge_documents(document_type);
 CREATE INDEX IF NOT EXISTS idx_documents_category ON knowledge_documents(category);
 
 -- Triggers for knowledge tables

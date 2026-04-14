@@ -14,6 +14,7 @@ from src.core.risk_evaluator import RiskEvaluator
 from src.memory import MemoryContext
 from src.agents import ContextAgent, DraftAgent, QAAgent
 from src.llm.provider import MultiProviderLLMClient, LLMProvider
+from src.knowledge.service import KnowledgeRetrievalService
 
 
 @pytest.fixture
@@ -302,8 +303,35 @@ class TestSupervisor:
         assert len(result.metadata["agents_used"]) > 1
 
 
+class TestKnowledgeSearch:
+    @pytest.mark.asyncio
+    async def test_long_query_is_truncated_before_search(self):
+        long_query = (
+            "Running with gitlab-runner 17.4.0 (b92ee590) "
+            "Preparing the docker executor " * 40
+        )
+
+        service = KnowledgeRetrievalService(session=object())
+        captured_queries = []
+
+        async def fake_search_knowledge_base(kb_type, query, category, tags, limit):
+            captured_queries.append(query)
+            return []
+
+        service._search_knowledge_base = fake_search_knowledge_base  # type: ignore[method-assign]
+
+        result = await service.search(long_query)
+
+        assert result.query == long_query
+        assert captured_queries
+        assert all(len(query) <= 512 for query in captured_queries)
+        assert all("\n" not in query for query in captured_queries)
+        assert result.total == 0
+
+
 class TestLLMProvider:
-    def test_provider_detection(self):
+    def test_provider_detection(self, monkeypatch):
+        monkeypatch.setattr("src.llm.provider.settings.llm_provider", "", raising=False)
         client = MultiProviderLLMClient()
         assert client.get_provider("gpt-4o") == LLMProvider.OPENAI
         assert client.get_provider("llama3") == LLMProvider.OLLAMA

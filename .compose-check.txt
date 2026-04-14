@@ -1,0 +1,199 @@
+name: supervisor-api
+services:
+  grafana:
+    container_name: supervisor-grafana
+    depends_on:
+      prometheus:
+        condition: service_started
+        required: true
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_SECURITY_ADMIN_USER: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    image: grafana/grafana:latest
+    networks:
+      default: null
+    ports:
+      - mode: ingress
+        target: 3000
+        published: "3000"
+        protocol: tcp
+    restart: unless-stopped
+    volumes:
+      - type: volume
+        source: grafana_data
+        target: /var/lib/grafana
+        volume: {}
+      - type: bind
+        source: /tmp/supervisor-api/config/grafana/provisioning
+        target: /etc/grafana/provisioning
+        read_only: true
+        bind: {}
+  postgres:
+    container_name: supervisor-postgres
+    deploy:
+      resources:
+        limits:
+          cpus: 1
+          memory: "1073741824"
+    environment:
+      POSTGRES_DB: supervisor_db
+      POSTGRES_PASSWORD: '***'
+      POSTGRES_USER: postgres
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U postgres
+      timeout: 5s
+      interval: 10s
+      retries: 5
+    image: postgres:16-alpine
+    networks:
+      default: null
+    ports:
+      - mode: ingress
+        target: 5432
+        published: "5432"
+        protocol: tcp
+    restart: unless-stopped
+    volumes:
+      - type: volume
+        source: postgres_data
+        target: /var/lib/postgresql/data
+        volume: {}
+      - type: bind
+        source: /tmp/supervisor-api/migrations/init.sql
+        target: /docker-entrypoint-initdb.d/init.sql
+        read_only: true
+        bind: {}
+  prometheus:
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --web.enable-lifecycle
+    container_name: supervisor-prometheus
+    image: prom/prometheus:latest
+    networks:
+      default: null
+    ports:
+      - mode: ingress
+        target: 9090
+        published: "9090"
+        protocol: tcp
+    restart: unless-stopped
+    volumes:
+      - type: bind
+        source: /tmp/supervisor-api/config/prometheus.yml
+        target: /etc/prometheus/prometheus.yml
+        read_only: true
+        bind: {}
+      - type: volume
+        source: prometheus_data
+        target: /prometheus
+        volume: {}
+  redis:
+    command:
+      - sh
+      - -c
+      - redis-server --requirepass "***" --maxmemory 256mb --maxmemory-policy allkeys-lru
+    container_name: supervisor-redis
+    deploy:
+      resources:
+        limits:
+          cpus: 0.5
+          memory: "536870912"
+    healthcheck:
+      test:
+        - CMD
+        - redis-cli
+        - -a
+        - '***'
+        - ping
+      timeout: 5s
+      interval: 10s
+      retries: 5
+    image: redis:7-alpine
+    networks:
+      default: null
+    ports:
+      - mode: ingress
+        target: 6379
+        published: "6379"
+        protocol: tcp
+    restart: unless-stopped
+    volumes:
+      - type: volume
+        source: redis_data
+        target: /data
+        volume: {}
+  supervisor:
+    build:
+      context: /tmp/supervisor-api
+      dockerfile: Dockerfile
+    container_name: supervisor-api
+    depends_on:
+      postgres:
+        condition: service_healthy
+        required: true
+      redis:
+        condition: service_healthy
+        required: true
+    deploy:
+      resources:
+        limits:
+          cpus: 2
+          memory: "2147483648"
+        reservations:
+          cpus: 0.5
+          memory: "536870912"
+    environment:
+      DB_HOST: postgres
+      DB_NAME: supervisor_db
+      DB_PASSWORD: '***'
+      DB_PORT: "5432"
+      DB_USER: postgres
+      LLM_MAX_TOKENS: "2000"
+      LLM_MODEL: llama3
+      LLM_PROVIDER: ollama
+      LLM_TEMPERATURE: "0.7"
+      LOG_LEVEL: INFO
+      OLLAMA_BASE_URL: http://localhost:8088
+      OLLAMA_TIMEOUT: "320"
+      OPENAI_API_KEY: ""
+      POWER_AUTOMATE_WEBHOOK_URL: https://defaultf01e930ab52e42b1b70fa8882b5d04.3b.environment.api.powerplatform.com:443/powerautomate/automations/direct/workflows/c545cacf4ac94a858980fd8412580804/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=ndfv8v-ZgXx81hwyzcYXlQ9yJziNTW-suNVPH2Qdoqs
+      REDIS_HOST: redis
+      REDIS_PASSWORD: '***'
+      REDIS_PORT: "6379"
+      WEBHOOK_INPUT_SECRET: '***'
+    extra_hosts:
+      - host.docker.internal=host-gateway
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import httpx; httpx.get('http://localhost:8000/health').raise_for_status()
+      timeout: 10s
+      interval: 30s
+      retries: 3
+      start_period: 40s
+    networks:
+      default: null
+    ports:
+      - mode: ingress
+        target: 8000
+        published: "8000"
+        protocol: tcp
+    restart: unless-stopped
+networks:
+  default:
+    name: supervisor-api_default
+volumes:
+  grafana_data:
+    name: supervisor-api_grafana_data
+  postgres_data:
+    name: supervisor-api_postgres_data
+  prometheus_data:
+    name: supervisor-api_prometheus_data
+  redis_data:
+    name: supervisor-api_redis_data

@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   supervisor:
     build:
@@ -19,8 +17,9 @@ services:
       - REDIS_PASSWORD=${REDIS_PASSWORD:-}
       # LLM Configuration
       - LLM_PROVIDER=${LLM_PROVIDER:-ollama}
-      - LLM_MODEL=${LLM_MODEL:-gemma2:latest}
-      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://llama-cpp:8080}
+      - LLM_MODEL=${LLM_MODEL:-llama3}
+      # No local llama-cpp service in compose; point to an external LLM endpoint.
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:8088}
       - OLLAMA_TIMEOUT=${OLLAMA_TIMEOUT:-320}
       - LLM_TEMPERATURE=${LLM_TEMPERATURE:-0.7}
       - LLM_MAX_TOKENS=${LLM_MAX_TOKENS:-2000}
@@ -35,8 +34,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      llama-cpp:
-        condition: service_started
+    extra_hosts:
+      - "${EXTRA_HOSTS:-host.docker.internal:host-gateway}"
     healthcheck:
       test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/health').raise_for_status()"]
       interval: 30s
@@ -135,4 +134,3 @@ volumes:
   redis_data:
   prometheus_data:
   grafana_data:
-  llama_models:
