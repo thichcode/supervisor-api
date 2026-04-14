@@ -153,7 +153,7 @@ class AdminUser(HttpUser):
     def on_start(self):
         """Called when a simulated admin starts"""
         # Verify admin access
-        response = self.client.get("/admin/errors/dlq")
+        self.client.get("/admin/errors/dlq")
         # May fail if not authenticated, that's OK for testing
     
     @task(3)
