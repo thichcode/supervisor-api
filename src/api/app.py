@@ -58,6 +58,7 @@ from src.llm import llm_client
 from src.memory import redis_cache
 from src.memory.service import MemoryService
 from src.api.routers.feedback import router as feedback_router
+from src.services.interaction_service import InteractionService
 from datetime import datetime
 from typing import Optional
 import structlog
@@ -828,12 +829,16 @@ async def chat(request: ChatRequest):
             thread_id=thread_id,
             message_id=f"msg-{request_id}",
         ),
-        case=CaseInfo(case_id=request.case_id) if request.case_id else None,
+        case=CaseInfo(
+            case_id=request.case_id,
+            ticket_id=request.ticket_id,
+            ticket_system=request.ticket_system,
+        ) if (request.case_id or request.ticket_id) else None,
         message=MessageInfo(text=request.message),
     )
 
     is_group_chat = bool(request.metadata.get("group_chat", False))
-    is_teams_message = request.source == "ms_teams" or request.metadata.get("platform") == "teams" or any(
+    is_teams_message = request.metadata.get("source") == "ms_teams" or request.metadata.get("platform") == "teams" or any(
         key in request.metadata for key in ("conversation_type", "conversationType", "mention_targets", "mentions", "reply_target", "replyToTarget", "sender_is_bot", "from_bot")
     )
 
@@ -841,6 +846,7 @@ async def chat(request: ChatRequest):
 
     async with api_module.async_session() as session:
         memory_service = MemoryService(session, api_module.redis_cache)
+        interaction_service = InteractionService(session)
         memory = await memory_service.retrieve(payload)
 
         history_texts = [
@@ -942,6 +948,28 @@ async def chat(request: ChatRequest):
         result = await api_module.supervisor.process(payload, memory)
         await memory_service.commit(payload)
 
+        await interaction_service.log_interaction(
+            request_id=request_id,
+            thread_id=thread_id,
+            user_id=request.user_id,
+            input_text=request.message,
+            output_text=result.answer,
+            intent=result.metadata.get("intent") if result.metadata else None,
+            risk_level=result.risk_level,
+            confidence_score=result.confidence,
+            model_provider=(result.metadata or {}).get("model_provider"),
+            model_name=(result.metadata or {}).get("model_name") or settings.llm_model,
+            kb_sources=(result.metadata or {}).get("kb_sources", []),
+            approval_required=False,
+            approval_status="not_needed",
+            processing_latency_ms=(result.metadata or {}).get("processing_time_ms"),
+            outcome_status=result.status,
+            ticket_id=request.ticket_id,
+            ticket_system=request.ticket_system,
+            extra_metadata=result.metadata or {},
+        )
+        await session.commit()
+
     group_chat_metadata = routing_metadata if (is_group_chat or is_teams_message) else {}
 
     if group_chat_metadata:
@@ -964,12 +992,51 @@ async def chat(request: ChatRequest):
             metadata={
                 "thread_id": thread_id,
                 "case_id": request.case_id,
+                "ticket_id": request.ticket_id,
+                "ticket_system": request.ticket_system,
                 "agents_used": result.metadata.get("agents_used", []),
                 "intent": result.metadata.get("intent"),
+                "risk_level": result.risk_level,
                 **group_chat_metadata,
             },
         )
-        
+
+        async with api_module.async_session() as session:
+            interaction_service = InteractionService(session)
+            await interaction_service.log_interaction(
+                request_id=request_id,
+                thread_id=thread_id,
+                user_id=request.user_id,
+                input_text=request.message,
+                output_text=result.answer,
+                intent=result.metadata.get("intent") if result.metadata else None,
+                risk_level=result.risk_level,
+                confidence_score=result.confidence,
+                model_provider=(result.metadata or {}).get("model_provider"),
+                model_name=(result.metadata or {}).get("model_name") or settings.llm_model,
+                kb_sources=(result.metadata or {}).get("kb_sources", []),
+                approval_required=True,
+                approval_status="pending",
+                processing_latency_ms=(result.metadata or {}).get("processing_time_ms"),
+                outcome_status="pending_approval",
+                ticket_id=request.ticket_id,
+                ticket_system=request.ticket_system,
+                extra_metadata={**(result.metadata or {}), "approval_id": approval.id},
+            )
+            await interaction_service.create_approval_record(
+                request_id=request_id,
+                thread_id=thread_id,
+                user_id=request.user_id,
+                proposed_response=result.answer,
+                reason="confidence_below_threshold",
+                risk_level=result.risk_level,
+                confidence_score=result.confidence,
+                status="pending",
+                ticket_id=request.ticket_id,
+                ticket_system=request.ticket_system,
+            )
+            await session.commit()
+
         return ChatResponse(
             request_id=request_id,
             status="pending_approval",
@@ -1036,7 +1103,11 @@ async def chat_via_harness(request: ChatRequest):
             thread_id=thread_id,
             message_id=f"msg-{request_id}",
         ),
-        case=CaseInfo(case_id=request.case_id) if request.case_id else None,
+        case=CaseInfo(
+            case_id=request.case_id,
+            ticket_id=request.ticket_id,
+            ticket_system=request.ticket_system,
+        ) if (request.case_id or request.ticket_id) else None,
         message=MessageInfo(text=request.message),
     )
     
@@ -1044,6 +1115,7 @@ async def chat_via_harness(request: ChatRequest):
     
     async with api_module.async_session() as session:
         memory_service = MemoryService(session, api_module.redis_cache)
+        interaction_service = InteractionService(session)
         memory = await memory_service.retrieve(payload)
         
         # Get harness bridge
@@ -1055,6 +1127,31 @@ async def chat_via_harness(request: ChatRequest):
             result = await api_module.supervisor.process(payload, memory)
         
         await memory_service.commit(payload)
+
+        await interaction_service.log_interaction(
+            request_id=request_id,
+            thread_id=thread_id,
+            user_id=request.user_id,
+            input_text=request.message,
+            output_text=result.answer,
+            intent=result.metadata.get("intent") if result.metadata else None,
+            risk_level=result.risk_level,
+            confidence_score=result.confidence,
+            model_provider=(result.metadata or {}).get("model_provider"),
+            model_name=(result.metadata or {}).get("model_name") or settings.llm_model,
+            kb_sources=(result.metadata or {}).get("kb_sources", []),
+            approval_required=False,
+            approval_status="not_needed",
+            processing_latency_ms=(result.metadata or {}).get("processing_time_ms"),
+            outcome_status=result.status,
+            ticket_id=request.ticket_id,
+            ticket_system=request.ticket_system,
+            extra_metadata={
+                **(result.metadata or {}),
+                "harness_metrics": result.metadata.get("harness_metrics") if result.metadata else None,
+            },
+        )
+        await session.commit()
     
     # Extract harness metrics if available
     harness_metrics = result.metadata.get("harness_metrics") if hasattr(result, 'metadata') else {}
@@ -1074,12 +1171,51 @@ async def chat_via_harness(request: ChatRequest):
             metadata={
                 "thread_id": thread_id,
                 "case_id": request.case_id,
+                "ticket_id": request.ticket_id,
+                "ticket_system": request.ticket_system,
                 "agents_used": result.metadata.get("agents_used", []),
                 "intent": result.metadata.get("intent"),
+                "risk_level": result.risk_level,
                 "harness_execution_id": harness_metrics.get("execution_id") if harness_metrics else None,
             },
         )
-        
+
+        async with api_module.async_session() as session:
+            interaction_service = InteractionService(session)
+            await interaction_service.log_interaction(
+                request_id=request_id,
+                thread_id=thread_id,
+                user_id=request.user_id,
+                input_text=request.message,
+                output_text=result.answer,
+                intent=result.metadata.get("intent") if result.metadata else None,
+                risk_level=result.risk_level,
+                confidence_score=result.confidence,
+                model_provider=(result.metadata or {}).get("model_provider"),
+                model_name=(result.metadata or {}).get("model_name") or settings.llm_model,
+                kb_sources=(result.metadata or {}).get("kb_sources", []),
+                approval_required=True,
+                approval_status="pending",
+                processing_latency_ms=(result.metadata or {}).get("processing_time_ms"),
+                outcome_status="pending_approval",
+                ticket_id=request.ticket_id,
+                ticket_system=request.ticket_system,
+                extra_metadata={**(result.metadata or {}), "approval_id": approval.id},
+            )
+            await interaction_service.create_approval_record(
+                request_id=request_id,
+                thread_id=thread_id,
+                user_id=request.user_id,
+                proposed_response=result.answer,
+                reason="confidence_below_threshold",
+                risk_level=result.risk_level,
+                confidence_score=result.confidence,
+                status="pending",
+                ticket_id=request.ticket_id,
+                ticket_system=request.ticket_system,
+            )
+            await session.commit()
+
         return ChatResponse(
             request_id=request_id,
             status="pending_approval",
@@ -1339,6 +1475,33 @@ async def approve_or_reject(approval_id: str, action: ApprovalActionRequest):
     
     if action.action == "approve":
         result = await approval_service.approve(approval_id, action.reviewed_by, action.comment)
+
+        import src.api as api_module
+        async with api_module.async_session() as session:
+            interaction_service = InteractionService(session)
+            await interaction_service.update_approval_record(
+                request_id=approval.request_id,
+                status="approved",
+                approver_id=action.reviewed_by,
+                action_note=action.comment,
+            )
+            await interaction_service.log_interaction(
+                request_id=approval.request_id,
+                thread_id=approval.metadata.get("thread_id", ""),
+                user_id=approval.user_id,
+                input_text=approval.original_message,
+                output_text=approval.ai_response,
+                intent=approval.metadata.get("intent"),
+                risk_level=approval.metadata.get("risk_level"),
+                confidence_score=approval.confidence,
+                approval_required=True,
+                approval_status="approved",
+                outcome_status="approved",
+                ticket_id=approval.metadata.get("ticket_id"),
+                ticket_system=approval.metadata.get("ticket_system"),
+                extra_metadata={**(approval.metadata or {}), "approval_id": approval.id, "approved_by": action.reviewed_by},
+            )
+            await session.commit()
         
         if settings.power_automate_webhook_url:
             payload = {
@@ -1374,6 +1537,33 @@ async def approve_or_reject(approval_id: str, action: ApprovalActionRequest):
     
     elif action.action == "reject":
         await approval_service.reject(approval_id, action.reviewed_by, action.comment)
+
+        import src.api as api_module
+        async with api_module.async_session() as session:
+            interaction_service = InteractionService(session)
+            await interaction_service.update_approval_record(
+                request_id=approval.request_id,
+                status="rejected",
+                approver_id=action.reviewed_by,
+                action_note=action.comment,
+            )
+            await interaction_service.log_interaction(
+                request_id=approval.request_id,
+                thread_id=approval.metadata.get("thread_id", ""),
+                user_id=approval.user_id,
+                input_text=approval.original_message,
+                output_text=approval.ai_response,
+                intent=approval.metadata.get("intent"),
+                risk_level=approval.metadata.get("risk_level"),
+                confidence_score=approval.confidence,
+                approval_required=True,
+                approval_status="rejected",
+                outcome_status="rejected",
+                ticket_id=approval.metadata.get("ticket_id"),
+                ticket_system=approval.metadata.get("ticket_system"),
+                extra_metadata={**(approval.metadata or {}), "approval_id": approval.id, "rejected_by": action.reviewed_by},
+            )
+            await session.commit()
         
         return {
             "status": "rejected",
@@ -1413,6 +1603,36 @@ async def vote_on_approval(
         user_id=vote_request.user_id,
         feedback=vote_request.feedback,
     )
+
+    import src.api as api_module
+    async with api_module.async_session() as session:
+        interaction_service = InteractionService(session)
+        await interaction_service.record_vote_feedback(
+            request_id=approval.request_id,
+            thread_id=approval.metadata.get("thread_id"),
+            user_id=vote_request.user_id,
+            vote=vote_request.vote,
+            feedback=vote_request.feedback,
+            ticket_id=approval.metadata.get("ticket_id"),
+            ticket_system=approval.metadata.get("ticket_system"),
+        )
+        await interaction_service.log_interaction(
+            request_id=approval.request_id,
+            thread_id=approval.metadata.get("thread_id", ""),
+            user_id=approval.user_id,
+            input_text=approval.original_message,
+            output_text=approval.ai_response,
+            intent=approval.metadata.get("intent"),
+            risk_level=approval.metadata.get("risk_level"),
+            confidence_score=approval.confidence,
+            approval_required=True,
+            approval_status=approval.status.value if hasattr(approval.status, 'value') else str(approval.status),
+            outcome_status="feedback_received",
+            ticket_id=approval.metadata.get("ticket_id"),
+            ticket_system=approval.metadata.get("ticket_system"),
+            extra_metadata={**(approval.metadata or {}), "vote": vote_request.vote, "vote_feedback": vote_request.feedback},
+        )
+        await session.commit()
     
     logger.info("Vote recorded", 
                 approval_id=approval_id, 
