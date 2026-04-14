@@ -280,15 +280,19 @@ class MemoryService:
         style = None
         style_profile = None
         if settings.enable_user_style_learning:
-            style, signals = self._infer_user_style(payload.message.text)
-            if style == "balanced":
-                style = None
-            else:
-                style_profile = {
-                    "communication_style": style,
-                    "style_signals": signals,
-                    "source": "message_history",
-                }
+            user_messages = await self.repo.get_recent_user_messages(user_id, limit=20)
+            style_source_text = "\n".join(m.message_text for m in user_messages)
+            if style_source_text:
+                style, signals = self._infer_user_style(style_source_text)
+                if style == "balanced":
+                    style = None
+                else:
+                    style_profile = {
+                        "communication_style": style,
+                        "style_signals": signals,
+                        "source": "user_id_history",
+                        "sample_count": len(user_messages),
+                    }
 
         if user_preference_detected or style:
             preference_updates = {}

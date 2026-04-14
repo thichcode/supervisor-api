@@ -53,6 +53,17 @@ class MemoryRepository:
         )
         return result.scalars().all()
 
+    async def get_recent_user_messages(self, user_id: str, limit: int = 20) -> list[Message]:
+        result = await self.session.execute(
+            select(Message)
+            .where(Message.user_id == user_id)
+            .where(Message.direction == "inbound")
+            .order_by(Message.created_at.desc())
+            .limit(limit)
+        )
+        messages = list(result.scalars().all())
+        return list(reversed(messages))
+
     async def get_conversation_summary(self, conversation_id: str) -> Optional[ConversationSummary]:
         result = await self.session.execute(
             select(ConversationSummary)
