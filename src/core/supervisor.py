@@ -301,7 +301,7 @@ class Supervisor:
                 if validation["needs_review"]:
                     if self.decision_engine.needs_human_review(intent, risk, payload, validation["confidence"]):
                         # Even if needs review, still refine the draft through QA agent
-                        answer = self.qa_agent.refine(validation, payload)
+                        answer = self.qa_agent.refine(validation, payload, context)
                         return self._create_output(
                             payload=payload,
                             answer=answer,
@@ -313,7 +313,7 @@ class Supervisor:
                             processing_time=start_time,
                         )
 
-                answer = self.qa_agent.refine(validation, payload)
+                answer = self.qa_agent.refine(validation, payload, context)
                 final_confidence = validation["confidence"]
         else:
             agents_used = ["draft"]

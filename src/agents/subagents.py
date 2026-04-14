@@ -18,6 +18,8 @@ class ContextAgent:
                 "role": memory.user_profile.get("role") if memory.user_profile else None,
                 "vip": payload.user.vip_flag,
                 "team": memory.user_profile.get("team") if memory.user_profile else None,
+                "communication_style": memory.user_profile.get("communication_style") if memory.user_profile else None,
+                "preferences": memory.user_profile.get("preferences") if memory.user_profile else {},
             },
             "case_info": None,
             "resolved_points": [],

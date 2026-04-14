@@ -97,19 +97,34 @@ class MemoryRepository:
         display_name: str,
         role: Optional[str] = None,
         team: Optional[str] = None,
-        vip_flag: bool = False,
+        vip_flag: Optional[bool] = None,
+        communication_style: Optional[str] = None,
         preferences: Optional[dict] = None,
     ) -> UserProfile:
         existing = await self.get_user_profile(user_id)
+
+        def _merge_preferences(current: Optional[dict], updates: Optional[dict]) -> dict:
+            merged = dict(current or {})
+            if updates:
+                for key, value in updates.items():
+                    if isinstance(value, dict) and isinstance(merged.get(key), dict):
+                        merged[key] = {**merged[key], **value}
+                    else:
+                        merged[key] = value
+            return merged
+
         if existing:
             existing.display_name = display_name
             if role:
                 existing.role = role
             if team:
                 existing.team = team
-            existing.vip_flag = vip_flag
+            if vip_flag is not None:
+                existing.vip_flag = vip_flag
+            if communication_style:
+                existing.communication_style = communication_style
             if preferences:
-                existing.preferences = preferences
+                existing.preferences = _merge_preferences(existing.preferences, preferences)
             existing.updated_at = utc_now()
             await self.session.commit()
             await self.session.refresh(existing)
@@ -120,7 +135,8 @@ class MemoryRepository:
                 display_name=display_name,
                 role=role,
                 team=team,
-                vip_flag=vip_flag,
+                vip_flag=bool(vip_flag) if vip_flag is not None else False,
+                communication_style=communication_style,
                 preferences=preferences or {},
             )
             self.session.add(profile)

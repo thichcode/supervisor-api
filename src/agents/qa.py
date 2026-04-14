@@ -4,6 +4,34 @@ from typing import Optional
 
 
 class DraftAgent:
+    def _style_instructions(self, context: dict) -> str:
+        user_info = context.get("user_info", {}) or {}
+        style = (user_info.get("communication_style") or "").lower()
+        preferences = user_info.get("preferences", {}) or {}
+        style_profile = preferences.get("style_profile", {}) if isinstance(preferences, dict) else {}
+        parts = []
+
+        if style == "structured":
+            parts.append("Trả lời theo cấu trúc rõ ràng, ưu tiên gạch đầu dòng và các bước.")
+        elif style == "detailed":
+            parts.append("Trả lời chi tiết, giải thích ngắn gọn các bước quan trọng.")
+        elif style == "formal":
+            parts.append("Giữ giọng trang trọng, lịch sự, ngắn gọn vừa đủ.")
+        elif style == "casual":
+            parts.append("Giữ giọng tự nhiên, thân thiện.")
+        elif style == "concise":
+            parts.append("Trả lời rất ngắn gọn, đi thẳng vào ý chính.")
+        else:
+            parts.append("Trả lời tự nhiên, cân bằng giữa ngắn gọn và đầy đủ.")
+
+        signals = style_profile.get("style_signals", {}) if isinstance(style_profile, dict) else {}
+        if signals.get("has_numbered_steps"):
+            parts.append("Nếu phù hợp, trình bày theo danh sách bước.")
+        if signals.get("has_bullets"):
+            parts.append("Ưu tiên định dạng gạch đầu dòng.")
+
+        return " ".join(parts)
+
     async def generate(
         self,
         payload: InputPayload,
@@ -13,17 +41,20 @@ class DraftAgent:
         llm: Optional[MultiProviderLLMClient] = None,
     ) -> str:
         user_name = payload.user.display_name
+        style_instructions = self._style_instructions(context)
 
         if llm:
-            system_prompt = """Bạn là trợ lý AI cho hệ thống IT Support.
+            system_prompt = f"""Bạn là trợ lý AI cho hệ thống IT Support.
 Dựa trên ngữ cảnh, chính sách và kiến thức được cung cấp, tạo câu trả lời phù hợp.
-Trả lời bằng tiếng Việt, ngắn gọn và chính xác."""
+Trả lời bằng tiếng Việt, ngắn gọn và chính xác.
+{style_instructions}"""
 
             user_prompt = f"""Câu hỏi của người dùng: {payload.message.text}
 
 Ngữ cảnh hội thoại: {context.get('conversation_summary', 'Không có')}
 Tin nhắn gần đây: {context.get('conversation_history', [])}
 Vai trò người dùng: {context.get('user_info', {}).get('role', 'employee')}
+Phong cách người dùng: {context.get('user_info', {}).get('communication_style', 'balanced')}
 
 {context.get('url_context', '')}
 
@@ -154,12 +185,15 @@ Trả về JSON:
             "needs_review": needs_review,
         }
 
-    def refine(self, validation: dict, payload: InputPayload) -> str:
+    def refine(self, validation: dict, payload: InputPayload, context: Optional[dict] = None) -> str:
         draft = validation["draft"]
         issues = validation.get("issues", [])
         user_name = payload.user.display_name
+        style = (context or {}).get("user_info", {}).get("communication_style", "")
 
         if not draft.strip():
+            if style == "concise":
+                return f"Hi {user_name}, mình đang kiểm tra lại."
             return f"Hi {user_name}, thank you for reaching out. I'm reviewing your request and will provide a detailed response shortly."
 
         if validation.get("needs_review"):

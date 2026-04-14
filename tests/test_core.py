@@ -15,6 +15,7 @@ from src.memory import MemoryContext
 from src.agents import ContextAgent, DraftAgent, QAAgent
 from src.llm.provider import MultiProviderLLMClient, LLMProvider
 from src.knowledge.service import KnowledgeRetrievalService
+from src.memory.service import MemoryService
 
 
 @pytest.fixture
@@ -327,6 +328,48 @@ class TestKnowledgeSearch:
         assert all(len(query) <= 512 for query in captured_queries)
         assert all("\n" not in query for query in captured_queries)
         assert result.total == 0
+
+
+class TestUserStyleLearning:
+    def test_infer_structured_style(self):
+        service = MemoryService.__new__(MemoryService)
+        style, signals = service._infer_user_style("1. First step\n2. Second step\n- Final note")
+
+        assert style == "structured"
+        assert signals["has_numbered_steps"] is True
+        assert signals["has_bullets"] is True
+
+    @pytest.mark.asyncio
+    async def test_draft_agent_uses_style_instructions(self, sample_payload):
+        class FakeLLM:
+            def __init__(self):
+                self.calls = []
+
+            async def complete(self, system_prompt, user_message):
+                self.calls.append((system_prompt, user_message))
+                return type("Resp", (), {"content": "ok", "confidence": 0.9})()
+
+        llm = FakeLLM()
+        agent = DraftAgent()
+        payload = sample_payload
+        context = {
+            "conversation_summary": "",
+            "conversation_history": [],
+            "user_info": {
+                "role": "employee",
+                "communication_style": "concise",
+                "preferences": {"style_profile": {"style_signals": {"has_bullets": True}}},
+            },
+        }
+
+        result = await agent.generate(payload, context, {}, {}, llm)
+
+        assert result == "ok"
+        assert llm.calls
+        system_prompt, user_prompt = llm.calls[0]
+        assert "Trả lời rất ngắn gọn" in system_prompt
+        assert "Ưu tiên định dạng gạch đầu dòng" in system_prompt
+        assert "Phong cách người dùng: concise" in user_prompt
 
 
 class TestLLMProvider:

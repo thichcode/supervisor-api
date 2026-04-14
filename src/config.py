@@ -141,6 +141,7 @@ class Settings(BaseSettings):
     enable_api_client: bool = False       # External API integrations
     enable_audit_logger: bool = False    # Compliance audit logging
     enable_validators: bool = False      # Input validation
+    enable_user_style_learning: bool = True  # Learn user communication style per user_id
 
     # Notification - enabled if any notification config is set
     enable_notification: bool = False    # Master toggle (auto-enabled if email/sms/teams configured)

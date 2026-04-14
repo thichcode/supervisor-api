@@ -1135,6 +1135,7 @@ async def system_query(request: SystemQueryRequest):
                     "role": user_profile.role,
                     "team": user_profile.team,
                     "vip_flag": user_profile.vip_flag,
+                    "communication_style": user_profile.communication_style,
                     "preferences": user_profile.preferences,
                 }
                 

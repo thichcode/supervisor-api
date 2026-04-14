@@ -1,5 +1,6 @@
 from typing import Optional
 from datetime import datetime, timedelta
+import re
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core import InputPayload, MemoryScopeType, MemoryItem
@@ -113,6 +114,41 @@ class MemoryService:
             )
         )
 
+    def _infer_user_style(self, text: str) -> tuple[str, dict]:
+        normalized = re.sub(r"\s+", " ", text).strip().lower()
+        words = re.findall(r"[\wÀ-ỹ']+", normalized)
+        word_count = len(words)
+        has_numbered_steps = bool(re.search(r"(^|\n)\s*(\d+\.|[-*])\s+", text))
+        has_bullets = "\n-" in text or "\n*" in text
+        has_formal_markers = any(token in normalized for token in ["anh chị", "xin vui lòng", "vui lòng", "please", "thank you", "cảm ơn"])
+        has_detail_markers = any(token in normalized for token in ["chi tiết", "detail", "explain", "giải thích", "step by step", "từng bước", "deep dive"])
+        has_short_markers = any(token in normalized for token in ["ok", "oke", "yes", "no", "xong", "done"])
+        has_casual_markers = any(token in normalized for token in ["haha", "lol", ":)", "😊", "👍", "bro", "bạn ơi"])
+
+        if has_numbered_steps or has_bullets:
+            style = "structured"
+        elif has_detail_markers or word_count > 24:
+            style = "detailed"
+        elif has_formal_markers:
+            style = "formal"
+        elif has_casual_markers:
+            style = "casual"
+        elif has_short_markers or word_count <= 8:
+            style = "concise"
+        else:
+            style = "balanced"
+
+        signals = {
+            "word_count": word_count,
+            "has_numbered_steps": has_numbered_steps,
+            "has_bullets": has_bullets,
+            "has_formal_markers": has_formal_markers,
+            "has_detail_markers": has_detail_markers,
+            "has_short_markers": has_short_markers,
+            "has_casual_markers": has_casual_markers,
+        }
+        return style, signals
+
     async def retrieve(self, payload: InputPayload) -> MemoryContext:
         thread_id = payload.conversation.thread_id
         user_id = payload.user.id
@@ -137,6 +173,7 @@ class MemoryService:
                 "role": user_profile_model.role,
                 "team": user_profile_model.team,
                 "vip_flag": user_profile_model.vip_flag,
+                "communication_style": user_profile_model.communication_style,
                 "preferences": user_profile_model.preferences,
             }
             if not user_profile_model.display_name:
@@ -240,20 +277,50 @@ class MemoryService:
                 room="episodic-insights",
             )
 
-        if user_preference_detected:
+        style = None
+        style_profile = None
+        if settings.enable_user_style_learning:
+            style, signals = self._infer_user_style(payload.message.text)
+            if style == "balanced":
+                style = None
+            else:
+                style_profile = {
+                    "communication_style": style,
+                    "style_signals": signals,
+                    "source": "message_history",
+                }
+
+        if user_preference_detected or style:
+            preference_updates = {}
+            if user_preference_detected:
+                preference_updates["last_preference"] = user_preference_detected
+            if style_profile:
+                preference_updates["style_profile"] = style_profile
+
             await self.repo.upsert_user_profile(
                 user_id=user_id,
                 display_name=payload.user.display_name,
-                preferences={"last_preference": user_preference_detected},
+                communication_style=style,
+                preferences=preference_updates or None,
             )
             provider = self._resolve_external_provider(payload)
-            await provider.write_memory(
-                content=f"user_preference:{user_preference_detected}",
-                user_id=user_id,
-                thread_id=thread_id,
-                case_id=case_id,
-                team=payload.user.team,
-                room="user-preferences",
-            )
+            if user_preference_detected:
+                await provider.write_memory(
+                    content=f"user_preference:{user_preference_detected}",
+                    user_id=user_id,
+                    thread_id=thread_id,
+                    case_id=case_id,
+                    team=payload.user.team,
+                    room="user-preferences",
+                )
+            if style:
+                await provider.write_memory(
+                    content=f"user_style:{style}",
+                    user_id=user_id,
+                    thread_id=thread_id,
+                    case_id=case_id,
+                    team=payload.user.team,
+                    room="user-style",
+                )
 
         await self.cache.delete(f"memory:{thread_id}")
