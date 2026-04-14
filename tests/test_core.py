@@ -1,5 +1,5 @@
 import pytest
-from datetime import datetime, UTC
+from datetime import datetime, timezone
 from src.core import (
     InputPayload,
     UserInfo,
@@ -23,7 +23,7 @@ def sample_payload():
     return InputPayload(
         request_id="test-123",
         source="ms_teams",
-        timestamp=datetime.now(UTC).isoformat(),
+        timestamp=datetime.now(timezone.utc).isoformat(),
         user=UserInfo(
             id="user-001",
             display_name="John Doe",
@@ -44,7 +44,7 @@ def sample_payload_vietnamese():
     return InputPayload(
         request_id="test-456",
         source="ms_teams",
-        timestamp=datetime.now(UTC).isoformat(),
+        timestamp=datetime.now(timezone.utc).isoformat(),
         user=UserInfo(
             id="user-002",
             display_name="Nguyễn Văn A",

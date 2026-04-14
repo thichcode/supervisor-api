@@ -11,7 +11,6 @@ from typing import Optional, List, Dict, Any, Callable, Union
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import Enum
-from croniter import croniter
 import structlog
 
 logger = structlog.get_logger()
