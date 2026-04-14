@@ -4,7 +4,7 @@ Routes user queries through optimal agent path for best response quality
 """
 
 import heapq
-from typing import Dict, List, Optional, Tuple, Set
+from typing import Dict, List, Tuple, Set
 from dataclasses import dataclass, field
 from enum import Enum
 import structlog

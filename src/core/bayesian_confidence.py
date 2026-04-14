@@ -4,7 +4,7 @@ Uses probabilistic methods to calculate and improve response confidence
 """
 
 import math
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Tuple
 from dataclasses import dataclass, field
 from collections import defaultdict
 import structlog
@@ -357,8 +357,6 @@ class ResponseValidator:
         
         # Doesn't answer question
         query_lower = query.lower()
-        response_lower = response.lower()
-        
         question_words = ["what", "why", "how", "when", "who", "where", "là gì", "tại sao", "như thế nào"]
         is_question = any(qw in query_lower for qw in question_words)
         

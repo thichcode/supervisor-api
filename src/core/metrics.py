@@ -1,8 +1,5 @@
 from prometheus_client import Counter, Histogram, Gauge, generate_latest, CONTENT_TYPE_LATEST
 from fastapi import Response
-import time
-from typing import Callable
-from functools import wraps
 
 REQUESTS_TOTAL = Counter(
     'supervisor_requests_total',

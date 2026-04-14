@@ -151,27 +151,6 @@ class KnowledgeAgent:
 
         text_lower = payload.message.text.lower()
 
-        system_query_keywords = [
-            # Vietnamese
-            "thông tin người dùng", "tra cứu", "kiểm tra thông tin",
-            "tìm thông tin", "case của tôi", "trạng thái case",
-            "ai đang xử lý", "đang ở đâu", "tình trạng",
-            "cho tôi biết", "cho xem", "hiển thị",
-            "xem thông tin", "xem case", "xem trạng thái",
-            "tìm case", "case id", "mã case",
-            "người phụ trách", "ai làm", "ai giải quyết",
-            "bao giờ xong", "khi nào xong", "deadline",
-            "ai assign", "ai được assign",
-            # English
-            "user info", "check info", "find info",
-            "my case", "case status", "case id",
-            "who is handling", "assignee", "assigned to",
-            "status", "where is", "when done",
-            "show me", "tell me", "display",
-            "find case", "look up case",
-            "in charge", "responsible",
-        ]
-        
         query_type_mapping = {
             "case của tôi": "case_info",
             "my case": "case_info",

@@ -3,9 +3,8 @@ from datetime import datetime, timedelta
 import re
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.core import InputPayload, MemoryScopeType, MemoryItem
+from src.core import InputPayload, MemoryScopeType
 from src.memory.cache import RedisCache
-from src.memory.mempalace_adapter import MemPalaceAdapter
 from src.memory.providers import (
     ExternalMemoryProvider,
     ExternalMemoryProviderConfig,

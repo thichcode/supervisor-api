@@ -3,7 +3,6 @@ import re
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 from src.db.models import KnowledgeDocument, KnowledgeFAQ, KnowledgeGuide, KnowledgePolicy
 
@@ -33,7 +32,7 @@ class KnowledgeBaseRepository:
         result = await self.session.execute(
             select(KnowledgePolicy).where(
                 KnowledgePolicy.policy_id == policy_id,
-                KnowledgePolicy.is_active == True
+                KnowledgePolicy.is_active 
             )
         )
         return result.scalar_one_or_none()
@@ -45,7 +44,7 @@ class KnowledgeBaseRepository:
         tags: Optional[List[str]] = None,
         limit: int = 5,
     ) -> List[KnowledgePolicy]:
-        stmt = select(KnowledgePolicy).where(KnowledgePolicy.is_active == True)
+        stmt = select(KnowledgePolicy).where(KnowledgePolicy.is_active )
 
         if category:
             stmt = stmt.where(KnowledgePolicy.category == category)
@@ -69,7 +68,7 @@ class KnowledgeBaseRepository:
     async def get_all_policies(self, limit: int = 100, offset: int = 0) -> List[KnowledgePolicy]:
         result = await self.session.execute(
             select(KnowledgePolicy)
-            .where(KnowledgePolicy.is_active == True)
+            .where(KnowledgePolicy.is_active )
             .limit(limit)
             .offset(offset)
         )
@@ -77,7 +76,7 @@ class KnowledgeBaseRepository:
 
     async def count_policies(self) -> int:
         result = await self.session.execute(
-            select(func.count()).select_from(KnowledgePolicy).where(KnowledgePolicy.is_active == True)
+            select(func.count()).select_from(KnowledgePolicy).where(KnowledgePolicy.is_active )
         )
         return result.scalar() or 0
 
@@ -112,7 +111,7 @@ class KnowledgeBaseRepository:
         result = await self.session.execute(
             select(KnowledgeFAQ).where(
                 KnowledgeFAQ.question_id == question_id,
-                KnowledgeFAQ.is_active == True
+                KnowledgeFAQ.is_active 
             )
         )
         return result.scalar_one_or_none()
@@ -125,7 +124,7 @@ class KnowledgeBaseRepository:
         keywords: Optional[List[str]] = None,
         limit: int = 5,
     ) -> List[KnowledgeFAQ]:
-        stmt = select(KnowledgeFAQ).where(KnowledgeFAQ.is_active == True)
+        stmt = select(KnowledgeFAQ).where(KnowledgeFAQ.is_active )
 
         if category:
             stmt = stmt.where(KnowledgeFAQ.category == category)
@@ -157,7 +156,7 @@ class KnowledgeBaseRepository:
 
     async def count_faqs(self) -> int:
         result = await self.session.execute(
-            select(func.count()).select_from(KnowledgeFAQ).where(KnowledgeFAQ.is_active == True)
+            select(func.count()).select_from(KnowledgeFAQ).where(KnowledgeFAQ.is_active )
         )
         return result.scalar() or 0
 
@@ -171,7 +170,7 @@ class KnowledgeBaseRepository:
         result = await self.session.execute(
             select(KnowledgeGuide).where(
                 KnowledgeGuide.guide_id == guide_id,
-                KnowledgeGuide.is_active == True
+                KnowledgeGuide.is_active 
             )
         )
         return result.scalar_one_or_none()
@@ -184,7 +183,7 @@ class KnowledgeBaseRepository:
         tags: Optional[List[str]] = None,
         limit: int = 5,
     ) -> List[KnowledgeGuide]:
-        stmt = select(KnowledgeGuide).where(KnowledgeGuide.is_active == True)
+        stmt = select(KnowledgeGuide).where(KnowledgeGuide.is_active )
 
         if guide_type:
             stmt = stmt.where(KnowledgeGuide.guide_type == guide_type)
@@ -210,7 +209,7 @@ class KnowledgeBaseRepository:
 
     async def count_guides(self) -> int:
         result = await self.session.execute(
-            select(func.count()).select_from(KnowledgeGuide).where(KnowledgeGuide.is_active == True)
+            select(func.count()).select_from(KnowledgeGuide).where(KnowledgeGuide.is_active )
         )
         return result.scalar() or 0
 
@@ -229,7 +228,7 @@ class KnowledgeBaseRepository:
         tags: Optional[List[str]] = None,
         limit: int = 5,
     ) -> List[KnowledgeDocument]:
-        stmt = select(KnowledgeDocument).where(KnowledgeDocument.is_active == True)
+        stmt = select(KnowledgeDocument).where(KnowledgeDocument.is_active )
 
         resolved_type = document_type or doc_type
         if resolved_type:
@@ -256,7 +255,7 @@ class KnowledgeBaseRepository:
 
     async def count_documents(self) -> int:
         result = await self.session.execute(
-            select(func.count()).select_from(KnowledgeDocument).where(KnowledgeDocument.is_active == True)
+            select(func.count()).select_from(KnowledgeDocument).where(KnowledgeDocument.is_active )
         )
         return result.scalar() or 0
 

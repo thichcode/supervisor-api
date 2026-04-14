@@ -263,7 +263,6 @@ class TestSupervisor:
     @pytest.mark.skip(reason="Supervisor v2 has different architecture - test needs update")
     async def test_subagent_path_with_policy_intent(self, sample_payload, sample_context, monkeypatch):
         from src.core.supervisor import Supervisor
-        from unittest.mock import AsyncMock, MagicMock, patch
 
         sample_payload.message.text = "What is the company policy on remote work?"
         

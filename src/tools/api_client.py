@@ -4,13 +4,13 @@ Generic client for calling external/internal APIs
 """
 
 import asyncio
+import json
 import time
 import hashlib
-from typing import Optional, Dict, Any, Callable, TypeVar, Union
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from typing import Optional, Dict, Any, Callable, TypeVar
+from dataclasses import dataclass
+from datetime import datetime
 from enum import Enum
-from functools import wraps
 import structlog
 
 logger = structlog.get_logger()
@@ -395,7 +395,7 @@ class APIClient:
                 # Parse response
                 try:
                     data = response.json()
-                except:
+                except Exception:
                     data = response.text
                 
                 api_response = APIResponse(
@@ -415,13 +415,13 @@ class APIClient:
                 raise
             except httpx.TimeoutException as e:
                 last_error = f"Timeout: {str(e)}"
-                logger.warning(f"Request timeout", url=url, attempt=attempt + 1)
+                logger.warning("Request timeout", url=url, attempt=attempt + 1)
             except httpx.ConnectError as e:
                 last_error = f"Connection error: {str(e)}"
-                logger.warning(f"Connection error", url=url, attempt=attempt + 1)
+                logger.warning("Connection error", url=url, attempt=attempt + 1)
             except Exception as e:
                 last_error = str(e)
-                logger.error(f"Request failed", url=url, error=str(e))
+                logger.error("Request failed", url=url, error=str(e))
             
             # Retry
             if attempt < self.retry_config.max_attempts - 1:

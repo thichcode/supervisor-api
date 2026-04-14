@@ -3,7 +3,7 @@ CLI Commands - Command registry
 """
 
 from dataclasses import dataclass
-from typing import List, Tuple, Optional
+from typing import Tuple
 
 
 @dataclass

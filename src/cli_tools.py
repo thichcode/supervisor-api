@@ -3,14 +3,11 @@ Hermes-style Tools for Supervisor CLI
 File, Terminal, and Web tools
 """
 
-import os
-import json
 import subprocess
 import asyncio
-import hashlib
 from pathlib import Path
-from typing import Optional, List, Dict, Any, Union
-from dataclasses import dataclass, field
+from typing import Optional, List, Dict, Any
+from dataclasses import dataclass
 import structlog
 
 logger = structlog.get_logger()
@@ -166,7 +163,7 @@ def search_files(
                             results.append(f"{f}:{i}: {line.strip()}")
                             if len(results) >= limit:
                                 break
-            except:
+            except OSError:
                 continue
     
     return {"matches": results, "total": len(results)}

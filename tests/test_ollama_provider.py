@@ -10,9 +10,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.llm.provider import (
     MultiProviderLLMClient,
-    LLMProvider,
     VIETNAMESE_MODELS,
-    get_llm_client,
 )
 
 
@@ -84,7 +82,7 @@ async def _test_vietnamese_completion(client: MultiProviderLLMClient):
             print(f"   Model: {response.model} ({response.provider})")
             print(f"   Response: {response.content[:200]}...")
             print(f"   Confidence: {response.confidence:.2f}")
-            print(f"   ✓ Success!")
+            print("   ✓ Success!")
 
         except Exception as e:
             print(f"   ✗ Error: {e}")

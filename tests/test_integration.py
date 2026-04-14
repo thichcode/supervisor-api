@@ -13,7 +13,6 @@ from src.core.dlq import DeadLetterQueue, DLQStatus
 from src.core.error_handler import (
     AppError,
     CircuitBreakerOpenError,
-    handle_processing_error,
     create_error_response
 )
 

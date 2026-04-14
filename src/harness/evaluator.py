@@ -216,19 +216,10 @@ class Evaluator:
     
     def _calculate_overall_score(self, metrics: List[MetricResult]) -> float:
         """Calculate weighted overall score"""
-        weights = {
-            MetricType.ACCURACY: 0.30,
-            MetricType.LATENCY: 0.20,
-            MetricType.SUCCESS_RATE: 0.25,
-            MetricType.ERROR_RATE: 0.25,
-        }
-        
         total_score = 0
         total_weight = 0
         
         for metric in metrics:
-            weight = weights.get(metric.metric_type, 0.1)
-            
             # Normalize value to 0-100
             if metric.threshold and metric.threshold > 0:
                 normalized = max(0, min(100, 100 - (metric.value / metric.threshold * 100)))
@@ -308,8 +299,6 @@ class Evaluator:
         for i, test_case in enumerate(test_cases):
             for iteration in range(iterations):
                 prompt = test_case.get("prompt", "")
-                expected = test_case.get("expected")
-                
                 # Run evaluation (would need actual execution here)
                 # For now, simulate with mock metrics
                 mock_metrics = type('MockMetrics', (), {

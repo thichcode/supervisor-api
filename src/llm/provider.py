@@ -10,8 +10,8 @@ from tenacity import (
     wait_exponential,
     retry_if_exception_type,
 )
-from typing import Optional, TypeVar, Type, Any
-from dataclasses import dataclass, field
+from typing import Optional, TypeVar, Type
+from dataclasses import dataclass
 from enum import Enum
 import structlog
 import json
@@ -323,7 +323,7 @@ class MultiProviderLLMClient:
         try:
             if LLMProvider.OLLAMA in self._clients:
                 ollama_client = self._clients[LLMProvider.OLLAMA]
-                response = await ollama_client.chat.completions.create(
+                await ollama_client.chat.completions.create(
                     model="llama3",
                     messages=[{"role": "user", "content": "ping"}],
                     max_tokens=5
@@ -348,7 +348,7 @@ class MultiProviderLLMClient:
         if settings.openai_api_key:
             try:
                 openai_client = self._get_client(LLMProvider.OPENAI)
-                response = await openai_client.chat.completions.create(
+                await openai_client.chat.completions.create(
                     model="gpt-3.5-turbo",
                     messages=[{"role": "user", "content": "ping"}],
                     max_tokens=5
@@ -496,8 +496,6 @@ class MultiProviderLLMClient:
         Generate structured JSON output matching a schema
         """
         target_model = model or self._active_model
-        target_provider = self.get_provider(target_model)
-
         # Build schema description
         schema_fields = []
         for field_name, field_info in output_schema.__annotations__.items():

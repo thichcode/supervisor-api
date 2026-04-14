@@ -3,10 +3,8 @@ Notification - Multi-channel notification sender
 Supports: Email, Telegram, Slack, Teams, SMS, Webhook
 """
 
-import json
-import asyncio
 import re
-from typing import Optional, List, Dict, Any, Union
+from typing import Optional, List, Dict, Any
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum

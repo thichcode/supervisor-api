@@ -1,9 +1,7 @@
 import logging
 import sys
-import json
 import structlog
 from datetime import datetime
-from typing import Any
 from pythonjsonlogger.json import JsonFormatter
 
 from src.config import get_settings

@@ -2,12 +2,11 @@
 Dead Letter Queue (DLQ) for failed requests
 Stores failed requests for retry or manual processing
 """
-import json
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime
 from enum import Enum
-from typing import Optional, Any
-from dataclasses import dataclass, asdict
+from typing import Optional
+from dataclasses import dataclass
 import structlog
 
 logger = structlog.get_logger()

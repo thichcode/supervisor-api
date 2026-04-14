@@ -2,30 +2,22 @@
 Supervisor CLI - Main interactive terminal
 """
 
-import os
-import sys
 import asyncio
-import json
-from typing import Optional, List, Dict, Any
-from pathlib import Path
+from typing import List, Dict, Any
 
 # Rich for UI
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
-from rich.markdown import Markdown
-from rich.syntax import Syntax
-from rich.style import Style
 from rich import box
 
 # Prompt toolkit for interactive input
 from prompt_toolkit import PromptSession
 from prompt_toolkit.styles import Style as PtStyle
 from prompt_toolkit.completion import WordCompleter
-from prompt_toolkit.key_binding import KeyBindings
 
 from .banner import get_banner
-from .commands import COMMAND_REGISTRY, resolve_command, get_help_text
+from .commands import COMMAND_REGISTRY, resolve_command
 from .config import load_cli_config
 
 console = Console()
@@ -85,7 +77,7 @@ class SupervisorCLI:
         from src.core.supervisor import Supervisor
         from src.db import async_session
         
-        async with async_session() as session:
+        async with async_session():
             supervisor = Supervisor()
             
             # Process through agents
@@ -149,7 +141,6 @@ class SupervisorCLI:
     async def show_status(self):
         """Display system status"""
         from src.core.supervisor import Supervisor
-        from src.db import async_session
         
         s = Supervisor()
         

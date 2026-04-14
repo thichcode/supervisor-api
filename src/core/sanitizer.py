@@ -97,7 +97,7 @@ class InputSanitizer:
         ]
         for pattern in dangerous_patterns:
             if re.search(pattern, text, re.IGNORECASE | re.DOTALL):
-                return False, f"Input contains potentially dangerous content"
+                return False, "Input contains potentially dangerous content"
 
         return True, None
 

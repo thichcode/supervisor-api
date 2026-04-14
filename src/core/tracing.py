@@ -223,8 +223,6 @@ def traced_llm_call(model: str, operation: str = "completion"):
                 }
             ) as span:
                 start_time = time.time()
-                start_tokens = kwargs.get("start_tokens", 0)
-                
                 try:
                     result = await func(*args, **kwargs)
                     

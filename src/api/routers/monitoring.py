@@ -91,8 +91,7 @@ async def dashboard_html():
         total_votes = votes_agree + votes_change + votes_skip
         sat_rate = round(votes_agree / total_votes * 100, 1) if total_votes > 0 else 0
         approve_rate = round(approved / (approved + rejected) * 100, 1) if (approved + rejected) > 0 else 0
-    except Exception as e:
-        error_msg = str(e)
+    except Exception:
         pending = approved = rejected = 0
         avg_conf = auto_send = 0
         votes_agree = votes_change = votes_skip = total_votes = sat_rate = approve_rate = 0

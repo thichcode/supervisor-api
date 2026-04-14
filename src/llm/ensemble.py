@@ -4,7 +4,7 @@ Combines outputs from multiple LLMs using weighted voting/scoring
 """
 
 import asyncio
-from typing import Dict, List, Optional, Tuple, Callable
+from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass, field
 from enum import Enum
 from collections import Counter

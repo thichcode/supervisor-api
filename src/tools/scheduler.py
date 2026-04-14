@@ -4,10 +4,8 @@ Supports cron expressions, intervals, and one-time jobs
 """
 
 import asyncio
-import json
 import uuid
-import hashlib
-from typing import Optional, List, Dict, Any, Callable, Union
+from typing import Optional, List, Dict, Any, Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import Enum

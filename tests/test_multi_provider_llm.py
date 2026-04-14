@@ -2,7 +2,6 @@
 Tests for Multi-Provider LLM Client
 """
 import pytest
-from unittest.mock import AsyncMock, patch, MagicMock
 from src.llm import MultiProviderLLMClient, LLMResponse, LLMProvider
 
 
@@ -110,7 +109,7 @@ class TestVietnamesePrompts:
 
         client.complete = mock_complete
 
-        result = await client.classify_intent(
+        await client.classify_intent(
             message="Làm sao để reset password?",
             context="IT Support"
         )

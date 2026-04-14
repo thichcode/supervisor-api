@@ -2,8 +2,7 @@ import redis.asyncio as redis
 from redis.asyncio.connection import ConnectionPool
 from src.config import get_settings
 import json
-from typing import Optional, Set, Union
-from datetime import datetime
+from typing import Optional, Set
 import structlog
 
 settings = get_settings()

@@ -5,11 +5,8 @@ Skills are stored in ~/.supervisor/skills/
 Each skill has: SKILL.md, references/, templates/, scripts/
 """
 
-import os
-import json
-import hashlib
 from pathlib import Path
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict
 from dataclasses import dataclass, field
 from datetime import datetime
 import structlog

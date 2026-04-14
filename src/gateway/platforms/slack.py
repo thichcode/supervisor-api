@@ -2,11 +2,8 @@
 Slack Platform Adapter
 """
 
-import os
 import asyncio
-from typing import Optional, Dict, Any, List
-import hashlib
-import time
+from typing import Optional, Dict, Any
 import structlog
 
 logger = structlog.get_logger()

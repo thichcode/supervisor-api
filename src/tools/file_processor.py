@@ -5,9 +5,6 @@ Supports: PDF, Excel (xlsx/xls), CSV, JSON, Text, Images (OCR)
 
 import json
 import csv
-import io
-import re
-import hashlib
 from pathlib import Path
 from typing import Optional, List, Dict, Any, Union
 from dataclasses import dataclass, field

@@ -5,7 +5,6 @@ with approval workflow for actions
 """
 
 import httpx
-import json
 from typing import Optional, List, Dict, Any
 from enum import Enum
 from dataclasses import dataclass, field

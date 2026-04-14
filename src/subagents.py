@@ -7,7 +7,6 @@ from typing import Optional, List, Dict, Any, Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 import structlog
-import json
 import uuid
 
 logger = structlog.get_logger()

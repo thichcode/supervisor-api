@@ -9,7 +9,6 @@ providing:
 - Evaluation and benchmarking
 """
 
-from datetime import datetime
 from typing import Any, Dict, List, Optional
 from dataclasses import dataclass
 import asyncio
@@ -46,7 +45,6 @@ class SupervisorAgent:
         # Import logger lazily to avoid circular imports
         global logger
         if logger is None:
-            import logging
             import structlog
             logger = structlog.get_logger("harness.supervisor_agent")
     
@@ -64,7 +62,6 @@ class SupervisorAgent:
         
         Returns a response object with content and optional tool_calls.
         """
-        from src.core import InputPayload, OutputPayload
         
         # Extract the prompt from messages
         prompt = self._extract_prompt(messages)
@@ -214,9 +211,6 @@ class HarnessSupervisorBridge:
         4. Evaluate result
         5. Post-execution hooks
         """
-        import structlog
-        logger = structlog.get_logger("harness.supervisor_bridge")
-        
         # Build context for harness
         context = {
             "user_id": payload.user.id,
@@ -246,7 +240,7 @@ class HarnessSupervisorBridge:
         harness_metrics = self.harness.get_metrics()
         
         # Build response - extract metadata from harness
-        from src.core import OutputPayload, RiskLevel, IntentType, IntentClassification
+        from src.core import OutputPayload
         
         # If result is an OutputPayload from Supervisor, extract it directly
         if hasattr(harness_result, 'answer'):

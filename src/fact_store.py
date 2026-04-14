@@ -11,7 +11,7 @@ Unlike simple key-value stores, fact_store supports:
 import json
 import sqlite3
 from pathlib import Path
-from typing import Optional, List, Dict, Any, Set
+from typing import Optional, List, Set
 from dataclasses import dataclass, field
 from datetime import datetime
 import structlog

@@ -72,21 +72,21 @@ class FieldValidator:
             return ValidationResult(valid=True)
         
         # Type check
-        if self.field_type != Any and not isinstance(value, self.field_type):
+        if self.field_type is not Any and not isinstance(value, self.field_type):
             # Try coercion for common types
-            if self.field_type == int and isinstance(value, str):
+            if self.field_type is int and isinstance(value, str):
                 try:
                     value = int(value)
                 except ValueError:
                     errors.append(f"{self.name} must be an integer")
                     return ValidationResult(valid=False, errors=errors)
-            elif self.field_type == float and isinstance(value, (int, str)):
+            elif self.field_type is float and isinstance(value, (int, str)):
                 try:
                     value = float(value)
                 except ValueError:
                     errors.append(f"{self.name} must be a number")
                     return ValidationResult(valid=False, errors=errors)
-            elif self.field_type == str and not isinstance(value, (str, int, float)):
+            elif self.field_type is str and not isinstance(value, (str, int, float)):
                 errors.append(f"{self.name} must be a string")
                 return ValidationResult(valid=False, errors=errors)
         
@@ -483,8 +483,6 @@ class JSONSchemaValidator:
         elif schema_type in ("number", "integer") and isinstance(data, (int, float)):
             minimum = schema.get("minimum")
             maximum = schema.get("maximum")
-            exclusive_min = schema.get("exclusiveMinimum")
-            exclusive_max = schema.get("exclusiveMaximum")
             
             if minimum is not None and data < minimum:
                 raise ValidationError(

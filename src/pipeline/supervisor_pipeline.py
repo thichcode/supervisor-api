@@ -3,18 +3,17 @@ Supervisor Pipeline Integration
 Brings together all improvements: BM25 search, Bayesian confidence, LRU cache, agent routing, ensemble
 """
 
-import asyncio
-from typing import Dict, List, Optional, Any, Callable
+from typing import Dict, List, Optional, Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 import structlog
 
-from src.knowledge.bm25_search import HybridSearch, BM25Search
+from src.knowledge.bm25_search import HybridSearch
 from src.core.bayesian_confidence import (
-    BayesianConfidence, ResponseValidator, ConfidenceFactors, BetaDistribution
+    BayesianConfidence, ResponseValidator
 )
-from src.memory.lru_cache import LRUCache, MultiTierCache, PolicyCache, KnowledgeCache
-from src.agents.router import AdaptiveRouter, AgentType, create_router
+from src.memory.lru_cache import LRUCache, PolicyCache, KnowledgeCache
+from src.agents.router import create_router
 from src.llm.ensemble import MultiModelEnsemble, EnsembleConfig, EnsembleStrategy
 
 logger = structlog.get_logger()
@@ -475,7 +474,7 @@ if __name__ == "__main__":
     # Stats
     print("\n=== Pipeline Stats ===")
     stats = pipeline.get_stats()
-    print(f"Enabled features: {[k for k, v in stats.items() if v == True]}")
+    print(f"Enabled features: {[k for k, v in stats.items() if v]}")
     
     if "cache" in stats:
         print(f"Response cache hit rate: {stats['cache']['response_cache']['hit_rate']:.1%}")

@@ -1,7 +1,6 @@
 from fastapi import Request, HTTPException
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from typing import Callable, Any
 import structlog
 

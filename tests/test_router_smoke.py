@@ -185,7 +185,6 @@ class TestSmokeRequests:
 
     @pytest.mark.asyncio
     async def test_monitoring_dashboard_endpoint(self, client, monkeypatch):
-        from src.api.routers import monitoring as monitoring_router
 
         approval_service = MagicMock()
         approval_service.get_all_approvals = AsyncMock(return_value=[])

@@ -4,7 +4,6 @@ Supports multiple vector stores: ChromaDB, Qdrant, Pinecone
 """
 
 import hashlib
-import json
 import re
 from typing import Optional, List, Dict, Any, Tuple
 from dataclasses import dataclass, field

@@ -16,7 +16,7 @@ from src.agents import ContextAgent, PolicyAgent, KnowledgeAgent, DraftAgent, QA
 from src.db import AuditLog, async_session
 from src.llm import MultiProviderLLMClient, LLMResponse
 from src.config import get_settings
-from typing import Optional, Dict, Any
+from typing import Optional, Dict
 import time
 import structlog
 
@@ -28,7 +28,7 @@ try:
     from src.knowledge.bm25_search import HybridSearch
     from src.core.bayesian_confidence import BayesianConfidence, ResponseValidator, ConfidenceFactors
     from src.memory.lru_cache import LRUCache, PolicyCache, KnowledgeCache
-    from src.agents.router import AdaptiveRouter, AgentType
+    from src.agents.router import AdaptiveRouter
     NEW_MODULES_AVAILABLE = True
 except ImportError as e:
     NEW_MODULES_AVAILABLE = False
@@ -237,14 +237,11 @@ class Supervisor:
         start_time = time.time()
         decision = "direct"
         final_confidence = 0.85
-        cache_hit = False
-        
         # NEW v2: Check cache first
         if NEW_MODULES_AVAILABLE:
             cache_result = self._check_cache(payload)
             if cache_result:
                 final_confidence = cache_result.get("confidence", 0.9)
-                cache_hit = True
                 logger.debug("Cache hit", request_id=payload.request_id)
                 return self._create_output(
                     payload=payload,
@@ -515,7 +512,7 @@ class Supervisor:
             if hasattr(self, 'decision_engine') and self.decision_engine.router:
                 try:
                     stats["routing"] = self.decision_engine.router.get_routing_stats()
-                except:
+                except Exception:
                     pass
         
         return stats
@@ -560,7 +557,6 @@ class Supervisor:
         status: str,
         processing_time: float,
     ) -> OutputPayload:
-        from src.db.models import Message
         from src.core.schemas import MessageInfo
         
         output = OutputPayload(

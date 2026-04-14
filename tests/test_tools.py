@@ -38,7 +38,7 @@ class TestURLFetcher:
         
         # Mock the fetch to avoid network call
         with patch.object(fetcher, 'fetch_url', new_callable=AsyncMock, return_value=None):
-            result = await fetcher.fetch_url("http://test.com")
+            await fetcher.fetch_url("http://test.com")
             # Just verify it runs without error
             assert True
 
@@ -214,12 +214,12 @@ class TestAPIValidators:
     def test_validate_email_valid(self):
         from src.tools.validators import validate_email
         
-        assert validate_email("test@example.com") == True
-        assert validate_email("user.name@company.co.uk") == True
+        assert validate_email("test@example.com")
+        assert validate_email("user.name@company.co.uk")
     
     def test_validate_email_invalid(self):
         from src.tools.validators import validate_email
         
-        assert validate_email("invalid") == False
-        assert validate_email("@example.com") == False
-        assert validate_email("test@") == False
+        assert not validate_email("invalid")
+        assert not validate_email("@example.com")
+        assert not validate_email("test@")

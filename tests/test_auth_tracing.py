@@ -1,9 +1,8 @@
 """
 Tests for Authentication and Tracing modules
 """
-import pytest
 import time
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock
 
 
 class TestJWTAuth:
@@ -189,15 +188,15 @@ class TestTracing:
         # Should not raise errors even without active span
         add_span_attribute("test_key", "test_value")
         
-        span = get_current_span()
         # Span might be None without tracing setup
+        # Note: retained for potential future tracing verification
 
 
 class TestTracingMetrics:
     """Test tracing metrics"""
     
     def test_tracing_metrics_initialization(self):
-        from src.core.tracing import tracing_metrics, tracing
+        from src.core.tracing import tracing_metrics
         
         # Initialize with mock meter
         mock_meter = MagicMock()

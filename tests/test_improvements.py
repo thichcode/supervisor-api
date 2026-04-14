@@ -4,19 +4,17 @@ Tests: BM25 search, Bayesian confidence, LRU cache, agent routing, ensemble
 """
 
 import pytest
-import asyncio
 import time
-from typing import Dict, List
 
 # Import all components
-from src.knowledge.bm25_search import BM25Search, TFIDFSearch, HybridSearch
+from src.knowledge.bm25_search import BM25Search, HybridSearch
 from src.core.bayesian_confidence import (
-    BayesianConfidence, ResponseValidator, ConfidenceFactors, BetaDistribution
+    BayesianConfidence, ConfidenceFactors, BetaDistribution
 )
-from src.memory.lru_cache import LRUCache, MultiTierCache, PolicyCache, KnowledgeCache
-from src.agents.router import AdaptiveRouter, AgentType, create_router
-from src.llm.ensemble import MultiModelEnsemble, EnsembleConfig, EnsembleStrategy, ModelResult
-from src.pipeline.supervisor_pipeline import SupervisorPipeline, PipelineConfig, create_pipeline
+from src.memory.lru_cache import LRUCache, PolicyCache, KnowledgeCache
+from src.agents.router import AgentType, create_router
+from src.llm.ensemble import MultiModelEnsemble, EnsembleConfig, ModelResult
+from src.pipeline.supervisor_pipeline import create_pipeline
 
 
 class TestBM25Search:
@@ -429,7 +427,6 @@ class TestIntegration:
     
     def test_performance_under_load(self):
         """Test performance with multiple operations"""
-        import time
         
         cache = LRUCache(maxsize=100)
         search = HybridSearch()

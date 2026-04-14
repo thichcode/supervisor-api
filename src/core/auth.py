@@ -10,10 +10,9 @@ import hashlib
 import hmac
 import json
 import time
-from typing import Optional, List, Callable
+from typing import Optional, List
 from dataclasses import dataclass
 from enum import Enum
-from functools import wraps
 import structlog
 
 try:

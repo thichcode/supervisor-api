@@ -2,7 +2,6 @@
 Telegram Platform Adapter
 """
 
-import os
 import asyncio
 from typing import Optional, Dict, Any
 import structlog

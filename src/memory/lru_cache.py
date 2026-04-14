@@ -7,7 +7,6 @@ from collections import OrderedDict
 from typing import Any, Optional, Dict
 from datetime import datetime, timedelta
 import hashlib
-import json
 import structlog
 
 logger = structlog.get_logger()

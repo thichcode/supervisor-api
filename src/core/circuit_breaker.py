@@ -6,7 +6,7 @@ import asyncio
 import time
 from enum import Enum
 from typing import Callable, TypeVar, Optional
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from functools import wraps
 import structlog
 
@@ -179,7 +179,7 @@ def circuit_breaker(circuit: CircuitBreaker):
                 result = await func(*args, **kwargs)
                 await circuit.record_success()
                 return result
-            except Exception as e:
+            except Exception:
                 await circuit.record_failure()
                 raise
                 

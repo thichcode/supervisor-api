@@ -2,8 +2,7 @@
 Approval Service - Manages approval queue for AI responses requiring human review
 """
 import uuid
-import json
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Optional
 import structlog
 

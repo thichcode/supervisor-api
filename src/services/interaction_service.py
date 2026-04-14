@@ -6,7 +6,7 @@ from typing import Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.core.schemas import ApprovalStatus, FeedbackCreateRequest, FeedbackType
+from src.core.schemas import FeedbackCreateRequest, FeedbackType
 from src.db.models import ApprovalRequestRecord, InteractionLog
 from src.services.feedback_service import FeedbackService
 

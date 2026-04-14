@@ -2,11 +2,9 @@
 Discord Platform Adapter
 """
 
-import os
 import asyncio
 from typing import Optional, Dict, Any
 import structlog
-import jwt
 
 logger = structlog.get_logger()
 

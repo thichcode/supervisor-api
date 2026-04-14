@@ -1,4 +1,4 @@
-from typing import Optional, List, Tuple
+from typing import Optional, List
 import re
 from sqlalchemy.ext.asyncio import AsyncSession
 import structlog

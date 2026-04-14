@@ -5,7 +5,7 @@ Enhanced knowledge retrieval with probabilistic ranking
 
 import math
 import re
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict
 from collections import Counter
 import structlog
 
