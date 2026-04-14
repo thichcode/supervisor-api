@@ -111,8 +111,29 @@ pip install -e ".[dev]"
 # Run tests
 python -m pytest -q
 
+# Run local CI checklist
+make ci
+
+# Run stricter quality gate
+make ci-full
+
 # Run the server
 python -m src.api.app
+```
+
+## CI Checklist
+
+- Local checklist: `make ci`
+- Stricter gate: `make ci-full`
+- Full checklist doc: `CI_CHECKLIST.md`
+
+Recommended before merge:
+
+```bash
+make ci
+make quality
+python -m bandit -r src
+python -m pip_audit
 ```
 
 ---

@@ -1,4 +1,4 @@
-.PHONY: install dev test lint run docker-build docker-up docker-down migrate
+.PHONY: install dev test test-smoke lint format-check typecheck security audit ci ci-full quality run docker-build docker-up docker-down migrate
 
 install:
 	pip install -e ".[dev]"
@@ -8,11 +8,31 @@ dev:
 	docker-compose -f docker-compose.dev.yml up
 
 test:
-	pytest tests/ -v
+	pytest -q
+
+test-smoke:
+	pytest -q tests/test_router_smoke.py
 
 lint:
-	ruff check src/ tests/
-	mypy src/
+	ruff check src tests
+
+format-check:
+	ruff format --check src tests
+
+typecheck:
+	mypy src
+
+security:
+	bandit -r src
+
+audit:
+	pip_audit
+
+quality: lint format-check typecheck
+
+ci: test test-smoke
+
+ci-full: ci quality
 
 run:
 	python -m src.api
