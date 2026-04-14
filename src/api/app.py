@@ -6,60 +6,30 @@ paths are preserved via compatibility exports in ``src.api`` and ``src/api.py``.
 
 from contextlib import asynccontextmanager
 import time
+from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Header, Request, Response
+import structlog
+from fastapi import FastAPI, HTTPException, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, StreamingResponse
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
-from pydantic import BaseModel
 
 from src.config import get_settings
 from src.core import InputPayload, OutputPayload
-from src.core.thread_targeting import GroupChatTargetResolver
-from src.core.teams_targeting import TeamsTargetResolver, extract_teams_signal
-from src.core.schemas import (
-    ChatRequest,
-    ChatResponse,
-    SystemQueryRequest,
-    SystemQueryResponse,
-    GuideDeliveryRequest,
-    GuideDeliveryResponse,
-    CallbackRequest,
-    CaseInfo,
-    ApprovalStatus,
-    ApprovalActionRequest,
-    ApprovalVoteRequest,
-    ApprovalRequest,
-    ApprovalRequestResponse,
-    ApprovalListResponse,
-)
-from src.knowledge.schemas import (
-    PolicyCreate,
-    FAQCreate,
-    GuideCreate,
-    KnowledgeSearchRequest,
-    DocumentCreate,
-    BulkImportRequest,
-    BulkImportResponse,
-    FileProcessRequest,
-    FileProcessResponse,
-    BatchFileRequest,
-    BatchFileResponse,
-)
 from src.core.logging_config import setup_logging, RequestLogger
-from src.core.metrics import get_metrics, metrics
+from src.core.metrics import metrics
 from src.core.sanitizer import sanitizer
 from src.core.supervisor import Supervisor
-from src.core import approval
 from src.db import init_db, close_db, async_session
+from src.harness import HarnessSupervisorBridge
 from src.llm import llm_client
 from src.memory import redis_cache
 from src.memory.service import MemoryService
 from src.api.routers.admin import router as admin_router
 from src.api.routers.approvals import router as approvals_router
 from src.api.routers.chat import router as chat_router
+from src.api.routers.delivery import router as delivery_router
 from src.api.routers.feedback import router as feedback_router
 from src.api.routers.health import router as health_router
 from src.api.routers.harness import router as harness_router
@@ -67,10 +37,7 @@ from src.api.routers.knowledge import router as knowledge_router
 from src.api.routers.knowledge_files import router as knowledge_files_router
 from src.api.routers.monitoring import router as monitoring_router
 from src.api.routers.n8n import router as n8n_router
-from src.services.interaction_service import InteractionService
-from datetime import datetime
-from typing import Optional
-import structlog
+from src.api.routers.system import router as system_router
 
 logger = structlog.get_logger()
 
@@ -79,8 +46,6 @@ setup_logging()
 
 limiter = Limiter(key_func=get_remote_address)
 supervisor = Supervisor()
-group_chat_resolver = GroupChatTargetResolver()
-teams_target_resolver = TeamsTargetResolver()
 
 
 @asynccontextmanager
@@ -149,12 +114,14 @@ app.include_router(health_router)
 app.include_router(admin_router)
 app.include_router(approvals_router)
 app.include_router(chat_router)
+app.include_router(delivery_router)
 app.include_router(feedback_router)
 app.include_router(n8n_router)
 app.include_router(knowledge_router)
 app.include_router(knowledge_files_router)
 app.include_router(monitoring_router)
 app.include_router(harness_router)
+app.include_router(system_router)
 
 
 
@@ -288,194 +255,9 @@ async def _auto_send_to_power_automate(payload: OutputPayload) -> bool:
                    request_id=getattr(payload, 'request_id', ''),
                    error=str(e))
         return False
-
-
-@app.post("/system/query", response_model=SystemQueryResponse)
-async def system_query(request: SystemQueryRequest):
-    """Query system information (user data, case data, etc.)."""
-    import src.api as api_module
-    from src.memory.repository import MemoryRepository
-    
-    results = {}
-    metadata = {"query_type": request.query_type}
-    
-    async with api_module.async_session() as session:
-        repo = MemoryRepository(session)
-        
-        if request.query_type == "user_info" and request.user_id:
-            user_profile = await repo.get_user_profile(request.user_id)
-            if user_profile:
-                results["user"] = {
-                    "user_id": user_profile.user_id,
-                    "display_name": user_profile.display_name,
-                    "role": user_profile.role,
-                    "team": user_profile.team,
-                    "vip_flag": user_profile.vip_flag,
-                    "communication_style": user_profile.communication_style,
-                    "preferences": user_profile.preferences,
-                }
-                
-                messages = await repo.get_recent_messages(request.user_id, limit=20)
-                results["recent_threads"] = list(set([m.thread_id for m in messages]))
-        
-        elif request.query_type == "case_info" and request.case_id:
-            case = await repo.get_case_memory(request.case_id)
-            if case:
-                results["case"] = {
-                    "case_id": case.case_id,
-                    "status": case.status,
-                    "owner": case.owner,
-                    "summary": case.summary,
-                    "priority": case.priority,
-                    "open_items": case.open_items,
-                }
-    
-    return SystemQueryResponse(
-        results=results,
-        confidence=0.9 if results else 0.3,
-        metadata=metadata,
-    )
-
-
-@app.post("/guide/deliver", response_model=GuideDeliveryResponse)
-async def deliver_guide(request: GuideDeliveryRequest):
-    """Deliver a guideline to user.
-    
-    If confidence < 90%, the guide delivery will be queued for approval.
-    """
-    import uuid
-    from src.core.approval import approval_service
-    
-    guide_id = request.guide_id
-    
-    guide_message = f"""📖 **Hướng dẫn: {request.guide_title}**
-
-{request.guide_content}
-
----
-*Đây là hướng dẫn được gửi từ hệ thống. Bạn có câu hỏi nào không?*"""
-    
-    confidence = 0.95
-    
-    needs_approval = await approval_service.needs_approval(confidence)
-    
-    if needs_approval:
-        approval = await approval_service.create_approval(
-            request_id=str(uuid.uuid4()),
-            user_id=request.user_id,
-            display_name=request.display_name,
-            original_message=f"Request guide: {request.guide_title}",
-            ai_response=guide_message,
-            confidence=confidence,
-            action_type="deliver_guide",
-            metadata={
-                "guide_id": guide_id,
-                "guide_title": request.guide_title,
-                "thread_id": request.thread_id,
-            },
-        )
-        
-        return GuideDeliveryResponse(
-            status="pending_approval",
-            guide_id=guide_id,
-            delivered=False,
-            message=f"Guide delivery queued for approval (confidence: {confidence:.0%})",
-            metadata={"approval_id": approval.id},
-        )
-    
-    if settings.power_automate_webhook_url:
-        import httpx
-        
-        payload = {
-            "request_id": str(uuid.uuid4()),
-            "user_id": request.user_id,
-            "message": guide_message,
-            "message_type": "guideline",
-            "guide_id": guide_id,
-            "timestamp": datetime.now().isoformat(),
-        }
-        
-        try:
-            async with httpx.AsyncClient() as client:
-                response = await client.post(
-                    settings.power_automate_webhook_url,
-                    json=payload,
-                    timeout=settings.webhook_timeout,
-                )
-                response.raise_for_status()
-                return GuideDeliveryResponse(
-                    status="sent",
-                    guide_id=guide_id,
-                    delivered=True,
-                    message="Guide sent to user via webhook",
-                    metadata={"webhook_response": response.status_code},
-                )
-        except Exception as e:
-            return GuideDeliveryResponse(
-                status="failed",
-                guide_id=guide_id,
-                delivered=False,
-                message=f"Webhook failed: {str(e)}",
-            )
-    
-    return GuideDeliveryResponse(
-        status="pending",
-        guide_id=guide_id,
-        delivered=False,
-        message="No webhook configured for guide delivery",
-    )
-
-
-@app.post("/callback/send")
-async def send_callback(request: CallbackRequest):
-    """Send async response back to user via callback URL."""
-    import httpx
-    
-    if not request.callback_url:
-        raise HTTPException(status_code=400, detail="callback_url is required")
-    
-    try:
-        async with httpx.AsyncClient() as client:
-            response = await client.request(
-                method=request.method,
-                url=request.callback_url,
-                json={
-                    "request_id": request.original_request_id,
-                    "user_id": request.user_id,
-                    "message": request.message,
-                    "timestamp": datetime.now().isoformat(),
-                },
-                timeout=settings.webhook_timeout,
-            )
-            response.raise_for_status()
-            return {"status": "sent", "callback_response": response.status_code}
-    except httpx.HTTPError as e:
-        raise HTTPException(status_code=502, detail=f"Callback failed: {str(e)}")
-
-
-
-
-
-
 # =============================================================================
 # Agent Harness Integration - Supervisor wrapped by Harness
 # =============================================================================
-
-from src.harness import (
-    AgentHarness, 
-    get_harness, 
-    HarnessConfig,
-    ToolRegistry,
-    get_tool_registry,
-    LifecycleHooks,
-    ContextManager,
-    Planner,
-    Evaluator,
-    HookType,
-    SupervisorAgent,
-    SupervisorAgentConfig,
-    HarnessSupervisorBridge,
-)
 
 # Global harness bridge (initialized in lifespan)
 _harness_bridge: Optional[HarnessSupervisorBridge] = None
@@ -492,4 +274,3 @@ def init_harness(supervisor_instance):
 def get_harness_bridge() -> HarnessSupervisorBridge:
     """Get the harness bridge instance"""
     return _harness_bridge
-
