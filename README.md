@@ -4,6 +4,8 @@
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.11+-orange.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.104+-cyan.svg)](https://fastapi.tiangolo.com/)
+[![CI](https://github.com/thichcode/supervisor-api/actions/workflows/ci.yml/badge.svg)](https://github.com/thichcode/supervisor-api/actions/workflows/ci.yml)
+[![Quality](https://img.shields.io/badge/quality-passing-brightgreen)](CI_CHECKLIST.md)
 
 AI agent system with long-term memory for Microsoft Teams integration. Designed for Vietnamese outsourcing companies with comprehensive intent classification and risk evaluation.
 
