@@ -1,0 +1,82 @@
+stages:
+  - test
+  - deploy
+
+variables:
+  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+  DEPLOY_BRANCH: "main"
+  DOCKER_TLS_CERTDIR: ""
+
+cache:
+  paths:
+    - .cache/pip
+
+pytest:
+  stage: test
+  image: python:3.11-slim
+  before_script:
+    - python -V
+    - pip install --no-cache-dir --upgrade pip
+    - pip install --no-cache-dir ".[dev]"
+  script:
+    - python -m pytest tests/test_core.py -q
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH'
+
+validate-compose:
+  stage: test
+  image: docker:27-cli
+  services:
+    - name: docker:27-dind
+      command: ["--mtu=1460"]
+  before_script:
+    - docker version
+  script:
+    - docker compose -f docker-compose.yml config >/tmp/compose.config
+    - cat /tmp/compose.config
+  rules:
+    - if: '$CI_COMMIT_BRANCH'
+
+.deploy_ssh_template:
+  stage: deploy
+  image: alpine:3.20
+  before_script:
+    - apk add --no-cache openssh-client bash
+    - eval "$(ssh-agent -s)"
+    - echo "$SSH_PRIVATE_KEY" | tr -d '\r' | ssh-add -
+    - mkdir -p ~/.ssh && chmod 700 ~/.ssh
+    - ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts
+  script:
+    - |
+      ssh ${DEPLOY_USER}@${DEPLOY_HOST} "DEPLOY_PATH='${DEPLOY_PATH}' DEPLOY_BRANCH='${DEPLOY_BRANCH}' bash -se" <<'EOF'
+      set -euo pipefail
+
+      cd "$DEPLOY_PATH"
+      git fetch origin "$DEPLOY_BRANCH"
+      git reset --hard "origin/$DEPLOY_BRANCH"
+
+      if [ -f .env ]; then
+        echo ".env found"
+      else
+        echo "Warning: .env not found in $DEPLOY_PATH. Docker Compose will rely on environment variables or defaults."
+      fi
+
+      docker compose config >/tmp/supervisor-compose-check.yml
+      docker compose up -d --build --remove-orphans
+      docker compose ps
+      EOF
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+  environment:
+    name: production
+
+deploy_production:
+  extends: .deploy_ssh_template
+  needs:
+    - pytest
+    - validate-compose
+  variables:
+    DEPLOY_PATH: "/opt/supervisor-api"
+  when: on_success
+  allow_failure: false
