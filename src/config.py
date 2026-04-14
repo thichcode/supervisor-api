@@ -142,6 +142,7 @@ class Settings(BaseSettings):
     enable_audit_logger: bool = False    # Compliance audit logging
     enable_validators: bool = False      # Input validation
     enable_user_style_learning: bool = True  # Learn user communication style per user_id
+    user_style_learning_user_id: str = ""  # Only learn style for this user_id
 
     # Notification - enabled if any notification config is set
     enable_notification: bool = False    # Master toggle (auto-enabled if email/sms/teams configured)
