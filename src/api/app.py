@@ -5,6 +5,7 @@ paths are preserved via compatibility exports in ``src.api`` and ``src/api.py``.
 """
 
 from contextlib import asynccontextmanager
+import asyncio
 import time
 from typing import Optional
 
@@ -26,6 +27,7 @@ from src.harness import HarnessSupervisorBridge
 from src.llm import llm_client
 from src.memory import redis_cache
 from src.memory.service import MemoryService
+from src.services.feedback_learning_worker import FeedbackReplayWorker
 from src.api.routers.admin import router as admin_router
 from src.api.routers.approvals import router as approvals_router
 from src.api.routers.chat import router as chat_router
@@ -46,10 +48,13 @@ setup_logging()
 
 limiter = Limiter(key_func=get_remote_address)
 supervisor = Supervisor()
+feedback_worker = FeedbackReplayWorker(session_factory=async_session, supervisor=supervisor)
+feedback_worker_task: Optional[asyncio.Task] = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global feedback_worker_task
     import structlog
 
     logger = structlog.get_logger()
@@ -71,9 +76,24 @@ async def lifespan(app: FastAPI):
     init_harness(supervisor)
     logger.info("Agent Harness initialized", harness_status="ready")
     
+    # Replay any pending feedback and keep the learning loop warm
+    await feedback_worker.replay_once()
+    global feedback_worker_task
+    feedback_worker_task = asyncio.create_task(feedback_worker.start(interval_seconds=60))
+    logger.info("Feedback learning worker started", interval_seconds=60)
+    
     metrics.record_memory("startup", "success")
     yield
     logger.info("Shutting down Multi-Agent Supervisor System")
+    
+    # Shutdown learning worker
+    if feedback_worker_task:
+        feedback_worker_task.cancel()
+        try:
+            await feedback_worker_task
+        except asyncio.CancelledError:
+            pass
+        feedback_worker_task = None
     
     # Shutdown harness
     harness_bridge = get_harness_bridge()

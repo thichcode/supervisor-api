@@ -13,6 +13,7 @@ from src.core.schemas import (
     ApprovalStatus,
     ApprovalVoteRequest,
 )
+from src.db.models import ResponseLearningEvent
 from src.services.interaction_service import InteractionService
 
 router = APIRouter(prefix="/approvals", tags=["approvals"])
@@ -90,6 +91,26 @@ async def approve_or_reject(approval_id: str, action: ApprovalActionRequest):
                 ticket_system=approval.metadata.get("ticket_system"),
                 extra_metadata={**(approval.metadata or {}), "approval_id": approval.id, "approved_by": action.reviewed_by},
             )
+            session.add(
+                ResponseLearningEvent(
+                    request_id=approval.request_id,
+                    user_id=approval.user_id,
+                    thread_id=approval.metadata.get("thread_id"),
+                    ticket_id=approval.metadata.get("ticket_id"),
+                    ticket_system=approval.metadata.get("ticket_system"),
+                    event_type="approval_decision",
+                    event_payload={
+                        "approval_status": "approved",
+                        "reviewed_by": action.reviewed_by,
+                        "review_comment": action.comment,
+                        "confidence_score": approval.confidence,
+                        "threshold": approval.threshold,
+                        "model_name": approval.metadata.get("model_name", settings.llm_model),
+                        "approval_id": approval.id,
+                        "request_id": approval.request_id,
+                    },
+                )
+            )
             await session.commit()
 
         if settings.power_automate_webhook_url:
@@ -150,6 +171,26 @@ async def approve_or_reject(approval_id: str, action: ApprovalActionRequest):
                 ticket_id=approval.metadata.get("ticket_id"),
                 ticket_system=approval.metadata.get("ticket_system"),
                 extra_metadata={**(approval.metadata or {}), "approval_id": approval.id, "rejected_by": action.reviewed_by},
+            )
+            session.add(
+                ResponseLearningEvent(
+                    request_id=approval.request_id,
+                    user_id=approval.user_id,
+                    thread_id=approval.metadata.get("thread_id"),
+                    ticket_id=approval.metadata.get("ticket_id"),
+                    ticket_system=approval.metadata.get("ticket_system"),
+                    event_type="approval_decision",
+                    event_payload={
+                        "approval_status": "rejected",
+                        "reviewed_by": action.reviewed_by,
+                        "review_comment": action.comment,
+                        "confidence_score": approval.confidence,
+                        "threshold": approval.threshold,
+                        "model_name": approval.metadata.get("model_name", settings.llm_model),
+                        "approval_id": approval.id,
+                        "request_id": approval.request_id,
+                    },
+                )
             )
             await session.commit()
 

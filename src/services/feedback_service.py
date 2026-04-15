@@ -55,6 +55,11 @@ class FeedbackService:
                 "feedback_label": payload.feedback_label,
                 "feedback_score": payload.feedback_score,
                 "has_human_edit": bool(payload.edited_output_text),
+                "feedback_text": payload.feedback_text,
+                "edited_output_text": payload.edited_output_text,
+                "reviewer_id": payload.reviewer_id,
+                "user_id": user_id,
+                "vote": (payload.metadata or {}).get("vote"),
             },
         )
         self.session.add(learning_event)

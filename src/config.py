@@ -34,6 +34,11 @@ class Settings(BaseSettings):
     power_automate_webhook_url: str = ""
     webhook_timeout: int = 30
 
+    # Telegram approval notifications / gateway
+    telegram_bot_token: str = ""
+    telegram_approval_chat_ids: str = ""  # Comma-separated chat IDs or @channels
+    telegram_parse_mode: str = "Markdown"
+
     agent_timeout: int = 10
     agent_retry: int = 1
 

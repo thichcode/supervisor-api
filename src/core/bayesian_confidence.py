@@ -119,6 +119,40 @@ class BayesianConfidence:
         # Factor performance tracking
         self.factor_history: List[ConfidenceFactors] = []
     
+    def to_state(self) -> Dict:
+        """Serialize the Bayesian state for persistence."""
+        return {
+            "model_performance": {
+                name: {"alpha": dist.alpha, "beta": dist.beta}
+                for name, dist in self.model_performance.items()
+            },
+            "user_feedback": {
+                user_id: list(values)
+                for user_id, values in self.user_feedback.items()
+            },
+        }
+    
+    def load_state(self, state: Dict) -> None:
+        """Load persisted Bayesian state."""
+        if not state:
+            return
+
+        model_performance = state.get("model_performance", {})
+        for name, payload in model_performance.items():
+            try:
+                self.model_performance[name] = BetaDistribution(
+                    alpha=float(payload.get("alpha", 1.0)),
+                    beta=float(payload.get("beta", 1.0)),
+                )
+            except Exception:
+                continue
+
+        user_feedback = state.get("user_feedback", {})
+        self.user_feedback = defaultdict(list)
+        for user_id, values in user_feedback.items():
+            if isinstance(values, list):
+                self.user_feedback[user_id] = [bool(v) for v in values]
+    
     def calculate_confidence(
         self,
         factors: ConfidenceFactors,

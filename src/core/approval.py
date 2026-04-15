@@ -9,6 +9,7 @@ import structlog
 from src.core.schemas import ApprovalRequest, ApprovalStatus
 from src.config import get_settings
 from src.memory.cache import redis_cache
+from src.gateway.platforms.telegram import build_approval_inline_keyboard, build_approval_message_text
 
 logger = structlog.get_logger()
 settings = get_settings()
@@ -51,6 +52,7 @@ class ApprovalService:
         
         # Send notification to Power Automate for Teams approval request
         await self._notify_approval_request(approval)
+        await self._notify_telegram_approval_request(approval)
         
         logger.info(
             "approval_created",
@@ -101,6 +103,44 @@ class ApprovalService:
         except httpx.HTTPError as e:
             logger.warning("Failed to send approval notification", 
                          approval_id=approval.id, error=str(e))
+
+    async def _notify_telegram_approval_request(self, approval: ApprovalRequest):
+        """Send an approval request directly to Telegram with inline buttons."""
+        if not settings.telegram_bot_token or not settings.telegram_approval_chat_ids:
+            logger.debug("Telegram approval notification not configured, skipping notification")
+            return
+
+        import httpx
+
+        chat_ids = [
+            chat_id.strip()
+            for chat_id in settings.telegram_approval_chat_ids.split(",")
+            if chat_id.strip()
+        ]
+        if not chat_ids:
+            return
+
+        payload_text = build_approval_message_text(approval)
+        reply_markup = build_approval_inline_keyboard(approval.id)
+        endpoint = f"https://api.telegram.org/bot{settings.telegram_bot_token}/sendMessage"
+
+        try:
+            async with httpx.AsyncClient() as client:
+                for chat_id in chat_ids:
+                    response = await client.post(
+                        endpoint,
+                        json={
+                            "chat_id": chat_id,
+                            "text": payload_text,
+                            "parse_mode": settings.telegram_parse_mode,
+                            "reply_markup": reply_markup,
+                        },
+                        timeout=settings.webhook_timeout,
+                    )
+                    response.raise_for_status()
+                logger.info("Approval notification sent to Telegram", approval_id=approval.id, recipients=chat_ids)
+        except httpx.HTTPError as e:
+            logger.warning("Failed to send Telegram approval notification", approval_id=approval.id, error=str(e))
     
     async def _save_approval(self, approval: ApprovalRequest):
         key = f"approval:{approval.id}"
