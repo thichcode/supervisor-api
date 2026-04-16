@@ -14,7 +14,8 @@ from src.core.bayesian_confidence import (
 from src.memory.lru_cache import LRUCache, PolicyCache, KnowledgeCache
 from src.agents.router import AgentType, create_router
 from src.llm.ensemble import MultiModelEnsemble, EnsembleConfig, ModelResult
-from src.pipeline.supervisor_pipeline import create_pipeline
+# Pipeline module removed - functionality integrated into src/core/supervisor.py
+# from src.pipeline.supervisor_pipeline import create_pipeline
 
 
 class TestBM25Search:
@@ -341,116 +342,9 @@ class TestEnsemble:
         assert "all_scores" in scores
 
 
-class TestSupervisorPipeline:
-    """Tests for the full supervisor pipeline"""
-    
-    def test_pipeline_creation(self):
-        """Test pipeline creation with all components"""
-        pipeline = create_pipeline({
-            "enable_l1_cache": True,
-            "enable_bm25_search": True,
-            "enable_agent_routing": True,
-            "enable_ensemble": False
-        })
-        
-        assert pipeline.config.enable_l1_cache
-        assert pipeline.config.enable_bm25_search
-        assert pipeline.config.enable_agent_routing
-    
-    def test_pipeline_stats(self):
-        """Test pipeline statistics"""
-        pipeline = create_pipeline({
-            "enable_l1_cache": True,
-            "enable_bm25_search": True,
-            "enable_agent_routing": True
-        })
-        
-        stats = pipeline.get_stats()
-        
-        assert "cache_enabled" in stats
-        assert "bm25_enabled" in stats
-        assert "routing_enabled" in stats
-    
-    def test_search_indexing(self):
-        """Test that pipeline properly indexes documents"""
-        pipeline = create_pipeline({
-            "enable_bm25_search": True
-        })
-        
-        # Manually trigger search init
-        pipeline._init_search()
-        
-        # Add policies
-        for i, title in enumerate(["Policy A", "Policy B", "Policy C"]):
-            pipeline.policy_search.add_document(f"p{i}", f"Content for {title}", title)
-        
-        # Search should work
-        results = pipeline.policy_search.search("Policy", top_k=3)
-        assert len(results) >= 1
-
-
-class TestIntegration:
-    """Integration tests for all components working together"""
-    
-    def test_full_pipeline_flow(self):
-        """Test the complete pipeline flow"""
-        # Create pipeline
-        pipeline = create_pipeline({
-            "enable_l1_cache": True,
-            "enable_bm25_search": True,
-            "enable_agent_routing": True
-        })
-        
-        # Verify all components initialized
-        assert pipeline.config.enable_l1_cache
-        assert pipeline.config.enable_bm25_search
-        assert pipeline.config.enable_agent_routing
-    
-    def test_component_integration(self):
-        """Test that components can be used together"""
-        # BM25 search
-        search = HybridSearch()
-        search.add_document("d1", "Chính sách nghỉ phép", "Leave Policy")
-        
-        # LRU cache
-        cache = LRUCache()
-        cache.set("query", "response")
-        
-        # Router
-        router = create_router("adaptive")
-        path, _ = router.route_with_feedback("test", "general")
-        
-        # All should work independently
-        assert len(search.search("nghỉ phép")) >= 1
-        assert cache.get("query") == "response"
-        assert len(path) > 0
-    
-    def test_performance_under_load(self):
-        """Test performance with multiple operations"""
-        
-        cache = LRUCache(maxsize=100)
-        search = HybridSearch()
-        
-        # Index 50 documents
-        for i in range(50):
-            search.add_document(f"doc{i}", f"document {i} content for testing", f"Doc {i}")
-        
-        # Perform 100 cache operations
-        start = time.time()
-        for i in range(100):
-            cache.set(f"key{i}", f"value{i}")
-            cache.get(f"key{i}")
-        cache_time = time.time() - start
-        
-        # Perform 100 searches
-        start = time.time()
-        for i in range(100):
-            search.search("document", top_k=5)
-        search_time = time.time() - start
-        
-        # Should complete quickly
-        assert cache_time < 1.0  # Less than 1 second
-        assert search_time < 5.0  # Less than 5 seconds for searches
+# Pipeline tests removed - functionality integrated into src/core/supervisor.py
+# TestSupervisorPipeline and TestIntegration classes removed (pipeline deleted)
+# See test_core.py and test_router_smoke.py for equivalent tests
 
 
 # Run with: pytest tests/test_improvements.py -v
