@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from sqlalchemy import select
@@ -114,7 +114,7 @@ class InteractionService:
         record.status = status
         record.approver_id = approver_id
         record.action_note = action_note
-        record.acted_at = datetime.utcnow()
+        record.acted_at = datetime.now(timezone.utc)
         await self.session.flush()
 
     async def record_vote_feedback(

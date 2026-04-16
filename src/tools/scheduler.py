@@ -7,7 +7,7 @@ import asyncio
 import uuid
 from typing import Optional, List, Dict, Any, Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 import structlog
 
@@ -78,7 +78,7 @@ class Job:
     
     def get_next_run(self) -> Optional[datetime]:
         """Get next scheduled run time"""
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         
         if self.job_type == JobType.CRON and self.cron_expr:
             if CRONITER_AVAILABLE:
@@ -259,7 +259,7 @@ class Scheduler:
         timeout: Optional[float] = None,
     ) -> Job:
         """Add a delayed job"""
-        run_at = datetime.utcnow() + timedelta(seconds=delay_seconds)
+        run_at = datetime.now(timezone.utc) + timedelta(seconds=delay_seconds)
         return self.add_once_job(name, func_name, run_at, func_args, func_kwargs, timeout)
     
     def remove_job(self, job_id: str) -> bool:
@@ -325,7 +325,7 @@ class Scheduler:
     
     async def _run_pending_jobs(self):
         """Check and run pending jobs"""
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         
         for job in self.jobs.values():
             if not job.enabled:
@@ -350,7 +350,7 @@ class Scheduler:
     
     async def _run_job(self, job: Job):
         """Execute a job"""
-        started_at = datetime.utcnow()
+        started_at = datetime.now(timezone.utc)
         job.status = JobStatus.RUNNING
         job.last_run = started_at
         
@@ -385,7 +385,7 @@ class Scheduler:
             status = JobStatus.FAILED
             logger.error("Job failed", job_id=job.id, error=str(e))
         
-        completed_at = datetime.utcnow()
+        completed_at = datetime.now(timezone.utc)
         elapsed_ms = (completed_at - started_at).total_seconds() * 1000
         
         # Update job status

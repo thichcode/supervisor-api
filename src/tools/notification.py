@@ -6,7 +6,7 @@ Supports: Email, Telegram, Slack, Teams, SMS, Webhook
 import re
 from typing import Optional, List, Dict, Any
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -293,7 +293,7 @@ Risk Level: {risk_level}
             server.quit()
             
             message.status = "sent"
-            message.sent_at = datetime.utcnow()
+            message.sent_at = datetime.now(timezone.utc)
             self._sent_log.append(message)
             
             logger.info("Email sent", recipients=message.recipients)
@@ -335,7 +335,7 @@ Risk Level: {risk_level}
                     return False
             
             message.status = "sent"
-            message.sent_at = datetime.utcnow()
+            message.sent_at = datetime.now(timezone.utc)
             self._sent_log.append(message)
             
             logger.info("Telegram sent", recipients=message.recipients)
@@ -384,7 +384,7 @@ Risk Level: {risk_level}
                 return False
             
             message.status = "sent"
-            message.sent_at = datetime.utcnow()
+            message.sent_at = datetime.now(timezone.utc)
             self._sent_log.append(message)
             
             logger.info("Slack sent")
@@ -428,7 +428,7 @@ Risk Level: {risk_level}
                 return False
             
             message.status = "sent"
-            message.sent_at = datetime.utcnow()
+            message.sent_at = datetime.now(timezone.utc)
             self._sent_log.append(message)
             
             logger.info("Teams sent")
@@ -471,7 +471,7 @@ Risk Level: {risk_level}
                     return False
             
             message.status = "sent"
-            message.sent_at = datetime.utcnow()
+            message.sent_at = datetime.now(timezone.utc)
             self._sent_log.append(message)
             
             logger.info("SMS sent", recipients=message.recipients)
@@ -498,7 +498,7 @@ Risk Level: {risk_level}
                 "recipients": message.recipients,
                 "priority": message.priority,
                 "metadata": message.metadata,
-                "timestamp": datetime.utcnow().isoformat(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
             }
             
             headers = dict(self.config.webhook_headers)
@@ -517,7 +517,7 @@ Risk Level: {risk_level}
                 return False
             
             message.status = "sent"
-            message.sent_at = datetime.utcnow()
+            message.sent_at = datetime.now(timezone.utc)
             self._sent_log.append(message)
             
             logger.info("Webhook sent")

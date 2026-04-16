@@ -38,9 +38,22 @@ def build_approval_inline_keyboard(approval_id: str) -> Dict[str, Any]:
             [
                 {"text": "✅ Approve", "callback_data": f"approval:approve:{approval_id}"},
                 {"text": "🚫 Reject", "callback_data": f"approval:reject:{approval_id}"},
+            ],
+            [
+                {"text": "🔍 Search KB", "callback_data": f"approval:search_kb:{approval_id}"},
             ]
         ]
     }
+
+
+def build_kb_search_prompt(approval_id: str) -> str:
+    """Build prompt for KB search."""
+    return (
+        "🔍 Search Knowledge Base\n\n"
+        f"Approval ID: {approval_id}\n\n"
+        "Nhập từ khóa để tìm kiếm trong Knowledge Base.\n"
+        "Hệ thống sẽ tìm kết quả và tạo câu trả lời mới."
+    )
 
 
 def parse_approval_callback_data(data: str) -> Optional[Tuple[str, str]]:
@@ -51,7 +64,7 @@ def parse_approval_callback_data(data: str) -> Optional[Tuple[str, str]]:
     if len(parts) != 3 or parts[0] != "approval":
         return None
     action, approval_id = parts[1], parts[2]
-    if action not in {"approve", "reject"} or not approval_id:
+    if action not in {"approve", "reject", "search_kb"} or not approval_id:
         return None
     return action, approval_id
 
@@ -77,6 +90,7 @@ class TelegramAdapter:
         self.is_running = False
         self._offset = 0
         self._task: Optional[asyncio.Task] = None
+        self._pending_kb_search: Dict[str, str] = {}
     
     async def start(self):
         """Start the Telegram bot"""
@@ -176,6 +190,12 @@ class TelegramAdapter:
             await self._handle_command(chat_id, user_id, text)
             return
         
+        # Check for pending KB search
+        if chat_id in self._pending_kb_search:
+            approval_id = self._pending_kb_search.pop(chat_id)
+            await self._handle_kb_search(chat_id, user_id, text, approval_id)
+            return
+        
         # Process as regular message
         reply = await self._call_supervisor(user_id, display_name, text, thread_id, metadata)
         if not reply:
@@ -204,6 +224,16 @@ class TelegramAdapter:
         )
 
         try:
+            if action == "search_kb":
+                await self._answer_callback_query(
+                    callback_query_id, 
+                    "Nhập từ khóa để tìm KB...", 
+                    show_alert=True
+                )
+                self._pending_kb_search[chat_id] = approval_id
+                await self._send_message(chat_id, build_kb_search_prompt(approval_id))
+                return True
+
             result = await self._call_approval_action(approval_id, action, actor)
             if not result:
                 await self._answer_callback_query(callback_query_id, "Không thể xử lý approval này.", show_alert=True)
@@ -238,6 +268,41 @@ class TelegramAdapter:
             await self._send_message(chat_id, "History cleared!")
         else:
             await self._send_message(chat_id, f"Unknown command: {command}")
+    
+    async def _handle_kb_search(self, chat_id: str, user_id: str, keywords: str, approval_id: str):
+        """Handle KB search with keywords and generate new response."""
+        try:
+            await self._send_message(chat_id, f"🔍 Đang tìm: {keywords}...")
+
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    f"{self.supervisor_url}/approvals/{approval_id}/retry-with-kb",
+                    json={"keywords": keywords, "requested_by": user_id},
+                    headers={"Authorization": f"Bearer {self.api_key}"} if self.api_key else {},
+                    timeout=60.0
+                )
+
+                if response.status_code == 200:
+                    data = response.json()
+                    new_response = data.get("new_response", "Không tìm thấy kết quả.")
+                    
+                    message = (
+                        f"🔄 New Response (from KB Search)\n\n"
+                        f"Keywords: {keywords}\n\n"
+                        f"Response:\n{new_response}\n\n"
+                        f"Confidence: {data.get('confidence', 'N/A')}%\n\n"
+                        f"Approval ID: {approval_id}"
+                    )
+                    await self._send_message(chat_id, message)
+                else:
+                    await self._send_message(
+                        chat_id, 
+                        f"Lỗi khi tìm KB: {response.status_code}"
+                    )
+
+        except Exception as e:
+            logger.error("KB search failed", error=str(e), approval_id=approval_id)
+            await self._send_message(chat_id, f"Có lỗi xảy ra: {str(e)}")
     
     async def _call_supervisor(
         self,

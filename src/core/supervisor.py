@@ -1,6 +1,6 @@
 """
 Supervisor - Main orchestration logic
-Enhanced v2 with BM25 Search, Bayesian Confidence, LRU Cache, Agent Router
+Simplified with SimpleAgent (Steve Jobs philosophy)
 """
 
 from src.core import (
@@ -12,7 +12,7 @@ from src.core import (
     RiskLevel,
 )
 from src.memory import MemoryContext as MemoryContextModel
-from src.agents import ContextAgent, PolicyAgent, KnowledgeAgent, DraftAgent, QAAgent
+from src.agents import ContextAgent, PolicyAgent, KnowledgeAgent, DraftAgent, QAAgent, SimpleAgent
 from src.db import AuditLog, async_session
 from src.llm import MultiProviderLLMClient, LLMResponse
 from src.config import get_settings
@@ -115,6 +115,7 @@ class Supervisor:
         self.knowledge_agent = KnowledgeAgent()
         self.draft_agent = DraftAgent()
         self.qa_agent = QAAgent()
+        self.simple_agent = SimpleAgent()
         self._llm: Optional[MultiProviderLLMClient] = None
         
         # NEW v2: Initialize enhanced components (based on config)
@@ -232,6 +233,50 @@ class Supervisor:
     
     def set_llm(self, llm: MultiProviderLLMClient):
         self._llm = llm
+
+    async def simple_process(self, payload: InputPayload, memory: MemoryContextModel) -> OutputPayload:
+        """
+        SIMPLIFIED process - Steve Jobs style.
+        1. Check cache
+        2. Ask SimpleAgent
+        3. Done
+        """
+        start_time = time.time()
+        cache_key = f"{payload.user.id}:{payload.message.text[:100]}"
+
+        if hasattr(self, 'query_cache'):
+            cached = self.query_cache.get(cache_key)
+            if cached:
+                return self._create_output(
+                    payload=payload,
+                    answer=cached["response"],
+                    confidence=cached.get("confidence", 0.9),
+                    intent=IntentClassification(intent=IntentType.FAQ, confidence=0.9),
+                    risk=RiskEvaluation(risk_level=RiskLevel.LOW, reasons=[]),
+                    agents_used=["cache"],
+                    status="completed",
+                    processing_time=start_time,
+                )
+
+        answer, confidence = await self.simple_agent.answer(payload, memory, self._llm)
+
+        if hasattr(self, 'query_cache') and confidence >= 0.6:
+            self.query_cache.set(cache_key, {
+                "response": answer,
+                "confidence": confidence,
+                "timestamp": time.time()
+            })
+
+        return self._create_output(
+            payload=payload,
+            answer=answer,
+            confidence=confidence,
+            intent=IntentClassification(intent=IntentType.FAQ, confidence=0.8),
+            risk=RiskEvaluation(risk_level=RiskLevel.LOW, reasons=[]),
+            agents_used=["simple_agent"],
+            status="completed",
+            processing_time=start_time,
+        )
 
     async def process(self, payload: InputPayload, memory: MemoryContextModel) -> OutputPayload:
         start_time = time.time()

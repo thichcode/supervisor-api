@@ -8,7 +8,7 @@ import httpx
 from typing import Optional, List, Dict, Any
 from enum import Enum
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 import structlog
 
 logger = structlog.get_logger()
@@ -327,7 +327,7 @@ class N8NConnector:
         # Mark as approved
         request.status = "approved"
         request.approved_by = approver_name
-        request.approved_at = datetime.utcnow()
+        request.approved_at = datetime.now(timezone.utc)
         
         logger.info("Action approved", 
                    request_id=request_id,
@@ -424,7 +424,7 @@ class N8NConnector:
                 "system": action_def.system,
                 "parameters": parameters,
                 "triggered_by": user_id,
-                "timestamp": datetime.utcnow().isoformat(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
             }
             
             logger.debug("Executing webhook",

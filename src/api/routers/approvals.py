@@ -2,8 +2,12 @@ from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel, Field
+import structlog
 
 from src.config import get_settings
+
+logger = structlog.get_logger()
 from src.core.approval import approval_service
 from src.core.schemas import (
     ApprovalActionRequest,
@@ -102,7 +106,10 @@ async def approve_or_reject(approval_id: str, action: ApprovalActionRequest):
                     event_payload={
                         "approval_status": "approved",
                         "reviewed_by": action.reviewed_by,
-                        "review_comment": action.comment,
+                        "question": approval.original_message,
+                        "answer": approval.ai_response,
+                        "intent": approval.metadata.get("intent"),
+                        "team_id": approval.metadata.get("team_id"),
                         "confidence_score": approval.confidence,
                         "threshold": approval.threshold,
                         "model_name": approval.metadata.get("model_name", settings.llm_model),
@@ -111,6 +118,20 @@ async def approve_or_reject(approval_id: str, action: ApprovalActionRequest):
                     },
                 )
             )
+
+            from src.services.pattern_learning_service import PatternLearningService
+            pattern_service = PatternLearningService(session)
+            await pattern_service.store_pattern(
+                question=approval.original_message,
+                answer=approval.ai_response,
+                user_id=approval.user_id,
+                thread_id=approval.metadata.get("thread_id"),
+                team_id=approval.metadata.get("team_id"),
+                intent=approval.metadata.get("intent"),
+                approved_by=action.reviewed_by,
+                source_request_id=approval.request_id,
+            )
+
             await session.commit()
 
         if settings.power_automate_webhook_url:
@@ -258,3 +279,67 @@ async def vote_on_approval(approval_id: str, vote_request: ApprovalVoteRequest):
         "vote": vote_request.vote,
         "message": "Vote recorded successfully",
     }
+
+
+class RetryWithKBSearchRequest(BaseModel):
+    keywords: str = Field(..., min_length=1, max_length=500)
+    requested_by: str
+
+
+@router.post("/{approval_id}/retry-with-kb")
+async def retry_with_kb_search(approval_id: str, request: RetryWithKBSearchRequest):
+    """Retry generating response using KB search with given keywords."""
+    import src.api as api_module
+    from src.services.knowledge_service import KnowledgeRetrievalService
+    from src.llm import llm_client
+
+    approval = await approval_service.get_approval(approval_id)
+    if not approval:
+        raise HTTPException(status_code=404, detail="Approval not found")
+
+    try:
+        async with api_module.async_session() as session:
+            kb_service = KnowledgeRetrievalService(session, llm_client)
+            
+            search_results = await kb_service.search_with_llm_enhancement(
+                query=request.keywords,
+                search_type="all",
+                limit=5,
+            )
+
+            kb_context = ""
+            if search_results and search_results.results:
+                kb_context = "## Knowledge Base Results:\n"
+                for i, result in enumerate(search_results.results[:3], 1):
+                    kb_context += f"\n{i}. {result.title}\n{result.content[:500]}\n"
+
+            if llm_client and llm_client.is_initialized:
+                system_prompt = """Bạn là trợ lý IT Support.
+Dựa vào kết quả tìm kiếm Knowledge Base, tạo câu trả lời phù hợp.
+Trả lời ngắn gọn, hữu ích, bằng tiếng Việt."""
+
+                user_prompt = f"""Câu hỏi gốc: {approval.original_message}
+Từ khóa tìm kiếm: {request.keywords}
+{kb_context}
+
+Tạo câu trả lời mới dựa trên thông tin KB."""
+
+                response = await llm_client.complete(system_prompt, user_prompt)
+                new_response = response.content
+                confidence = response.confidence if response.confidence else 0.85
+            else:
+                new_response = kb_context or "Không tìm thấy kết quả phù hợp."
+                confidence = 0.7
+
+            return {
+                "status": "success",
+                "approval_id": approval_id,
+                "keywords": request.keywords,
+                "new_response": new_response,
+                "confidence": round(confidence * 100, 1),
+                "kb_results_count": len(search_results.results) if search_results else 0,
+            }
+
+    except Exception as e:
+        logger.error("KB search retry failed", error=str(e), approval_id=approval_id)
+        raise HTTPException(status_code=500, detail=f"KB search failed: {str(e)}")

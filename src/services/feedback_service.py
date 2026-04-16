@@ -67,7 +67,7 @@ class FeedbackService:
         source_text = payload.edited_output_text or payload.feedback_text
         if user_id and source_text:
             signals = self.learning.infer_style_signals(
-                source_text,
+                text=source_text,
                 source="human_edit" if payload.edited_output_text else "feedback",
             )
             await self.learning.add_signals(

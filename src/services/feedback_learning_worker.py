@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Callable, Optional
 
 from sqlalchemy import select
@@ -126,7 +126,7 @@ class FeedbackReplayWorker:
         self._apply_routing_feedback(payload)
 
         event.processed = True
-        event.processed_at = datetime.utcnow()
+        event.processed_at = datetime.now(timezone.utc)
         session.add(event)
 
     def _apply_feedback_signal(self, *, user_id: str, request_id: str, is_positive: bool, model_name: str) -> None:

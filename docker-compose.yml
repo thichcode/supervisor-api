@@ -17,25 +17,34 @@ services:
       - REDIS_PASSWORD=${REDIS_PASSWORD:-}
       # LLM Configuration
       - LLM_PROVIDER=${LLM_PROVIDER:-ollama}
-      - LLM_MODEL=${LLM_MODEL:-llama3}
-      # No local llama-cpp service in compose; point to an external LLM endpoint.
-      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:8088}
+      - LLM_MODEL=${LLM_MODEL:-llama3.1}
+      # Point to ollama service in compose
+      - OLLAMA_BASE_URL=http://ollama:11434
       - OLLAMA_TIMEOUT=${OLLAMA_TIMEOUT:-320}
       - LLM_TEMPERATURE=${LLM_TEMPERATURE:-0.7}
       - LLM_MAX_TOKENS=${LLM_MAX_TOKENS:-2000}
       # Optional: OpenAI (fallback if Ollama unavailable)
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      # Azure OpenAI (optional)
+      - AZURE_OPENAI_ENDPOINT=${AZURE_OPENAI_ENDPOINT:-}
+      - AZURE_OPENAI_KEY=${AZURE_OPENAI_KEY:-}
+      - AZURE_DEPLOYMENT_NAME=${AZURE_DEPLOYMENT_NAME:-}
       # Webhook
       - WEBHOOK_INPUT_SECRET=${WEBHOOK_INPUT_SECRET:-}
       - POWER_AUTOMATE_WEBHOOK_URL=${POWER_AUTOMATE_WEBHOOK_URL:-}
+      # Telegram Approval
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+      - TELEGRAM_APPROVAL_CHAT_IDS=${TELEGRAM_APPROVAL_CHAT_IDS:-}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+      ollama:
+        condition: service_started
     extra_hosts:
-      - "${EXTRA_HOSTS:-host.docker.internal:host-gateway}"
+      - "host.docker.internal:host-gateway"
     healthcheck:
       test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/health').raise_for_status()"]
       interval: 30s
@@ -51,6 +60,21 @@ services:
         reservations:
           cpus: '0.5'
           memory: 512M
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: supervisor-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 8G
+    restart: unless-stopped
+
   postgres:
     image: postgres:16-alpine
     container_name: supervisor-postgres
@@ -134,3 +158,4 @@ volumes:
   redis_data:
   prometheus_data:
   grafana_data:
+  ollama_data:

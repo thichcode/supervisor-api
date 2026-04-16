@@ -378,3 +378,35 @@ class Config(Base):
     is_sensitive = Column(Boolean, default=False)
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+
+class ResponsePattern(Base):
+    """
+    Stores approved Q&A patterns for future matching.
+    When a response is approved, we store the question-answer pair
+    so similar future questions can use this response directly.
+    """
+    __tablename__ = "response_patterns"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    question_hash = Column(String(64), nullable=False, unique=True, index=True)
+    question_text = Column(Text, nullable=False)
+    answer_text = Column(Text, nullable=False)
+    user_id = Column(String(100), nullable=True, index=True)
+    thread_id = Column(String(255), nullable=True, index=True)
+    team_id = Column(String(100), nullable=True, index=True)
+    intent = Column(String(50), nullable=True, index=True)
+    confidence_score = Column(Float, default=1.0)
+    usage_count = Column(Integer, default=0)
+    last_used_at = Column(DateTime, default=func.now())
+    approved_by = Column(String(100), nullable=True)
+    source_request_id = Column(String(100), nullable=True)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        Index("idx_patterns_team_active", "team_id", "is_active"),
+        Index("idx_patterns_intent_active", "intent", "is_active"),
+        Index("idx_patterns_usage", "usage_count", "last_used_at"),
+    )

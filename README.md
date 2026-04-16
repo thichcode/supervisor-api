@@ -1,11 +1,9 @@
 # Multi-Agent Supervisor System
 
-[![Version](https://img.shields.io/badge/version-v1.1.0-blue.svg)](https://github.com/thichcode/supervisor-api/releases)
+[![Version](https://img.shields.io/badge/version-v1.2.0-blue.svg)](https://github.com/thichcode/supervisor-api/releases)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.11+-orange.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.104+-cyan.svg)](https://fastapi.tiangolo.com/)
-[![CI](https://github.com/thichcode/supervisor-api/actions/workflows/ci.yml/badge.svg)](https://github.com/thichcode/supervisor-api/actions/workflows/ci.yml)
-[![Quality](https://img.shields.io/badge/quality-passing-brightgreen)](CI_CHECKLIST.md)
 
 AI agent system with long-term memory for Microsoft Teams integration. Designed for Vietnamese outsourcing companies with comprehensive intent classification and risk evaluation.
 
@@ -13,15 +11,14 @@ AI agent system with long-term memory for Microsoft Teams integration. Designed 
 
 | Component | Status | Version |
 |-----------|--------|---------|
-| Core API | ✅ Production Ready | v1.1.0 |
-| Multi-Provider LLM | ✅ Ollama/llama.cpp/OpenAI/Azure | v1.2.0+ |
+| Core API | ✅ Production Ready | v1.2.0 |
+| SimpleAgent | ✅ Unified agent (1 call) | v1.2.0 |
+| Pattern Learning | ✅ Learn from approvals | v1.2.0 |
+| Multi-Provider LLM | ✅ Ollama/Azure/OpenAI | v1.2.0+ |
 | Knowledge Base | ✅ Policies/FAQs/Guides/Documents | v1.1.0 |
-| Approval System | ✅ Confidence-based workflow | v1.0.0 |
+| Approval System | ✅ Telegram + Power Automate | v1.2.0 |
 | Circuit Breaker | ✅ Implemented | v1.0.0 |
 | Dead Letter Queue | ✅ Implemented | v1.0.0 |
-| Authentication | ✅ Implemented | v1.0.0 |
-| Monitoring & Alerts | ✅ Dashboard/Health/Metrics | v1.1.0 |
-| User/Config Management | ✅ CRUD Admin APIs | v1.1.0 |
 
 **Production Readiness Score: 9.5/10** ✅
 
@@ -30,341 +27,307 @@ AI agent system with long-term memory for Microsoft Teams integration. Designed 
 ## Architecture
 
 ```
-Microsoft Teams → Power Automate → n8n Webhook → Supervisor API
-                                                      ↓
-                                              Memory System
-                                              (Postgres + Redis)
-                                                      ↓
-                                              Decision Engine
-                                              ↓           ↓
-                                    Direct Response  Subagents
-                                                      ↓
-                                    Context → Policy → Knowledge → Draft → QA
-                                                      ↓
-                                              LLM Service
-                                    (Ollama/llama.cpp/OpenAI/Azure)
-                                                      ↓
-                                              Webhook Output
-                                              ↓
-                                         Power Automate
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         MS TEAMS (User/Workflow Bot)                        │
+└────────────────────────────────┬────────────────────────────────────────────┘
+                                 │ Power Automate / n8n
+                                 ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         Supervisor API                                      │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────────────────┐    │
+│  │ Memory      │→ │ SimpleAgent │→ │ Pattern Match (>90%)?           │    │
+│  │ Service     │  │ (1 call)   │  │ YES → Use stored answer         │    │
+│  └─────────────┘  └─────────────┘  │ NO → LLM generate               │    │
+│                                     └─────────────────────────────────┘    │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │ Confidence < 30%? → Approval Required → Telegram Notification       │   │
+│  │ Manager approves → Store Q&A Pattern → Next time match directly     │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+└────────────────────────────────┬────────────────────────────────────────────┘
+                                 │
+                                 ▼ Power Automate
+                          Response to Teams
 ```
 
----
+### Key Features
 
-## LLM Provider Support
-
-### Supported Providers
-
-| Provider | Config | Description |
-|----------|--------|-------------|
-| **Ollama** (Recommended) | `LLM_PROVIDER=ollama` | Self-hosted, Vietnamese-optimized |
-| **llama.cpp Server** | `LLM_PROVIDER=ollama` + custom URL | OpenAI-compatible API |
-| **OpenAI** | `LLM_PROVIDER=openai` | GPT-4, GPT-3.5 |
-| **Azure OpenAI** | `LLM_PROVIDER=azure` | Enterprise deployment |
-
-### Quick Setup with llama.cpp
-
-```bash
-# Start llama.cpp server
-./llama-server \
-    -m models/llama-3.1-8b-instruct-q4_k_m.gguf \
-    --host 0.0.0.0 \
-    --port 8080 \
-    -ngl 32
-
-# Configure supervisor-api
-LLM_PROVIDER=ollama
-LLM_MODEL=llama3
-OLLAMA_BASE_URL=http://llama-cpp:8080
-OLLAMA_TIMEOUT=320
-```
+1. **SimpleAgent** - Unified agent, 1 LLM call (replaces 5-agent pipeline)
+2. **Pattern Learning** - Learn from approved responses, auto-match similar questions
+3. **Telegram Approval** - Managers approve via Telegram inline buttons
 
 ---
 
 ## Quick Start
 
-### Docker Compose (Recommended)
+### 1. Clone and Configure
 
 ```bash
-# Clone and configure
 git clone https://github.com/thichcode/supervisor-api.git
 cd supervisor-api
-
-# Create .env file
 cp .env.example .env
-# Edit .env with your configuration
+```
 
-# Start all services (includes Ollama/llama.cpp)
+### 2. Edit .env
+
+```bash
+# Database
+DB_PASSWORD=xxx
+
+# Redis
+REDIS_PASSWORD=xxx
+
+# Webhook
+WEBHOOK_INPUT_SECRET=xxx
+POWER_AUTOMATE_WEBHOOK_URL=https://xxx.azure.com/workflows/xxx
+
+# Telegram (for approval)
+TELEGRAM_BOT_TOKEN=xxx
+TELEGRAM_APPROVAL_CHAT_IDS=xxx
+```
+
+### 3. Deploy with Docker Compose
+
+```bash
+# Start all services (API + Postgres + Redis + Ollama + Monitoring)
 docker-compose up -d
+
+# Pull LLM model (run once)
+docker exec supervisor-ollama ollama pull llama3.1
 
 # Check status
 docker-compose ps
 
 # View logs
-docker-compose logs -f supervisor-api
+docker-compose logs -f supervisor
 ```
 
-### Local Development
+### 4. Create Database Tables
 
 ```bash
-# Install package
-pip install -e ".[dev]"
+# Run migrations
+docker exec supervisor-api python -c "from src.db.models import Base; from src.db.session import engine; import asyncio; asyncio.run(Base.metadata.create_all(engine))"
 
-# Run tests
-python -m pytest -q
+# Or use alembic
+docker exec supervisor-api alembic upgrade head
+```
 
-# Run local CI checklist
-make ci
+### 5. Services
 
-# Run stricter quality gate
-make ci-full
-
-# Run the server
+| Service | URL | Description |
+|---------|-----|-------------|
+| API | http://localhost:8000 | Supervisor API |
+| API Docs | http://localhost:8000/docs | Swagger UI |
+| Prometheus | http://localhost:9090 | Metrics |
+| Grafana | http://localhost:3000 | Dashboards |
+| Ollama | http://localhost:11434 | LLM API |
+pip install -r requirements.txt
 python -m src.api.app
-```
-
-## CI Checklist
-
-- Local checklist: `make ci`
-- Stricter gate: `make ci-full`
-- Full checklist doc: `CI_CHECKLIST.md`
-
-Recommended before merge:
-
-```bash
-make ci
-make quality
-python -m bandit -r src
-python -m pip_audit
 ```
 
 ---
 
-## Environment Variables
+## LLM Configuration
 
-### Required
+### Option 1: Ollama (Free, Recommended)
 
-| Variable | Description |
-|----------|-------------|
-| `DB_PASSWORD` | PostgreSQL password |
-| `REDIS_PASSWORD` | Redis password |
-| `WEBHOOK_INPUT_SECRET` | Webhook authentication secret |
-| `POWER_AUTOMATE_WEBHOOK_URL` | Power Automate callback URL |
+```bash
+# Install Ollama: https://ollama.com
+ollama pull llama3.1    # 8GB RAM - Best for Vietnamese
+ollama pull qwen2:7b    # 6GB RAM - Alibaba, good multilingual
 
-### LLM Configuration
+# .env
+LLM_PROVIDER=ollama
+OLLAMA_BASE_URL=http://localhost:11434
+LLM_MODEL=llama3.1
+```
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `LLM_PROVIDER` | `ollama` | Provider: `ollama`, `openai`, `azure` |
-| `LLM_MODEL` | `llama3` | Model name |
-| `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama/llama.cpp server URL |
-| `OLLAMA_TIMEOUT` | `320` | Request timeout in seconds |
-| `LLM_TEMPERATURE` | `0.7` | Generation temperature |
-| `LLM_MAX_TOKENS` | `2000` | Max tokens per response |
-| `OPENAI_API_KEY` | - | OpenAI API key (optional) |
+### Option 2: Azure OpenAI
 
-### Optional - OpenTelemetry
+```bash
+# .env
+LLM_PROVIDER=azure
+AZURE_OPENAI_ENDPOINT=https://xxx.openai.azure.com
+AZURE_OPENAI_KEY=xxx
+AZURE_DEPLOYMENT_NAME=gpt-4o-mini
+```
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | Console only | OTLP collector endpoint |
-| `OTEL_SERVICE_NAME` | supervisor-api | Service name in traces |
+### Option 3: OpenAI
 
-### Optional - Circuit Breaker
+```bash
+# .env
+LLM_PROVIDER=openai
+OPENAI_API_KEY=sk-xxx
+LLM_MODEL=gpt-4o-mini
+```
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `CIRCUIT_BREAKER_FAILURE_THRESHOLD` | 5 | Failures before opening |
-| `CIRCUIT_BREAKER_SUCCESS_THRESHOLD` | 2 | Successes to close |
-| `CIRCUIT_BREAKER_TIMEOUT` | 30 | Seconds before half-open |
+### Model Comparison for Vietnamese
 
-### Optional - External Memory (MemPalace)
+| Model | Cost | Vietnamese | Recommended |
+|-------|------|-----------|-------------|
+| **llama3.1** | Free | ⭐⭐⭐⭐ | ✅ Best choice |
+| **qwen2:7b** | Free | ⭐⭐⭐⭐ | ✅ Good, light |
+| **gpt-4o-mini** | $ | ⭐⭐⭐⭐⭐ | ✅ If budget available |
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `MEMPALACE_ENABLED` | `false` | Enable MemPalace adapter |
-| `MEMPALACE_PATH` | empty | Path to local MemPalace palace |
-| `MEMPALACE_TOP_K` | `3` | Number of external memory hits |
+---
+
+## Pattern Learning
+
+When you approve a response, it's stored and matched against future similar questions.
+
+### Flow
+
+```
+1. User asks "Cách reset mật khẩu?"
+2. System generates response, confidence < 30%
+3. Manager approves via Telegram
+4. Q&A stored in response_patterns table
+5. Next user asks "Làm sao đổi password?"
+6. Pattern match: 92% similarity
+7. → Use stored answer immediately (no LLM call)
+```
+
+### Database Migration
+
+```bash
+# Create table
+alembic revision --autogenerate -m "Add ResponsePattern table"
+alembic upgrade head
+```
+
+---
+
+## Approval System
+
+### Telegram Setup
+
+1. Create Telegram Bot: @BotFather → `/newbot`
+2. Copy Bot Token
+3. Get Chat ID: Start chat with bot, then use @userinfobot
+4. Add to `.env`:
+
+```bash
+TELEGRAM_BOT_TOKEN=123456:ABC-DEF...
+TELEGRAM_APPROVAL_CHAT_IDS=123456789
+```
+
+### Approval Flow
+
+```
+Confidence < 30% → Create approval → Send to Telegram
+                                    ├── ✅ Approve → Store pattern → Send to Teams
+                                    ├── 🚫 Reject → Log → Send rejection
+                                    └── 🔍 Search KB → Enter keywords → New response
+```
+
+### KB Search Button
+
+When reviewing an approval, click **🔍 Search KB** to:
+1. Enter keywords to search Knowledge Base
+2. System finds relevant KB articles
+3. Generate new response based on KB results
+4. Shows new response for approval
 
 ---
 
 ## API Endpoints
 
-### Public Endpoints
+### Chat
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/webhook/n8n` | Receive requests from n8n |
-| POST | `/chat` | Direct user chat |
-| POST | `/system/query` | Query user/case info |
-| POST | `/guide/deliver` | Deliver guideline to user |
-| POST | `/callback/send` | Send async callback |
-| GET | `/health` | Health check |
-| GET | `/health/ready` | Readiness check |
-| GET | `/health/detailed` | Detailed system stats |
-| GET | `/metrics` | Prometheus metrics |
-| GET | `/metrics/dashboard` | Dashboard metrics (JSON) |
-| GET | `/metrics/dashboard/html` | Dashboard metrics (HTML with charts) |
+| POST | `/chat` | Send message |
+| POST | `/webhook/n8n` | Webhook from n8n/Power Automate |
 
-### Approval Endpoints
+### Approval
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/approvals` | List all approvals |
-| GET | `/approvals/{id}` | Get approval details |
-| POST | `/approvals/{id}/action` | Approve or reject |
+| GET | `/approvals` | List approvals |
+| GET | `/approvals/{id}` | Get approval |
+| POST | `/approvals/{id}/action` | Approve/Reject |
 
-### Knowledge Base Endpoints
+### Knowledge Base
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | GET | `/knowledge/stats` | KB statistics |
 | POST | `/knowledge/search` | Search KB |
-| POST | `/knowledge/search/enhanced` | LLM-enhanced search |
-| POST | `/knowledge/bulk-import` | Bulk import KB |
 | POST/GET/PUT/DELETE | `/knowledge/policies/{id}` | Policy CRUD |
 | POST/GET/PUT/DELETE | `/knowledge/faqs/{id}` | FAQ CRUD |
 | POST/GET/PUT/DELETE | `/knowledge/guides/{id}` | Guide CRUD |
-| POST/GET/PUT/DELETE | `/knowledge/documents/{id}` | Document CRUD |
 
-### Alert Endpoints
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/alerts` | Create alert |
-| GET | `/alerts` | List alerts |
-| PUT | `/alerts/{id}/acknowledge` | Acknowledge alert |
-| DELETE | `/alerts/{id}` | Delete alert |
-
-### Admin Endpoints (Require Auth)
+### Monitoring
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST/GET/PUT/DELETE | `/admin/users` | User CRUD |
-| POST/GET/PUT/DELETE | `/admin/config` | Config CRUD |
-| GET | `/admin/errors/dlq` | List DLQ entries |
-| POST | `/admin/errors/dlq/{id}/retry` | Retry failed message |
-| DELETE | `/admin/errors/dlq/{id}` | Delete DLQ entry |
-| GET | `/admin/errors/circuit-breakers` | View CB status |
+| GET | `/health` | Health check |
+| GET | `/metrics` | Prometheus metrics |
+| GET | `/metrics/dashboard` | Dashboard JSON |
 
 ---
 
-## Production Features
+## Environment Variables
 
-### Reliability
-
-| Feature | Description |
-|---------|-------------|
-| Circuit Breaker | Auto-prevents cascading failures |
-| Dead Letter Queue | Zero message loss with retry |
-| Error Handling | Structured errors, no leakage |
-
-### Security
-
-| Feature | Description |
-|---------|-------------|
-| JWT Auth | User/Admin authentication |
-| HMAC Verification | Webhook signature validation |
-| API Keys | Service-to-service auth |
-| RBAC | Role-based access control |
-
-### Observability
-
-| Feature | Description |
-|---------|-------------|
-| OpenTelemetry | Distributed tracing |
-| Prometheus Metrics | Full metrics coverage |
-| Alert Rules | Proactive monitoring |
-| Health Checks | Dependency awareness |
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `DB_PASSWORD` | Yes | PostgreSQL password |
+| `REDIS_PASSWORD` | Yes | Redis password |
+| `WEBHOOK_INPUT_SECRET` | Yes | Webhook authentication |
+| `POWER_AUTOMATE_WEBHOOK_URL` | Yes | Teams callback URL |
+| `LLM_PROVIDER` | Yes | `ollama`, `openai`, `azure` |
+| `LLM_MODEL` | Yes | Model name |
+| `OLLAMA_BASE_URL` | No | Ollama server URL |
+| `TELEGRAM_BOT_TOKEN` | No | Telegram bot token |
+| `TELEGRAM_APPROVAL_CHAT_IDS` | No | Comma-separated chat IDs |
 
 ---
 
-## Intent Classification
-
-The system uses comprehensive keyword patterns for Vietnamese outsourcing companies:
-
-| Intent | Keywords (sample) |
-|--------|-------------------|
-| **FAQ** | "là gì", "như thế nào", "cái gì", "cách làm" |
-| **POLICY** | "quy định", "chính sách", "hướng dẫn", "quy trình", "nghỉ phép" |
-| **SUPPORT_CASE** | "lỗi", "hỏng", "không được", "cần hỗ trợ", "bị lỗi" |
-| **ANALYSIS** | "phân tích", "báo cáo", "thống kê", "số liệu" |
-| **EXECUTIVE** | "sếp", "giám đốc", "gấp", "khẩn", "doanh thu" |
-
-Role-based context boost: Project Manager → Analysis, HR → Policy, IT → Support
+## Testing
 
 ```bash
-# Quick test
-./load_test/quick_test.sh
+# Run all tests
+python -m pytest -q
 
-# Full load test with k6
-k6 run \
-  --env BASE_URL=https://api.example.com \
-  --env WEBHOOK_SECRET=*** \
-  load_test/k6_load.js
+# Run specific test
+python -m pytest tests/test_xxx.py -v
+```
+
+**Current: 170 tests passing**
+
+---
+
+## File Structure
+
+```
+supervisor-api/
+├── src/
+│   ├── api/
+│   │   ├── app.py              # FastAPI entry point
+│   │   └── routers/           # API endpoints
+│   ├── agents/
+│   │   ├── simple_agent.py     # Unified agent (v1.2)
+│   │   └── subagents.py        # Legacy agents
+│   ├── core/
+│   │   ├── supervisor.py       # Main orchestrator
+│   │   └── approval.py         # Approval system
+│   ├── services/
+│   │   ├── chat_service.py     # Chat handling
+│   │   ├── feedback_service.py # Feedback handling
+│   │   └── pattern_learning_service.py  # Pattern learning
+│   ├── db/
+│   │   └── models.py           # SQLAlchemy models
+│   └── llm/
+│       └── provider.py         # Multi-provider LLM
+├── tests/                      # Test suite
+├── .env.example               # Environment template
+└── requirements.txt           # Dependencies
 ```
 
 ---
 
-## Monitoring
-
-### Prometheus Metrics
-
-Access at `GET /metrics`:
-
-| Metric | Type | Description |
-|--------|------|-------------|
-| `supervisor_requests_total` | Counter | Total requests |
-| `supervisor_request_duration_seconds` | Histogram | Request latency |
-| `supervisor_errors_total` | Counter | Total errors |
-| `supervisor_llm_calls_total` | Counter | LLM invocations |
-| `supervisor_llm_cost_usd` | Counter | LLM cost |
-| `supervisor_circuit_breaker_state` | Gauge | CB state (0/1/2) |
-| `supervisor_dlq_pending_total` | Gauge | Pending DLQ messages |
-
-### Dashboard Metrics
-
-Access at `GET /metrics/dashboard` (JSON) or `GET /metrics/dashboard/html` (HTML with charts):
-
-```json
-{
-  "overview": {
-    "total_approvals": 15,
-    "auto_sent": 0,
-    "need_manual_review": 15,
-    "auto_send_rate": 0.0
-  },
-  "approvals": {
-    "pending": 9,
-    "approved": 6,
-    "rejected": 0,
-    "approve_rate": 100.0
-  },
-  "ai_quality": {
-    "avg_confidence": 43.5,
-    "high_confidence_count": 0,
-    "low_confidence_count": 15
-  },
-  "user_satisfaction": {
-    "total_votes": 1,
-    "agree": 1,
-    "satisfaction_rate": 100.0
-  }
-}
-```
-
-**HTML Dashboard Features:**
-- Dark theme with glassmorphism cards
-- Chart.js for visualizations (doughnut charts)
-- Confidence bar with threshold indicator (90%)
-- User satisfaction voting bar
-- Responsive design
-
----
 ## Documentation
+
 - [Changelog](./CHANGELOG.md) - Version history
-- [Release Notes](./RELEASES/) - Detailed release notes
-- [Configuration Guide](./CONFIGURATION_GUIDE.md) - Config precedence
 - [API Documentation](./docs/api.md) - Full API reference
 - [Deploy Guide](./DEPLOY_GUIDE.md) - Production deployment
 
@@ -372,7 +335,7 @@ Access at `GET /metrics/dashboard` (JSON) or `GET /metrics/dashboard/html` (HTML
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) file for details.
+MIT License
 
 ---
 

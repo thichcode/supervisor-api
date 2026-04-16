@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 import structlog
 
 logger = structlog.get_logger()
@@ -116,7 +116,7 @@ class SessionStore:
         )
         
         session.messages.append(message)
-        session.updated_at = datetime.utcnow()
+        session.updated_at = datetime.now(timezone.utc)
         
         self._save_session(session)
         
@@ -137,7 +137,7 @@ class SessionStore:
         
         if session:
             session.messages.clear()
-            session.updated_at = datetime.utcnow()
+            session.updated_at = datetime.now(timezone.utc)
             self._save_session(session)
     
     def _save_session(self, session: Session):

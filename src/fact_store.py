@@ -13,7 +13,7 @@ import sqlite3
 from pathlib import Path
 from typing import Optional, List, Set
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 import structlog
 
 logger = structlog.get_logger()
@@ -90,7 +90,7 @@ class FactStore:
         """Add a new fact"""
         entities = entities or []
         tags = tags or []
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         
         cursor = self._conn.cursor()
         cursor.execute("""
@@ -230,7 +230,7 @@ class FactStore:
             UPDATE facts 
             SET trust = MAX(0, MIN(1, trust + ?)), updated_at = ?
             WHERE id = ?
-        """, (trust_delta, datetime.utcnow().isoformat(), fact_id))
+        """, (trust_delta, datetime.now(timezone.utc).isoformat(), fact_id))
         
         self._conn.commit()
     

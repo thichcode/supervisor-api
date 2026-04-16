@@ -20,7 +20,7 @@ APPROVAL_TTL = 86400 * 7  # 7 days
 
 class ApprovalService:
     def __init__(self):
-        self.default_threshold = 0.9  # 90% confidence threshold
+        self.default_threshold = 0.3  # Only require approval if very low confidence
     
     async def create_approval(
         self,

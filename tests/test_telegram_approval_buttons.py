@@ -43,6 +43,9 @@ def test_build_approval_inline_keyboard_has_approve_and_reject_buttons(sample_ap
             [
                 {"text": "✅ Approve", "callback_data": f"approval:approve:{sample_approval.id}"},
                 {"text": "🚫 Reject", "callback_data": f"approval:reject:{sample_approval.id}"},
+            ],
+            [
+                {"text": "🔍 Search KB", "callback_data": f"approval:search_kb:{sample_approval.id}"},
             ]
         ]
     }

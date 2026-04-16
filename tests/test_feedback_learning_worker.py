@@ -1,5 +1,5 @@
 from types import SimpleNamespace
-from datetime import datetime
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock
 
 import pytest
@@ -91,7 +91,7 @@ async def test_feedback_replay_worker_updates_bayesian_and_marks_events_processe
             "model_name": "llama3",
         },
         processed=False,
-        created_at=datetime.utcnow(),
+        created_at=datetime.now(timezone.utc),
         processed_at=None,
     )
     vote_event = PendingEvent(
@@ -110,7 +110,7 @@ async def test_feedback_replay_worker_updates_bayesian_and_marks_events_processe
             "model_name": "llama3",
         },
         processed=False,
-        created_at=datetime.utcnow(),
+        created_at=datetime.now(timezone.utc),
         processed_at=None,
     )
 
@@ -167,7 +167,7 @@ async def test_feedback_replay_worker_maps_change_votes_to_negative_feedback(mon
             "model_name": "llama3",
         },
         processed=False,
-        created_at=datetime.utcnow(),
+        created_at=datetime.now(timezone.utc),
         processed_at=None,
     )
 

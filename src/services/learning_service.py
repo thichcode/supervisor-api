@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from sqlalchemy import select
@@ -94,7 +94,7 @@ class LearningService:
         profile.preferred_language = language
         profile.confidence_score = confidence
         profile.sample_count = len(signals)
-        profile.last_inferred_at = datetime.utcnow()
+        profile.last_inferred_at = datetime.now(timezone.utc)
         profile.response_persona_hint = self._build_persona_hint(tone, verbosity, fmt, language)
         await self.session.flush()
         return profile

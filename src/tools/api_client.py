@@ -9,7 +9,7 @@ import time
 import hashlib
 from typing import Optional, Dict, Any, Callable, TypeVar
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 import structlog
 
@@ -99,7 +99,7 @@ class CircuitBreaker:
         """Check if circuit should transition states"""
         if self.state == CircuitState.OPEN:
             if self.last_failure_time:
-                elapsed = (datetime.utcnow() - self.last_failure_time).total_seconds()
+                elapsed = (datetime.now(timezone.utc) - self.last_failure_time).total_seconds()
                 if elapsed >= self.config.timeout:
                     logger.info(f"Circuit {self.name} transitioning to HALF_OPEN")
                     self.state = CircuitState.HALF_OPEN
@@ -121,7 +121,7 @@ class CircuitBreaker:
         """Handle failed call"""
         async with self._lock:
             self.failure_count += 1
-            self.last_failure_time = datetime.utcnow()
+            self.last_failure_time = datetime.now(timezone.utc)
             
             # Check if should open
             if self.failure_count >= self.config.failure_threshold:
