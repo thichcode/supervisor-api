@@ -105,10 +105,10 @@ docker-compose logs -f supervisor
 
 ```bash
 # Run migrations
-docker exec supervisor-api python -c "from src.db.models import Base; from src.db.session import engine; import asyncio; asyncio.run(Base.metadata.create_all(engine))"
+psql "$DATABASE_URL" -f migrations/20260415_01_learning_hardening.up.sql
 
-# Or use alembic
-docker exec supervisor-api alembic upgrade head
+# Or, if your deployment has Alembic configured separately
+# alembic upgrade head
 ```
 
 ### 5. Services
