@@ -4,7 +4,6 @@ Tests: BM25 search, Bayesian confidence, LRU cache, agent routing, ensemble
 """
 
 import pytest
-import time
 
 # Import all components
 from src.knowledge.bm25_search import BM25Search, HybridSearch

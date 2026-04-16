@@ -4,7 +4,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.schemas import FeedbackCreateRequest, FeedbackResponse, UserStyleProfileResponse
-from src.db.models import FeedbackLog, InteractionLog, ResponseLearningEvent, UserStyleProfile
+from src.db.models import FeedbackLog, InteractionLog, UserStyleProfile
+from src.services.learning_events import record_learning_event
 from src.services.learning_service import LearningService
 
 
@@ -43,26 +44,27 @@ class FeedbackService:
         self.session.add(feedback)
         await self.session.flush()
 
-        learning_event = ResponseLearningEvent(
+        learning_event_payload = {
+            "feedback_type": payload.feedback_type.value,
+            "feedback_label": payload.feedback_label,
+            "feedback_score": payload.feedback_score,
+            "has_human_edit": bool(payload.edited_output_text),
+            "feedback_text": payload.feedback_text,
+            "edited_output_text": payload.edited_output_text,
+            "reviewer_id": payload.reviewer_id,
+            "user_id": user_id,
+            "vote": (payload.metadata or {}).get("vote"),
+        }
+        await record_learning_event(
+            self.session,
             request_id=payload.request_id,
             user_id=user_id,
             thread_id=thread_id,
             ticket_id=ticket_id,
             ticket_system=ticket_system,
             event_type="feedback_received",
-            event_payload={
-                "feedback_type": payload.feedback_type.value,
-                "feedback_label": payload.feedback_label,
-                "feedback_score": payload.feedback_score,
-                "has_human_edit": bool(payload.edited_output_text),
-                "feedback_text": payload.feedback_text,
-                "edited_output_text": payload.edited_output_text,
-                "reviewer_id": payload.reviewer_id,
-                "user_id": user_id,
-                "vote": (payload.metadata or {}).get("vote"),
-            },
+            event_payload=learning_event_payload,
         )
-        self.session.add(learning_event)
 
         source_text = payload.edited_output_text or payload.feedback_text
         if user_id and source_text:

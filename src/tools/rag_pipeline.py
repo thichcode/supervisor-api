@@ -25,7 +25,6 @@ except ImportError:
 
 try:
     from qdrant_client import QdrantClient
-    from qdrant_client.http import models
     QDRANT_AVAILABLE = True
 except ImportError:
     pass

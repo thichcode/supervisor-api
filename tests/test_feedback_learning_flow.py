@@ -8,7 +8,7 @@ Tests the complete flow:
 """
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 from datetime import datetime, timezone
 
 
@@ -24,8 +24,7 @@ class TestFeedbackLearningFlow:
         
         # Get initial model performance
         initial_alpha = bayesian.model_performance["llama3"].alpha
-        initial_beta = bayesian.model_performance["llama3"].beta
-        
+
         # Simulate positive feedback (accepted)
         bayesian.update_with_feedback(
             user_id="user-001",
@@ -46,9 +45,8 @@ class TestFeedbackLearningFlow:
         bayesian = BayesianConfidence()
         
         # Get initial model performance
-        initial_alpha = bayesian.model_performance["llama3"].alpha
         initial_beta = bayesian.model_performance["llama3"].beta
-        
+
         # Simulate negative feedback (rejected)
         bayesian.update_with_feedback(
             user_id="user-001",
@@ -109,7 +107,7 @@ class TestFeedbackLearningFlow:
         assert "verbosity" in signal_types
         
         # Formal text with polite markers should have formal tone
-        verbosity_signal = next(s for s in signals if s["signal_type"] == "verbosity")
+        _ = next(s for s in signals if s["signal_type"] == "verbosity")
         tone_signal = next(s for s in signals if s["signal_type"] == "tone")
         assert tone_signal["signal_value"] == "formal"
 
@@ -156,7 +154,7 @@ class TestFeedbackLearningFlow:
         
         assert response.id == 1
         assert response.request_id == "req-123"
-        assert response.stored == True
+        assert response.stored
 
     @pytest.mark.asyncio
     async def test_feedback_create_request_model(self):
@@ -229,7 +227,6 @@ class TestFeedbackReplayWorker:
         from src.services.feedback_learning_worker import FeedbackReplayWorker
         from src.core.bayesian_confidence import BayesianConfidence
         from types import SimpleNamespace
-        from datetime import timezone
         
         # Create mock event
         mock_event = SimpleNamespace(

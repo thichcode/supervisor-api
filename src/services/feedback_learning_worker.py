@@ -1,14 +1,14 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Optional
+from uuid import uuid4
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 import structlog
 
 from src.config import get_settings
-from src.core.bayesian_confidence import BayesianConfidence
 from src.db import async_session
 from src.db.models import ResponseLearningEvent
 from src.memory.cache import redis_cache
@@ -23,19 +23,23 @@ class FeedbackReplayWorker:
 
     def __init__(
         self,
-        session_factory: Callable[[], Any] = None,
+        session_factory: Callable[[], Any] | None = None,
         supervisor: Any = None,
         learning_service_factory: Optional[Callable[[AsyncSession], Any]] = None,
         state_key: str = "learning:bayesian_state",
+        claim_timeout_minutes: int = 15,
     ):
         self.session_factory = session_factory or async_session
         self.supervisor = supervisor
         self.learning_service_factory = learning_service_factory or (lambda session: LearningService(session))
         self.state_key = state_key
+        self.claim_timeout = timedelta(minutes=claim_timeout_minutes)
+        self.worker_id = f"feedback-replay-{uuid4().hex[:8]}"
         self._state_loaded = False
 
-    async def start(self, interval_seconds: int = 30):
+    async def start(self, interval_seconds: int = 30) -> None:
         """Run the replay loop forever until cancelled."""
+
         while True:
             try:
                 await self.replay_once()
@@ -43,28 +47,35 @@ class FeedbackReplayWorker:
                 logger.error("feedback_replay_loop_failed", error=str(exc))
             await self._sleep(interval_seconds)
 
-    async def _sleep(self, interval_seconds: int):
+    async def _sleep(self, interval_seconds: int) -> None:
         import asyncio
 
         await asyncio.sleep(interval_seconds)
 
     async def replay_once(self, limit: Optional[int] = None) -> int:
-        """Replay all pending events once and persist the updated state."""
+        """Replay pending events once and persist the updated state."""
+
         async with self.session_factory() as session:
             await self._load_state_if_needed()
-            pending_events = await self._get_pending_events(session, limit=limit)
+            pending_events = await self._claim_pending_events(session, limit=limit)
             if not pending_events:
                 return 0
 
+            await session.commit()
+
             learning_service = self.learning_service_factory(session)
             processed = 0
-            for event in pending_events:
-                await self._process_event(session, event, learning_service)
-                processed += 1
-
-            await session.commit()
-            await self._save_state()
-            return processed
+            try:
+                for event in pending_events:
+                    await self._process_event(session, event, learning_service)
+                    processed += 1
+                await session.commit()
+                await self._save_state()
+                return processed
+            except Exception:
+                if hasattr(session, "rollback"):
+                    await session.rollback()
+                raise
 
     async def _load_state_if_needed(self) -> None:
         if self._state_loaded or not self.supervisor:
@@ -94,16 +105,39 @@ class FeedbackReplayWorker:
 
         await redis_cache.set_json(self.state_key, bayes.to_state(), ttl=86400 * 30)
 
-    async def _get_pending_events(self, session: AsyncSession, limit: Optional[int] = None) -> list[ResponseLearningEvent]:
-        query = select(ResponseLearningEvent).where(ResponseLearningEvent.processed == False).order_by(
-            ResponseLearningEvent.created_at.asc(),
-            ResponseLearningEvent.id.asc(),
+    async def _claim_pending_events(
+        self,
+        session: AsyncSession,
+        limit: Optional[int] = None,
+    ) -> list[ResponseLearningEvent]:
+        claim_cutoff = datetime.now(timezone.utc) - self.claim_timeout
+        query = (
+            select(ResponseLearningEvent)
+            .where(ResponseLearningEvent.processed.is_(False))
+            .where(
+                or_(
+                    ResponseLearningEvent.claimed_at.is_(None),
+                    ResponseLearningEvent.claimed_at < claim_cutoff,
+                )
+            )
+            .order_by(ResponseLearningEvent.created_at.asc(), ResponseLearningEvent.id.asc())
+            .with_for_update(skip_locked=True)
         )
-        if limit:
+        if limit is not None:
             query = query.limit(limit)
 
         result = await session.execute(query)
-        return list(result.scalars().all())
+        events = list(result.scalars().all())
+        if not events:
+            return []
+
+        claimed_at = datetime.now(timezone.utc)
+        for event in events:
+            event.claimed_at = claimed_at
+            event.claimed_by = self.worker_id
+        if hasattr(session, "flush"):
+            await session.flush()
+        return events
 
     async def _process_event(self, session: AsyncSession, event: ResponseLearningEvent, learning_service: Any) -> None:
         payload = event.event_payload or {}
@@ -113,7 +147,12 @@ class FeedbackReplayWorker:
 
         is_positive = self._derive_feedback_signal(event.event_type, payload)
         if is_positive is not None:
-            self._apply_feedback_signal(user_id=user_id or request_id, request_id=request_id, is_positive=is_positive, model_name=model_name)
+            self._apply_feedback_signal(
+                user_id=user_id or request_id,
+                request_id=request_id,
+                is_positive=is_positive,
+                model_name=model_name,
+            )
 
         await self._apply_style_learning(
             learning_service=learning_service,
@@ -130,13 +169,14 @@ class FeedbackReplayWorker:
         session.add(event)
 
     def _apply_feedback_signal(self, *, user_id: str, request_id: str, is_positive: bool, model_name: str) -> None:
-        calculators = []
+        calculators: list[Any] = []
         bayes = getattr(self.supervisor, "bayesian_confidence", None)
         if bayes:
             calculators.append(bayes)
         validator = getattr(self.supervisor, "response_validator", None)
-        if validator and getattr(validator, "confidence_calculator", None) is not bayes:
-            calculators.append(validator.confidence_calculator)
+        confidence_calculator = getattr(validator, "confidence_calculator", None) if validator else None
+        if confidence_calculator and confidence_calculator is not bayes:
+            calculators.append(confidence_calculator)
 
         for calculator in calculators:
             if hasattr(calculator, "update_with_feedback"):
@@ -159,6 +199,8 @@ class FeedbackReplayWorker:
             return
 
         signals = self._infer_style_signals(style_source_text, source=event_type)
+        if hasattr(learning_service, "infer_style_signals"):
+            signals = learning_service.infer_style_signals(style_source_text, source=event_type)
         if not signals:
             return
 
@@ -173,6 +215,44 @@ class FeedbackReplayWorker:
             },
         )
         await learning_service.recompute_profile(user_id)
+
+    def _infer_style_signals(self, text: str, source: str = "inferred") -> list[dict]:
+        normalized = " ".join(text.strip().lower().split())
+        words = normalized.split()
+        signals: list[dict] = []
+
+        verbosity = "detailed" if len(words) > 40 else "concise" if len(words) <= 12 else "balanced"
+        signals.append({"signal_type": "verbosity", "signal_value": verbosity, "signal_strength": 0.65, "source": source})
+
+        tone = (
+            "formal"
+            if any(token in normalized for token in ["xin vui lòng", "vui lòng", "please", "cảm ơn"])
+            else "casual"
+            if any(token in normalized for token in ["ok", "oke", "haha", "lol", "bro"])
+            else "balanced"
+        )
+        signals.append({"signal_type": "tone", "signal_value": tone, "signal_strength": 0.6, "source": source})
+
+        fmt = (
+            "steps"
+            if any(marker in text for marker in ["\n1.", "\n2.", "Bước 1", "Step 1"])
+            else "bullets"
+            if any(marker in text for marker in ["\n-", "\n*"])
+            else "paragraph"
+        )
+        signals.append({"signal_type": "format", "signal_value": fmt, "signal_strength": 0.55, "source": source})
+
+        language = (
+            "mixed"
+            if any(token in normalized for token in ["please", "thanks", "step", "ticket"]) and any(
+                token in normalized for token in ["cảm", "vui", "bước", "hướng dẫn"]
+            )
+            else "en"
+            if all(ord(char) < 128 for char in normalized)
+            else "vi"
+        )
+        signals.append({"signal_type": "language", "signal_value": language, "signal_strength": 0.55, "source": source})
+        return signals
 
     def _apply_routing_feedback(self, payload: dict) -> None:
         router = getattr(getattr(self.supervisor, "decision_engine", None), "router", None)
@@ -215,43 +295,6 @@ class FeedbackReplayWorker:
         if isinstance(score, (int, float)):
             return score >= 0.5
         return None
-
-
-    def _infer_style_signals(self, text: str, source: str = "inferred") -> list[dict]:
-        normalized = " ".join(text.strip().lower().split())
-        words = normalized.split()
-        signals: list[dict] = []
-
-        verbosity = "detailed" if len(words) > 40 else "concise" if len(words) <= 12 else "balanced"
-        signals.append({"signal_type": "verbosity", "signal_value": verbosity, "signal_strength": 0.65, "source": source})
-
-        tone = (
-            "formal"
-            if any(token in normalized for token in ["xin vui lòng", "vui lòng", "please", "cảm ơn"])
-            else "casual"
-            if any(token in normalized for token in ["ok", "oke", "haha", "lol", "bro"])
-            else "balanced"
-        )
-        signals.append({"signal_type": "tone", "signal_value": tone, "signal_strength": 0.6, "source": source})
-
-        fmt = (
-            "steps"
-            if any(marker in text for marker in ["\n1.", "\n2.", "Bước 1", "Step 1"])
-            else "bullets"
-            if any(marker in text for marker in ["\n-", "\n*"])
-            else "paragraph"
-        )
-        signals.append({"signal_type": "format", "signal_value": fmt, "signal_strength": 0.55, "source": source})
-
-        language = (
-            "mixed"
-            if any(ch in normalized for ch in ["please", "thanks", "step", "ticket"]) and any(ch in normalized for ch in ["cảm", "vui", "bước", "hướng dẫn"])
-            else "en"
-            if all(ord(c) < 128 for c in normalized)
-            else "vi"
-        )
-        signals.append({"signal_type": "language", "signal_value": language, "signal_strength": 0.55, "source": source})
-        return signals
 
 
 __all__ = ["FeedbackReplayWorker"]

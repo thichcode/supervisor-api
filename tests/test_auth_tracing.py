@@ -183,7 +183,7 @@ class TestTracing:
         assert result == "success"
     
     def test_add_span_attribute(self):
-        from src.core.tracing import add_span_attribute, get_current_span
+        from src.core.tracing import add_span_attribute
         
         # Should not raise errors even without active span
         add_span_attribute("test_key", "test_value")

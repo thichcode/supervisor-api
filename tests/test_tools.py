@@ -3,7 +3,6 @@ Tests for Supervisor Tools - Simplified
 """
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
 
 
 class TestURLFetcher:

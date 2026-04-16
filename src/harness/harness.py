@@ -9,16 +9,15 @@ Wraps around the agent to provide:
 - Evaluation and benchmarking
 """
 
-import asyncio
-import time
-import uuid
-from typing import Any, Callable, Dict, List, Optional, TypeVar
 from dataclasses import dataclass, field
-from enum import Enum
 from datetime import datetime
 import json
-
 import logging
+import time
+import uuid
+from enum import Enum
+from typing import Any, Callable, Dict, List, Optional, TypeVar
+
 from src.config import get_settings
 from .lifecycle import HookType
 

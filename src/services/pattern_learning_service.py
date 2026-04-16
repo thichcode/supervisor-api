@@ -1,62 +1,59 @@
 """
 Pattern Learning Service
-Stores approved Q&A patterns and matches new questions against them.
+Stores approved Q&A patterns and matches new questions against them using
+semantic similarity with an optional transformer backend.
 """
+
+from __future__ import annotations
 
 import hashlib
 import re
 from typing import Optional
 
-from sqlalchemy import select, update, or_
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 import structlog
 
 from src.db.models import ResponsePattern
+from src.services.semantic_text import SemanticTextEncoder, cosine_similarity
 
 logger = structlog.get_logger()
 
 
 class PatternLearningService:
-    """
-    Learns from approved responses and matches new questions against stored patterns.
-    Uses simple text matching (can be enhanced with embeddings later).
-    """
+    """Learn approved Q&A pairs and retrieve the closest semantic match."""
 
-    SIMILARITY_THRESHOLD = 0.9  # 90% match = use stored answer
+    SIMILARITY_THRESHOLD = 0.78
 
-    def __init__(self, session: AsyncSession):
+    def __init__(self, session: AsyncSession, encoder: Optional[SemanticTextEncoder] = None):
         self.session = session
+        self.encoder = encoder or SemanticTextEncoder()
 
     def _normalize_text(self, text: str) -> str:
-        """Normalize text for comparison"""
         text = text.lower().strip()
-        text = re.sub(r'[^\w\s]', ' ', text)
-        text = re.sub(r'\s+', ' ', text)
+        text = re.sub(r"[^\w\s]", " ", text)
+        text = re.sub(r"\s+", " ", text)
         return text
 
-    def _compute_similarity(self, text1: str, text2: str) -> float:
-        """
-        Compute simple text similarity using word overlap.
-        Returns 0.0 to 1.0
-        """
-        norm1 = self._normalize_text(text1)
-        norm2 = self._normalize_text(text2)
-
-        words1 = set(norm1.split())
-        words2 = set(norm2.split())
-
-        if not words1 or not words2:
-            return 0.0
-
-        intersection = words1 & words2
-        union = words1 | words2
-
-        return len(intersection) / len(union) if union else 0.0
-
     def _compute_hash(self, text: str) -> str:
-        """Compute hash for question deduplication"""
         normalized = self._normalize_text(text)
-        return hashlib.sha256(normalized.encode()).hexdigest()[:32]
+        return hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:32]
+
+    def _token_set(self, text: str) -> set[str]:
+        normalized = self._normalize_text(text)
+        return {token for token in normalized.split() if len(token) > 1}
+
+    def _lexical_similarity(self, text_a: str, text_b: str) -> float:
+        tokens_a = self._token_set(text_a)
+        tokens_b = self._token_set(text_b)
+        if not tokens_a or not tokens_b:
+            return 0.0
+        return len(tokens_a & tokens_b) / len(tokens_a | tokens_b)
+
+    def _semantic_similarity(self, text_a: str, text_b: str) -> float:
+        embedding_a = self.encoder.encode(text_a)
+        embedding_b = self.encoder.encode(text_b)
+        return cosine_similarity(embedding_a, embedding_b)
 
     async def store_pattern(
         self,
@@ -69,11 +66,10 @@ class PatternLearningService:
         approved_by: Optional[str] = None,
         source_request_id: Optional[str] = None,
     ) -> ResponsePattern:
-        """
-        Store an approved Q&A pattern.
-        If pattern for this question exists, update it.
-        """
+        """Store or update an approved Q&A pattern."""
+
         question_hash = self._compute_hash(question)
+        question_embedding = self.encoder.encode(question)
 
         result = await self.session.execute(
             select(ResponsePattern).where(ResponsePattern.question_hash == question_hash)
@@ -84,6 +80,8 @@ class PatternLearningService:
             existing.answer_text = answer
             existing.confidence_score = 1.0
             existing.approved_by = approved_by
+            existing.source_request_id = source_request_id
+            existing.embedding = question_embedding
             existing.updated_at = func.now()
             pattern = existing
             logger.info("pattern_updated", question_hash=question_hash, question=question[:50])
@@ -99,6 +97,7 @@ class PatternLearningService:
                 confidence_score=1.0,
                 approved_by=approved_by,
                 source_request_id=source_request_id,
+                embedding=question_embedding,
             )
             self.session.add(pattern)
             logger.info("pattern_stored", question_hash=question_hash, question=question[:50])
@@ -113,43 +112,43 @@ class PatternLearningService:
         team_id: Optional[str] = None,
         intent: Optional[str] = None,
     ) -> Optional[tuple[ResponsePattern, float]]:
-        """
-        Find a similar pattern for the given question.
-        Returns (pattern, similarity_score) if found, None otherwise.
-        """
-        norm_question = self._normalize_text(question)
-        if not norm_question:
+        """Find the closest stored pattern for the given question."""
+
+        normalized_question = self._normalize_text(question)
+        if not normalized_question:
             return None
 
-        query = select(ResponsePattern).where(ResponsePattern.is_active == True)
-
+        query = select(ResponsePattern).where(ResponsePattern.is_active.is_(True))
         if team_id:
-            query = query.where(
-                or_(ResponsePattern.team_id == team_id, ResponsePattern.team_id == None)
-            )
-
+            query = query.where(or_(ResponsePattern.team_id == team_id, ResponsePattern.team_id.is_(None)))
         if intent:
-            query = query.where(
-                or_(ResponsePattern.intent == intent, ResponsePattern.intent == None)
-            )
+            query = query.where(or_(ResponsePattern.intent == intent, ResponsePattern.intent.is_(None)))
 
         result = await self.session.execute(query)
         patterns = list(result.scalars().all())
 
-        best_match = None
+        best_match: Optional[ResponsePattern] = None
         best_similarity = 0.0
 
+        query_embedding = self.encoder.encode(question)
         for pattern in patterns:
-            similarity = self._compute_similarity(question, pattern.question_text)
+            pattern_embedding = pattern.embedding or self.encoder.encode(pattern.question_text)
+            semantic_score = cosine_similarity(query_embedding, pattern_embedding)
+            lexical_score = self._lexical_similarity(question, pattern.question_text)
+            similarity = (semantic_score * 0.8) + (lexical_score * 0.2)
 
             if user_id and pattern.user_id and pattern.user_id != user_id:
-                similarity *= 0.7
+                similarity *= 0.85
+            if team_id and pattern.team_id == team_id:
+                similarity *= 1.05
+            if intent and pattern.intent == intent:
+                similarity *= 1.05
 
             if similarity > best_similarity:
                 best_similarity = similarity
                 best_match = pattern
 
-        if best_similarity >= self.SIMILARITY_THRESHOLD:
+        if best_match and best_similarity >= self.SIMILARITY_THRESHOLD:
             logger.info(
                 "pattern_found",
                 similarity=best_similarity,
@@ -161,7 +160,8 @@ class PatternLearningService:
         return None
 
     async def increment_usage(self, pattern_id: int) -> None:
-        """Increment usage count for a pattern"""
+        """Increment usage count for a pattern."""
+
         await self.session.execute(
             update(ResponsePattern)
             .where(ResponsePattern.id == pattern_id)
@@ -172,14 +172,12 @@ class PatternLearningService:
         )
 
     async def get_top_patterns(self, limit: int = 10) -> list[ResponsePattern]:
-        """Get most used patterns"""
+        """Get the most used active patterns."""
+
         result = await self.session.execute(
             select(ResponsePattern)
-            .where(ResponsePattern.is_active == True)
+            .where(ResponsePattern.is_active.is_(True))
             .order_by(ResponsePattern.usage_count.desc())
             .limit(limit)
         )
         return list(result.scalars().all())
-
-
-from sqlalchemy.sql import func

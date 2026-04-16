@@ -9,9 +9,8 @@ from src.core import InputPayload
 from src.memory import MemoryContext
 from src.llm import MultiProviderLLMClient, LLMResponse
 from src.db import async_session
-from src.knowledge import KnowledgeRetrievalService
-from typing import Optional
 import structlog
+from typing import Optional
 
 logger = structlog.get_logger()
 
@@ -139,4 +138,4 @@ Trả lời câu hỏi trên."""
             if any(kw in text_lower for kw in keywords):
                 return answer
 
-        return f"Tôi đang xử lý yêu cầu của bạn. Bạn cần hỗ trợ gì thêm?"
+        return "Tôi đang xử lý yêu cầu của bạn. Bạn cần hỗ trợ gì thêm?"

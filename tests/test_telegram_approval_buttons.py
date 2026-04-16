@@ -80,7 +80,8 @@ async def test_handle_callback_query_approves_and_edits_message(monkeypatch, sam
             return FakeResponse()
 
     class FakeHttpx:
-        AsyncClient = lambda self=None: FakeClient()
+        def AsyncClient(self, self_arg=None):
+            return FakeClient()
 
     monkeypatch.setattr("src.gateway.platforms.telegram.httpx", FakeHttpx())
 
@@ -137,7 +138,8 @@ async def test_handle_callback_query_rejects_with_default_comment(monkeypatch, s
             return FakeResponse()
 
     class FakeHttpx:
-        AsyncClient = lambda self=None: FakeClient()
+        def AsyncClient(self, self_arg=None):
+            return FakeClient()
 
     monkeypatch.setattr("src.gateway.platforms.telegram.httpx", FakeHttpx())
 

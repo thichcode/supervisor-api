@@ -1,13 +1,11 @@
 from datetime import datetime
 from typing import Optional
 
+import structlog
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
-import structlog
 
 from src.config import get_settings
-
-logger = structlog.get_logger()
 from src.core.approval import approval_service
 from src.core.schemas import (
     ApprovalActionRequest,
@@ -17,8 +15,10 @@ from src.core.schemas import (
     ApprovalStatus,
     ApprovalVoteRequest,
 )
-from src.db.models import ResponseLearningEvent
 from src.services.interaction_service import InteractionService
+from src.services.learning_events import record_learning_event
+
+logger = structlog.get_logger()
 
 router = APIRouter(prefix="/approvals", tags=["approvals"])
 settings = get_settings()
@@ -95,28 +95,27 @@ async def approve_or_reject(approval_id: str, action: ApprovalActionRequest):
                 ticket_system=approval.metadata.get("ticket_system"),
                 extra_metadata={**(approval.metadata or {}), "approval_id": approval.id, "approved_by": action.reviewed_by},
             )
-            session.add(
-                ResponseLearningEvent(
-                    request_id=approval.request_id,
-                    user_id=approval.user_id,
-                    thread_id=approval.metadata.get("thread_id"),
-                    ticket_id=approval.metadata.get("ticket_id"),
-                    ticket_system=approval.metadata.get("ticket_system"),
-                    event_type="approval_decision",
-                    event_payload={
-                        "approval_status": "approved",
-                        "reviewed_by": action.reviewed_by,
-                        "question": approval.original_message,
-                        "answer": approval.ai_response,
-                        "intent": approval.metadata.get("intent"),
-                        "team_id": approval.metadata.get("team_id"),
-                        "confidence_score": approval.confidence,
-                        "threshold": approval.threshold,
-                        "model_name": approval.metadata.get("model_name", settings.llm_model),
-                        "approval_id": approval.id,
-                        "request_id": approval.request_id,
-                    },
-                )
+            await record_learning_event(
+                session,
+                request_id=approval.request_id,
+                user_id=approval.user_id,
+                thread_id=approval.metadata.get("thread_id"),
+                ticket_id=approval.metadata.get("ticket_id"),
+                ticket_system=approval.metadata.get("ticket_system"),
+                event_type="approval_decision",
+                event_payload={
+                    "approval_status": "approved",
+                    "reviewed_by": action.reviewed_by,
+                    "question": approval.original_message,
+                    "answer": approval.ai_response,
+                    "intent": approval.metadata.get("intent"),
+                    "team_id": approval.metadata.get("team_id"),
+                    "confidence_score": approval.confidence,
+                    "threshold": approval.threshold,
+                    "model_name": approval.metadata.get("model_name", settings.llm_model),
+                    "approval_id": approval.id,
+                    "request_id": approval.request_id,
+                },
             )
 
             from src.services.pattern_learning_service import PatternLearningService
@@ -193,25 +192,24 @@ async def approve_or_reject(approval_id: str, action: ApprovalActionRequest):
                 ticket_system=approval.metadata.get("ticket_system"),
                 extra_metadata={**(approval.metadata or {}), "approval_id": approval.id, "rejected_by": action.reviewed_by},
             )
-            session.add(
-                ResponseLearningEvent(
-                    request_id=approval.request_id,
-                    user_id=approval.user_id,
-                    thread_id=approval.metadata.get("thread_id"),
-                    ticket_id=approval.metadata.get("ticket_id"),
-                    ticket_system=approval.metadata.get("ticket_system"),
-                    event_type="approval_decision",
-                    event_payload={
-                        "approval_status": "rejected",
-                        "reviewed_by": action.reviewed_by,
-                        "review_comment": action.comment,
-                        "confidence_score": approval.confidence,
-                        "threshold": approval.threshold,
-                        "model_name": approval.metadata.get("model_name", settings.llm_model),
-                        "approval_id": approval.id,
-                        "request_id": approval.request_id,
-                    },
-                )
+            await record_learning_event(
+                session,
+                request_id=approval.request_id,
+                user_id=approval.user_id,
+                thread_id=approval.metadata.get("thread_id"),
+                ticket_id=approval.metadata.get("ticket_id"),
+                ticket_system=approval.metadata.get("ticket_system"),
+                event_type="approval_decision",
+                event_payload={
+                    "approval_status": "rejected",
+                    "reviewed_by": action.reviewed_by,
+                    "review_comment": action.comment,
+                    "confidence_score": approval.confidence,
+                    "threshold": approval.threshold,
+                    "model_name": approval.metadata.get("model_name", settings.llm_model),
+                    "approval_id": approval.id,
+                    "request_id": approval.request_id,
+                },
             )
             await session.commit()
 
@@ -270,6 +268,25 @@ async def vote_on_approval(approval_id: str, vote_request: ApprovalVoteRequest):
             ticket_id=approval.metadata.get("ticket_id"),
             ticket_system=approval.metadata.get("ticket_system"),
             extra_metadata={**(approval.metadata or {}), "vote": vote_request.vote, "vote_feedback": vote_request.feedback},
+        )
+        await record_learning_event(
+            session,
+            request_id=approval.request_id,
+            user_id=vote_request.user_id,
+            thread_id=approval.metadata.get("thread_id"),
+            ticket_id=approval.metadata.get("ticket_id"),
+            ticket_system=approval.metadata.get("ticket_system"),
+            event_type="approval_vote",
+            event_payload={
+                "vote": vote_request.vote,
+                "feedback": vote_request.feedback,
+                "approval_status": approval.status.value if hasattr(approval.status, "value") else str(approval.status),
+                "confidence_score": approval.confidence,
+                "threshold": approval.threshold,
+                "model_name": approval.metadata.get("model_name", settings.llm_model),
+                "approval_id": approval.id,
+                "request_id": approval.request_id,
+            },
         )
         await session.commit()
 
