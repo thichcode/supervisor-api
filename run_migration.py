@@ -140,8 +140,8 @@ async def run_all_migrations(dry_run: bool = False):
     # Get all SQL files sorted by name
     migration_files = sorted(migrations_dir.glob("*.sql"))
     
-    # Filter out down migrations for regular runs
-    migration_files = [f for f in migration_files if "down.sql" not in f.name]
+    # Filter out down migrations and init.sql (init.sql is for initial setup only)
+    migration_files = [f for f in migration_files if "down.sql" not in f.name and f.name != "init.sql"]
     
     applied = await get_applied_migrations()
     
