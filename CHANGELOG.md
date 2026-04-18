@@ -112,10 +112,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### P1 - High Priority Features
 
-- **Structured LLM Output** (`src/llm/client_v2.py`)
-  - JSON mode for reliable parsing
-  - Built-in cost tracking per request
-  - Circuit breaker integration
+- **Multi-Provider LLM** (`src/llm/provider.py`, `src/llm/ensemble.py`)
+  - Ollama, Azure OpenAI, OpenAI support
+  - Model switching and fallback
+  - Cost tracking per request
   - Confidence scoring
 
 - **Prometheus Alert Rules** (`config/prometheus_alerts.yml`)

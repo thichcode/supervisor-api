@@ -22,10 +22,10 @@ The Supervisor API is a well-architected system with solid production features, 
 | Critical modules | 6/10 | CB 81%, DLQ 80%, Auth 55% |
 | API layer | 5/10 | app.py 56% coverage |
 | Memory layer | 3/10 | cache 28%, repository 22% |
-| LLM layer | 2/10 | client 37%, client_v2 0% (not tested) |
+| LLM layer | 2/10 | client 37%, ensemble 20% |
 
 **Key Gaps:**
-- `llm/client_v2.py`: 0% coverage - never tested
+- `llm/ensemble.py`: Low coverage - needs more tests
 - `memory/cache.py`: 28% coverage - Redis operations untested
 - `memory/repository.py`: 22% coverage - DB operations untested
 
@@ -172,15 +172,19 @@ The Supervisor API is a well-architected system with solid production features, 
 
 ### 🔴 Critical (Must Fix)
 
-1. **Test Coverage - llm/client_v2.py** (0% → 70%+)
-   - Critical: JSON mode, cost tracking, circuit breaker integration
-   - 155 statements untested
-
-2. **Test Coverage - memory/repository.py** (22% → 70%+)
+1. **Test Coverage - memory/repository.py** (22% → 70%+)
    - Critical: All DB operations untested
    - 78 statements untested
 
-3. **Type Safety - mypy errors** (283 → <50)
+2. **Test Coverage - memory/cache.py** (28% → 70%+)
+   - Critical: Redis operations need tests
+   - 62 statements untested
+
+3. **Test Coverage - llm/ensemble.py** (20% → 70%+)
+   - Critical: Ensemble logic needs tests
+   - 45 statements untested
+
+4. **Type Safety - mypy errors** (283 → <50)
    - Missing return type annotations
    - Untyped function calls in typed contexts
 
@@ -212,8 +216,9 @@ The Supervisor API is a well-architected system with solid production features, 
 ruff check src --fix
 
 # 2. Add critical tests
-python -m pytest tests/test_llm_client_v2.py  # Create this
 python -m pytest tests/test_memory_repository.py  # Create this
+python -m pytest tests/test_memory_cache.py  # Create this
+python -m pytest tests/test_llm_ensemble.py  # Create this
 
 # 3. Add type annotations
 python -m mypy src --strict  # Fix critical errors
