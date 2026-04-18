@@ -41,8 +41,6 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      ollama:
-        condition: service_started
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:
@@ -144,4 +142,3 @@ volumes:
   redis_data:
   prometheus_data:
   grafana_data:
-  ollama_data:
