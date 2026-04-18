@@ -20,7 +20,7 @@ services:
       - LLM_PROVIDER=${LLM_PROVIDER:-ollama}
       - LLM_MODEL=${LLM_MODEL:-Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf}
       # Point to llama.cpp running on the host network
-      - OLLAMA_BASE_URL=http://localhost:8088
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://localhost:8088}
       - OLLAMA_TIMEOUT=${OLLAMA_TIMEOUT:-320}
       - LLM_TEMPERATURE=${LLM_TEMPERATURE:-0.7}
       - LLM_MAX_TOKENS=${LLM_MAX_TOKENS:-2000}
