@@ -41,12 +41,22 @@ class DecisionEngine:
     def __init__(self, router=None):
         self.router = router or AdaptiveRouter()
     
+    def _is_low_risk_faq(
+        self,
+        intent: IntentClassification,
+        risk: RiskEvaluation,
+    ) -> bool:
+        return intent.intent == IntentType.FAQ and risk.risk_level == RiskLevel.LOW
+
     def should_use_subagents(
         self,
         intent: IntentClassification,
         risk: RiskEvaluation,
         payload: InputPayload,
     ) -> bool:
+        if self._is_low_risk_faq(intent, risk):
+            return False
+
         if intent.intent in [IntentType.POLICY, IntentType.SUPPORT_CASE, IntentType.ANALYSIS]:
             return True
 
@@ -69,6 +79,9 @@ class DecisionEngine:
         payload: InputPayload,
         confidence: float,
     ) -> bool:
+        if self._is_low_risk_faq(intent, risk):
+            return False
+
         if intent.intent == IntentType.EXECUTIVE_REQUEST:
             return True
 

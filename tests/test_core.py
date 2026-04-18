@@ -231,6 +231,20 @@ class TestQAAgent:
         assert "Người dùng" in result or "user" in result.lower() or "thank" in result.lower()
 
 
+class TestDecisionEngine:
+    def test_low_risk_faq_uses_fast_path(self, sample_payload):
+        from src.core import IntentClassification, RiskEvaluation
+        from src.core.supervisor import DecisionEngine
+
+        engine = DecisionEngine()
+        sample_payload.message.text = "What is the VPN service?"
+        intent = IntentClassification(intent=IntentType.FAQ, confidence=0.42)
+        risk = RiskEvaluation(risk_level=RiskLevel.LOW)
+
+        assert engine.should_use_subagents(intent, risk, sample_payload) is False
+        assert engine.needs_human_review(intent, risk, sample_payload, confidence=0.38) is False
+
+
 class TestSupervisor:
     @pytest.mark.asyncio
     async def test_direct_answer_path(self, sample_payload, sample_context):

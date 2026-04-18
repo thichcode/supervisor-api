@@ -208,7 +208,7 @@ class ResponseLearningEvent(Base):
     dedupe_key = Column(String(64), nullable=True, unique=True, index=True)
     event_payload = Column(JSON, nullable=False, default=dict)
     processed = Column(Boolean, default=False, index=True)
-    claimed_at = Column(DateTime, nullable=True, index=True)
+    claimed_at = Column(DateTime(timezone=True), nullable=True, index=True)
     claimed_by = Column(String(100), nullable=True, index=True)
     created_at = Column(DateTime, default=func.now())
     processed_at = Column(DateTime, nullable=True)
