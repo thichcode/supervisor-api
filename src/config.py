@@ -55,6 +55,9 @@ class Settings(BaseSettings):
     mempalace_circuit_timeout_seconds: float = 30.0
     file_memory_enabled: bool = False
     file_memory_path: str = ""
+    
+    # Extra hosts for Docker (e.g., host.docker.internal:host-gateway)
+    extra_hosts: list[str] = ["host.docker.internal:host-gateway"]
 
     # LLM Provider Configuration
     llm_provider: str = ""  # "ollama", "openai", or "azure" (auto-detect if empty)
