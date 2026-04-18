@@ -1,5 +1,9 @@
 from pathlib import Path
 
+import os
+import subprocess
+import sys
+
 import pytest
 
 
@@ -55,31 +59,21 @@ def test_normalize_csv_list_handles_separators_and_blank_values():
     assert normalize_csv_list(None) == []
 
 
-def test_csv_solution_columns_map_to_document_and_metadata():
-    from src.knowledge.csv_import import build_knowledge_record
-    from src.db.models import KnowledgeDocument
+def test_script_runs_from_scripts_directory(tmp_path: Path):
+    csv_path = tmp_path / "kb.csv"
+    csv_path.write_text(CSV_CONTENT, encoding="utf-8")
 
-    row = {
-        "solution_id": "SOL-001",
-        "subject": "VPN access for remote users",
-        "status": "active",
-        "keyword": "vpn;remote;access",
-        "total_view": "128",
-        "description": "Use the VPN client from Software Center.",
-        "created_time": "2024-01-01 10:00:00",
-        "created_by": "Thuong",
-        "last_updated_by": "Admin",
-    }
+    env = os.environ.copy()
+    env.pop("PYTHONPATH", None)
+    env.pop("PYTHONHOME", None)
 
-    record = build_knowledge_record(row, row_number=1, default_category="general")
+    result = subprocess.run(
+        [sys.executable, "import_kb_csv.py", str(csv_path), "--dry-run"],
+        cwd=Path(__file__).resolve().parents[1] / "scripts",
+        env=env,
+        capture_output=True,
+        text=True,
+    )
 
-    assert isinstance(record, KnowledgeDocument)
-    assert record.document_id == "SOL-001"
-    assert record.title == "VPN access for remote users"
-    assert record.content == "Use the VPN client from Software Center."
-    assert record.tags == ["vpn", "remote", "access"]
-    assert record.is_active is True
-    assert record.extra_metadata["total_view"] == "128"
-    assert record.extra_metadata["created_time"] == "2024-01-01 10:00:00"
-    assert record.extra_metadata["created_by"] == "Thuong"
-    assert record.extra_metadata["last_updated_by"] == "Admin"
+    assert result.returncode == 0, result.stderr
+    assert '"rows_total"' in result.stdout

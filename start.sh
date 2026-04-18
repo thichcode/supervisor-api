@@ -48,6 +48,12 @@ if ! docker ps | grep -q postgres; then
     sleep 5
 fi
 
+# Run migrations
+echo -e "${YELLOW}Running database migrations...${NC}"
+cd /tmp/supervisor-api
+source /tmp/supervisor-venv/bin/activate
+python run_migration.py --check
+
 # Check if supervisor is already running
 if pgrep -f "uvicorn src.api.app" > /dev/null; then
     echo -e "${YELLOW}supervisor-api is already running${NC}"
