@@ -84,9 +84,40 @@ async def run_migration_file(file_path: str, dry_run: bool = False):
     # Execute migration
     async with async_session() as session:
         try:
-            # Execute entire SQL file as single statement 
-            # (handles DO $$ blocks and BEGIN...COMMIT correctly)
-            await session.execute(text(sql))
+            # Split SQL by semicolon, but handle DO $$ blocks as single unit
+            # Remove comments first
+            lines = []
+            for line in sql.split('\n'):
+                # Skip single-line comments
+                if line.strip().startswith('--'):
+                    continue
+                lines.append(line)
+            clean_sql = '\n'.join(lines)
+            
+            # Split by semicolon, but track DO $$ blocks
+            statements = []
+            current_stmt = []
+            in_dollar = False
+            in_begin = False
+            
+            for part in clean_sql.split(';'):
+                if 'DO $$' in part or 'DO$' in part:
+                    in_dollar = True
+                if in_dollar:
+                    current_stmt.append(part + ';')
+                    if 'END $$' in part or 'END$' in part:
+                        in_dollar = False
+                        statements.append(''.join(current_stmt))
+                        current_stmt = []
+                else:
+                    if part.strip():
+                        statements.append(part)
+            
+            # Execute each statement
+            for stmt in statements:
+                stmt = stmt.strip()
+                if stmt:
+                    await session.execute(text(stmt))
             
             # Record migration
             await session.execute(text(
