@@ -257,21 +257,35 @@ def build_knowledge_record(
             is_active=is_active,
         )
 
-    document_id = _pick(row, "document_id", "doc_id", "id", "record_id", default=f"doc_csv_{row_number}")
-    title = _pick(row, "title", "name", "question", default=document_id)
-    content = html_to_plain_text(_pick(row, "content", "body", "answer", "text"))
+    document_id = _pick(
+        row,
+        "document_id",
+        "doc_id",
+        "solution_id",
+        "id",
+        "record_id",
+        default=f"doc_csv_{row_number}",
+    )
+    title = _pick(row, "title", "subject", "name", "question", default=document_id)
+    content = html_to_plain_text(_pick(row, "content", "description", "body", "answer", "text"))
     if not content:
         content = title
     document_type = _pick(row, "document_type", "file_type", "extension", default="document")
     file_url = _pick(row, "file_url", "url", "source_url") or None
-    extra_metadata = _row_base_metadata(row, row_number, source_name)
+    extra_metadata = {
+        **_row_base_metadata(row, row_number, source_name),
+        "total_view": _pick(row, "total_view"),
+        "created_time": _pick(row, "created_time", "created_at"),
+        "created_by": _pick(row, "created_by"),
+        "last_updated_by": _pick(row, "last_updated_by", "updated_by"),
+    }
     return KnowledgeDocument(
         document_id=document_id,
         title=title,
         content=content,
         document_type=document_type,
         category=category,
-        tags=normalize_csv_list(_pick(row, "tags")),
+        tags=normalize_csv_list(_pick(row, "tags", "keyword", "keywords")),
         file_url=file_url,
         extra_metadata=extra_metadata,
         is_active=is_active,

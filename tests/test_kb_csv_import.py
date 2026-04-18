@@ -55,20 +55,31 @@ def test_normalize_csv_list_handles_separators_and_blank_values():
     assert normalize_csv_list(None) == []
 
 
-def test_html_content_is_converted_to_plain_text_before_model_creation():
-    from src.knowledge.csv_import import build_knowledge_record, html_to_plain_text
-
-    html = "<p>Chính sách <b>nghỉ phép</b> áp dụng cho <a href='x'>nhân viên</a>.</p><ul><li>12 ngày/năm</li></ul>"
-    assert html_to_plain_text(html) == "Chính sách nghỉ phép áp dụng cho nhân viên.\n12 ngày/năm"
+def test_csv_solution_columns_map_to_document_and_metadata():
+    from src.knowledge.csv_import import build_knowledge_record
+    from src.db.models import KnowledgeDocument
 
     row = {
-        "knowledge_type": "faq",
-        "title": "Nghỉ phép là gì?",
-        "content": html,
-        "category": "hr",
-        "tags": "leave;policy",
-        "keywords": "nghỉ phép;leave",
-        "is_active": "true",
+        "solution_id": "SOL-001",
+        "subject": "VPN access for remote users",
+        "status": "active",
+        "keyword": "vpn;remote;access",
+        "total_view": "128",
+        "description": "Use the VPN client from Software Center.",
+        "created_time": "2024-01-01 10:00:00",
+        "created_by": "Thuong",
+        "last_updated_by": "Admin",
     }
+
     record = build_knowledge_record(row, row_number=1, default_category="general")
-    assert record.answer == "Chính sách nghỉ phép áp dụng cho nhân viên.\n12 ngày/năm"
+
+    assert isinstance(record, KnowledgeDocument)
+    assert record.document_id == "SOL-001"
+    assert record.title == "VPN access for remote users"
+    assert record.content == "Use the VPN client from Software Center."
+    assert record.tags == ["vpn", "remote", "access"]
+    assert record.is_active is True
+    assert record.extra_metadata["total_view"] == "128"
+    assert record.extra_metadata["created_time"] == "2024-01-01 10:00:00"
+    assert record.extra_metadata["created_by"] == "Thuong"
+    assert record.extra_metadata["last_updated_by"] == "Admin"
