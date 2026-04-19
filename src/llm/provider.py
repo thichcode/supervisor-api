@@ -311,6 +311,62 @@ class MultiProviderLLMClient:
 
         logger.info("Model switched", model=model, provider=new_provider.value)
 
+    def set_base_url(self, provider: str, url: str):
+        """Set custom base URL for a provider.
+        
+        Args:
+            provider: Provider name ("ollama", "openai", "azure")
+            url: Base URL (e.g., "http://localhost:8088" for llama.cpp)
+        """
+        provider_upper = provider.upper()
+        try:
+            prov = LLMProvider[provider_upper]
+        except KeyError:
+            logger.warning("Unknown provider for set_base_url", provider=provider)
+            return
+
+        # Update base URL based on provider
+        if prov == LLMProvider.OLLAMA:
+            self._ollama_base_url = url.rstrip('/')
+            # Force client recreation on next call
+            if prov in self._clients:
+                del self._clients[prov]
+            logger.info("Ollama base URL updated", url=self._ollama_base_url)
+        else:
+            # For OpenAI/Azure, we need to recreate client with new base_url
+            if prov in self._clients:
+                del self._clients[prov]
+            # Get API key from settings or use placeholder
+            api_key = "not-provided"
+            if prov == LLMProvider.OPENAI:
+                api_key = getattr(self._settings, 'openai_api_key', None) or "not-provided"
+            elif prov == LLMProvider.AZURE:
+                api_key = getattr(self._settings, 'azure_openai_key', None) or "not-provided"
+            
+            self._clients[prov] = AsyncOpenAI(
+                base_url=f"{url.rstrip('/')}/v1",
+                api_key=api_key,
+                timeout=self._timeout,
+            )
+            logger.info("Custom base URL set", provider=provider, url=url)
+
+    def reset_circuit_breaker(self, provider: str = None):
+        """Reset circuit breaker state.
+        
+        Args:
+            provider: Optional provider name. If None, resets all.
+        """
+        if provider:
+            # Reset specific provider - this would require storing per-provider breakers
+            # For now, just log and reset the main one
+            logger.info("Circuit breaker reset requested", provider=provider)
+        
+        # Reset the main circuit breaker
+        self._circuit_breaker._state = "closed"
+        self._circuit_breaker._failure_count = 0
+        self._circuit_breaker.metrics = CircuitBreakerMetrics()
+        logger.info("Circuit breaker reset", name="multi_llm_client")
+
     def get_available_models(self) -> dict:
         """Get all available models info"""
         return VIETNAMESE_MODELS.copy()
