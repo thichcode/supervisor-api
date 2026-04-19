@@ -224,9 +224,15 @@ class GatewayRunner:
 
 async def start_gateway(platforms: Optional[List[str]] = None):
     """Start the gateway"""
-    config = GatewayConfig()
-    runner = GatewayRunner(config)
-    
+    runner = GatewayRunner()
+    logger.info(
+        "Gateway runner initialized",
+        telegram_token_present=bool(runner.config.telegram_token),
+        discord_token_present=bool(runner.config.discord_token),
+        slack_token_present=bool(runner.config.slack_token),
+        supervisor_url=runner.config.supervisor_url,
+    )
+
     if platforms:
         for p in platforms:
             await runner.start_platform(p)
