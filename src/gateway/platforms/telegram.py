@@ -105,6 +105,7 @@ class TelegramAdapter:
                     
                     me = resp.json()
                     logger.info("Telegram bot started", username=me.get("result", {}).get("username"))
+                    await self._register_bot_commands()
                     
         except Exception as e:
             logger.error("Failed to start Telegram", error=str(e))
@@ -125,6 +126,36 @@ class TelegramAdapter:
             except asyncio.CancelledError:
                 pass
     
+    async def _register_bot_commands(self):
+        """Register the Telegram command menu so /health appears in the client UI."""
+        commands = [
+            {"command": "start", "description": "Start the bot"},
+            {"command": "help", "description": "Show available commands"},
+            {"command": "health", "description": "Check bot and supervisor health"},
+            {"command": "history", "description": "View history guidance"},
+            {"command": "clear", "description": "Clear chat history"},
+        ]
+
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(
+                    f"{self.api_base}/setMyCommands",
+                    json={"commands": commands},
+                    timeout=10.0,
+                )
+                if resp.status_code != 200:
+                    logger.warning("Failed to register Telegram commands", status=resp.status_code)
+                    return False
+                data = resp.json()
+                if not data.get("ok", False):
+                    logger.warning("Telegram commands registration returned not ok", response=data)
+                    return False
+                logger.info("Telegram commands registered", commands=[c["command"] for c in commands])
+                return True
+        except Exception as e:
+            logger.error("Failed to register Telegram commands", error=str(e))
+            return False
+
     async def _poll_loop(self):
         """Poll for updates"""
         while self.is_running:

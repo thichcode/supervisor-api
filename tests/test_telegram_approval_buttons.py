@@ -52,6 +52,54 @@ def test_build_approval_inline_keyboard_has_approve_and_reject_buttons(sample_ap
 
 
 @pytest.mark.asyncio
+async def test_register_bot_commands_includes_health(monkeypatch):
+    adapter = TelegramAdapter(
+        token="bot-token",
+        session_store=object(),
+        supervisor_url="http://localhost:8000",
+        api_key=None,
+    )
+
+    calls = []
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"ok": True, "result": True}
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, url, json=None, headers=None, timeout=None):
+            calls.append((url, json, headers, timeout))
+            return FakeResponse()
+
+        async def get(self, url, params=None, timeout=None):
+            if url.endswith("/getMe"):
+                return FakeResponse()
+            raise AssertionError(f"Unexpected GET {url}")
+
+    class FakeHttpx:
+        def AsyncClient(self, self_arg=None):
+            return FakeClient()
+
+    monkeypatch.setattr("src.gateway.platforms.telegram.httpx", FakeHttpx())
+
+    await adapter._register_bot_commands()
+
+    assert calls, "Expected setMyCommands to be called"
+    url, payload, headers, timeout = calls[0]
+    assert url.endswith("/setMyCommands")
+    assert any(cmd["command"] == "health" for cmd in payload["commands"])
+    assert any(cmd["command"] == "help" for cmd in payload["commands"])
+
+
+@pytest.mark.asyncio
 async def test_handle_callback_query_approves_and_edits_message(monkeypatch, sample_approval):
     adapter = TelegramAdapter(
         token="bot-token",
