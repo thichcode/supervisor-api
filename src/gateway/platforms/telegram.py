@@ -100,7 +100,11 @@ class TelegramAdapter:
                 async with httpx.AsyncClient() as client:
                     resp = await client.get(f"{self.api_base}/getMe")
                     if resp.status_code != 200:
-                        logger.error("Telegram auth failed", status=resp.status_code)
+                        logger.error(
+                            "Telegram auth failed",
+                            status=resp.status_code,
+                            body=resp.text[:500],
+                        )
                         return
                     
                     me = resp.json()
@@ -108,7 +112,12 @@ class TelegramAdapter:
                     await self._register_bot_commands()
                     
         except Exception as e:
-            logger.error("Failed to start Telegram", error=str(e))
+            logger.error(
+                "Failed to start Telegram",
+                error=str(e),
+                error_type=type(e).__name__,
+                error_repr=repr(e),
+            )
             return
         
         self.is_running = True
