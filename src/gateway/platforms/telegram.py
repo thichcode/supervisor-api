@@ -259,15 +259,53 @@ class TelegramAdapter:
         if cmd == "/start":
             await self._send_message(chat_id, "Xin chào! Tôi là Supervisor Agent. Gửi tin nhắn để được hỗ trợ.")
         elif cmd == "/help":
-            await self._send_message(chat_id, "Commands:\n/start - Start\n/help - Help\n/history - View history")
+            await self._send_message(chat_id, "Commands:\n/start - Start\n/help - Help\n/health - Check bot and supervisor health\n/history - View history")
         elif cmd == "/history":
             await self._send_message(chat_id, "Use /clear to clear history")
+        elif cmd == "/health":
+            await self._handle_health_command(chat_id)
         elif cmd == "/clear":
             session_id = f"telegram_{user_id}"
             self.session_store.clear_history(session_id)
             await self._send_message(chat_id, "History cleared!")
         else:
             await self._send_message(chat_id, f"Unknown command: {command}")
+
+    async def _handle_health_command(self, chat_id: str):
+        """Check gateway and supervisor health."""
+        status_lines = ["Bot health: online"]
+        supervisor_ok = False
+        supervisor_ready = False
+        
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(f"{self.supervisor_url}/health", timeout=10.0)
+                supervisor_ok = resp.status_code == 200
+                if supervisor_ok:
+                    data = resp.json()
+                    status_lines.append(f"Supervisor: {data.get('status', 'unknown')}")
+                    status_lines.append(f"Model: {data.get('llm_model', 'N/A')}")
+                else:
+                    status_lines.append(f"Supervisor: error {resp.status_code}")
+
+                ready_resp = await client.get(f"{self.supervisor_url}/health/ready", timeout=10.0)
+                supervisor_ready = ready_resp.status_code == 200
+                if supervisor_ready:
+                    ready_data = ready_resp.json()
+                    status_lines.append(f"Readiness: {ready_data.get('status', 'unknown')}")
+                else:
+                    status_lines.append(f"Readiness: error {ready_resp.status_code}")
+        except Exception as e:
+            status_lines.append(f"Supervisor: unreachable ({str(e)})")
+
+        if supervisor_ok and supervisor_ready:
+            status_lines.append("Overall: healthy")
+        elif supervisor_ok:
+            status_lines.append("Overall: degraded")
+        else:
+            status_lines.append("Overall: down")
+
+        await self._send_message(chat_id, "\n".join(status_lines))
     
     async def _handle_kb_search(self, chat_id: str, user_id: str, keywords: str, approval_id: str):
         """Handle KB search with keywords and generate new response."""
