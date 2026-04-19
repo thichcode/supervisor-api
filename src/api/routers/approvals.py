@@ -360,3 +360,140 @@ Tạo câu trả lời mới dựa trên thông tin KB."""
     except Exception as e:
         logger.error("KB search retry failed", error=str(e), approval_id=approval_id)
         raise HTTPException(status_code=500, detail=f"KB search failed: {str(e)}")
+
+
+# Telegram Webhook for callback queries
+TG_ROUTER = APIRouter(prefix="/telegram", tags=["telegram"])
+
+
+class TelegramCallbackUpdate(BaseModel):
+    """Telegram callback query payload"""
+    callback_query: dict
+
+
+@TG_ROUTER.post("/webhook", response_model=dict, include_in_schema=True)
+async def telegram_webhook(update: TelegramCallbackUpdate):
+    """Handle Telegram callback queries from inline keyboard buttons."""
+    return await handle_telegram_callback(update.callback_query)
+
+
+async def handle_telegram_callback(callback: dict) -> dict:
+    """Handle Telegram callback queries - extracted for direct calling."""
+    import httpx
+    
+    # callback is now the direct parameter
+    data = callback.get("data", "")
+    callback_id = callback.get("id")
+    message = callback.get("message", {})
+    chat = message.get("chat", {})
+    chat_id = str(chat.get("id"))
+    message_id = message.get("message_id")
+    actor = callback.get("from", {}).get("first_name") or callback.get("from", {}).get("username") or "Unknown"
+    
+    # Parse callback data (format: "approval:action:approval_id")
+    parts = data.split(":")
+    if len(parts) != 3 or parts[0] != "approval":
+        await _answer_callback_query(callback_id, "Invalid callback data")
+        return {"status": "error"}
+    
+    action = parts[1]
+    approval_id = parts[2]
+    if action not in ("approve", "reject", "search_kb"):
+        await _answer_callback_query(callback_id, "Unknown action")
+        return {"status": "error"}
+    
+    # Call approval action via API
+    try:
+        import src.api as api_module
+        async with api_module.async_session() as session:
+            from src.api.routers.approvals import approve_or_reject, ApprovalActionRequest
+            
+            approval = await approval_service.get_approval(approval_id)
+            if not approval:
+                await _answer_callback_query(callback_id, "Approval not found", show_alert=True)
+                return {"status": "error", "message": "Approval not found"}
+            
+            if action in ("approve", "reject"):
+                action_req = ApprovalActionRequest(
+                    action=action,
+                    reviewed_by=actor,
+                    comment=f"Via Telegram callback by {actor}"
+                )
+                await approve_or_reject(approval_id, action_req)
+                
+                status_text = "✅ Approved" if action == "approve" else "🚫 Rejected"
+                await _answer_callback_query(callback_id, f"{status_text} successfully")
+                await _edit_message(chat_id, message_id, f"{status_text} by {actor}\nApproval: {approval_id}")
+                return {"status": "ok", "action": action, "approval_id": approval_id}
+            
+            elif action == "search_kb":
+                import src.api as api_module
+                
+                # Extract keywords from the approval payload
+                keywords = (
+                    (approval.original_message or "")[:100]
+                    or (approval.ai_response or "")[:100]
+                    or approval.metadata.get("title", "")[:100]
+                    or approval.metadata.get("description", "")[:100]
+                    or "IT service"
+                )
+                
+                # Search KB using the active supervisor instance
+                supervisor = api_module.supervisor
+                results = supervisor._search_knowledge_bm25(keywords, kb_type="knowledge")
+                results_text = "\n\n".join([
+                    f"• {r.get('title', 'Untitled')}\n  {r.get('content', '')[:200]}..."
+                    for r in results[:5]
+                ]) if results else "Không tìm thấy kết quả"
+                
+                # Update message with search results
+                await _answer_callback_query(callback_id, "Tìm thấy kết quả KB", show_alert=True)
+                await _edit_message(chat_id, message_id, 
+                    f"🔍 Kết quả tìm kiếm cho '{keywords}'\n\n{results_text}\n\nApproval: {approval_id}")
+                return {"status": "ok", "action": "search_kb", "approval_id": approval_id, "results_count": len(results)}
+                
+    except Exception as e:
+        logger.error("Telegram callback failed", error=str(e))
+        await _answer_callback_query(callback_id, f"Error: {str(e)}", show_alert=True)
+        return {"status": "error", "message": str(e)}
+
+
+async def _answer_callback_query(callback_id: str, text: str, show_alert: bool = False):
+    """Answer Telegram callback query."""
+    import httpx
+    import src.api as api_module
+    
+    settings = get_settings()
+    if not settings.telegram_bot_token:
+        return
+    
+    endpoint = f"https://api.telegram.org/bot{settings.telegram_bot_token}/answerCallbackQuery"
+    try:
+        async with httpx.AsyncClient() as client:
+            await client.post(endpoint, json={
+                "callback_query_id": callback_id,
+                "text": text,
+                "show_alert": show_alert
+            })
+    except Exception as e:
+        logger.warning("Failed to answer callback query", error=str(e))
+
+
+async def _edit_message(chat_id: str, message_id: int, text: str):
+    """Edit Telegram message text."""
+    import httpx
+    
+    settings = get_settings()
+    if not settings.telegram_bot_token:
+        return
+    
+    endpoint = f"https://api.telegram.org/bot{settings.telegram_bot_token}/editMessageText"
+    try:
+        async with httpx.AsyncClient() as client:
+            await client.post(endpoint, json={
+                "chat_id": chat_id,
+                "message_id": message_id,
+                "text": text
+            })
+    except Exception as e:
+        logger.warning("Failed to edit message", error=str(e))

@@ -30,6 +30,7 @@ from src.memory.service import MemoryService
 from src.services.feedback_learning_worker import FeedbackReplayWorker
 from src.api.routers.admin import router as admin_router
 from src.api.routers.approvals import router as approvals_router
+from src.api.routers.approvals import TG_ROUTER as tg_router
 from src.api.routers.chat import router as chat_router
 from src.api.routers.delivery import router as delivery_router
 from src.api.routers.feedback import router as feedback_router
@@ -133,6 +134,7 @@ app.add_middleware(
 app.include_router(health_router)
 app.include_router(admin_router)
 app.include_router(approvals_router)
+app.include_router(tg_router)
 app.include_router(chat_router)
 app.include_router(delivery_router)
 app.include_router(feedback_router)
@@ -142,6 +144,14 @@ app.include_router(knowledge_files_router)
 app.include_router(monitoring_router)
 app.include_router(harness_router)
 app.include_router(system_router)
+
+
+# Telegram callback endpoint (direct)
+@app.post("/telegram-callback", tags=["telegram"])
+async def telegram_callback(update: dict):
+    """Handle Telegram callback queries directly."""
+    from src.api.routers.approvals import handle_telegram_callback
+    return await handle_telegram_callback(update)
 
 
 
@@ -229,8 +239,6 @@ async def send_to_power_automate(payload: OutputPayload):
     except httpx.HTTPError:
         metrics.record_error("power_automate", "output/power-automate")
         raise HTTPException(status_code=502, detail="Failed to reach Power Automate")
-
-
 # NEW: Auto-send helper for integrated sending
 async def _auto_send_to_power_automate(payload: OutputPayload) -> bool:
     """Auto-send response to Power Automate (called automatically after chat)"""
