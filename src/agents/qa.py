@@ -9,6 +9,13 @@ class DraftAgent:
         style = (user_info.get("communication_style") or "").lower()
         preferences = user_info.get("preferences", {}) or {}
         style_profile = preferences.get("style_profile", {}) if isinstance(preferences, dict) else {}
+        response_persona_hint = (
+            preferences.get("response_persona_hint")
+            or style_profile.get("response_persona_hint")
+            or user_info.get("response_persona_hint")
+            if isinstance(preferences, dict)
+            else user_info.get("response_persona_hint")
+        )
         parts = []
 
         if style == "structured":
@@ -29,6 +36,8 @@ class DraftAgent:
             parts.append("Nếu phù hợp, trình bày theo danh sách bước.")
         if signals.get("has_bullets"):
             parts.append("Ưu tiên định dạng gạch đầu dòng.")
+        if response_persona_hint:
+            parts.append(f"Persona học được: {response_persona_hint}")
 
         return " ".join(parts)
 

@@ -20,7 +20,7 @@ APPROVAL_TTL = 86400 * 7  # 7 days
 
 class ApprovalService:
     def __init__(self):
-        self.default_threshold = 0.3  # Only require approval if very low confidence
+        self.default_threshold = 0.5  # Approval is required for medium-confidence responses
     
     async def create_approval(
         self,
@@ -281,8 +281,14 @@ class ApprovalService:
         
         return approval
     
-    async def needs_approval(self, confidence: float) -> bool:
-        return confidence < self.default_threshold
+    async def needs_approval(self, confidence: float, kb_hit: bool = False) -> bool:
+        if confidence < 0.5:
+            return False
+
+        if confidence >= 0.9:
+            return False
+
+        return True
     
     async def get_pending_count(self) -> int:
         approvals = await self.get_pending_approvals()

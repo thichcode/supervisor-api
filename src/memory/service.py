@@ -55,6 +55,17 @@ class MemoryContext:
             parts.append(f"\n=== User Profile ===\n{self.user_profile.get('display_name', 'Unknown')}")
             if self.user_profile.get("role"):
                 parts.append(f"Role: {self.user_profile['role']}")
+            if self.user_profile.get("communication_style"):
+                parts.append(f"Communication Style: {self.user_profile['communication_style']}")
+            prefs = self.user_profile.get("preferences", {}) if isinstance(self.user_profile.get("preferences", {}), dict) else {}
+            style_profile = prefs.get("style_profile", {}) if isinstance(prefs, dict) else {}
+            persona_hint = (
+                prefs.get("response_persona_hint")
+                or style_profile.get("response_persona_hint")
+                or self.user_profile.get("response_persona_hint")
+            )
+            if persona_hint:
+                parts.append(f"Persona Hint: {persona_hint}")
         if self.case_memory:
             parts.append(f"\n=== Case Memory ===\n{self.case_memory.get('summary', 'No summary')}")
         if self.episodic_memory:
@@ -148,6 +159,24 @@ class MemoryService:
         }
         return style, signals
 
+    def _build_response_persona_hint(self, style: str, signals: dict) -> str:
+        parts = [f"style={style}"]
+        if signals.get("has_formal_markers"):
+            parts.append("tone=formal")
+        if signals.get("has_casual_markers"):
+            parts.append("tone=casual")
+        if signals.get("has_detail_markers"):
+            parts.append("verbosity=detailed")
+        if signals.get("has_short_markers"):
+            parts.append("verbosity=concise")
+        if signals.get("has_numbered_steps"):
+            parts.append("format=numbered_steps")
+        if signals.get("has_bullets"):
+            parts.append("format=bullets")
+        if signals.get("has_detail_markers") or signals.get("word_count", 0) > 24:
+            parts.append("explain_key_steps")
+        return ", ".join(parts)
+
     async def retrieve(self, payload: InputPayload) -> MemoryContext:
         thread_id = payload.conversation.thread_id
         user_id = payload.user.id
@@ -166,6 +195,12 @@ class MemoryService:
         user_profile_model = await self.repo.get_user_profile(user_id)
         user_profile = None
         if user_profile_model:
+            preferences = dict(user_profile_model.preferences or {})
+            style_profile = preferences.get("style_profile", {}) if isinstance(preferences, dict) else {}
+            response_persona_hint = (
+                preferences.get("response_persona_hint")
+                or (style_profile.get("response_persona_hint") if isinstance(style_profile, dict) else None)
+            )
             user_profile = {
                 "user_id": user_profile_model.user_id,
                 "display_name": user_profile_model.display_name,
@@ -173,8 +208,10 @@ class MemoryService:
                 "team": user_profile_model.team,
                 "vip_flag": user_profile_model.vip_flag,
                 "communication_style": user_profile_model.communication_style,
-                "preferences": user_profile_model.preferences,
+                "preferences": preferences,
             }
+            if response_persona_hint:
+                user_profile["response_persona_hint"] = response_persona_hint
             if not user_profile_model.display_name:
                 user_profile["display_name"] = payload.user.display_name
 
@@ -312,9 +349,11 @@ class MemoryService:
                     if style == "balanced":
                         style = None
                     else:
+                        response_persona_hint = self._build_response_persona_hint(style, signals)
                         style_profile = {
                             "communication_style": style,
                             "style_signals": signals,
+                            "response_persona_hint": response_persona_hint,
                             "source": "user_id_history",
                             "sample_count": len(user_messages),
                         }

@@ -152,8 +152,8 @@ class ChatService:
                 model_provider=(result.metadata or {}).get("model_provider"),
                 model_name=(result.metadata or {}).get("model_name") or settings.llm_model,
                 kb_sources=(result.metadata or {}).get("kb_sources", []),
-                approval_required=False,
-                approval_status="not_needed",
+                approval_required=result.status == "needs_review",
+                approval_status="pending" if result.status == "needs_review" else "not_needed",
                 processing_latency_ms=(result.metadata or {}).get("processing_time_ms"),
                 outcome_status=result.status,
                 ticket_id=request.ticket_id,
@@ -166,8 +166,7 @@ class ChatService:
         if group_chat_metadata:
             result.metadata = {**(result.metadata or {}), **group_chat_metadata}
 
-        needs_approval = await approval_service.needs_approval(result.confidence)
-        if needs_approval:
+        if result.status == "needs_review":
             approval = await approval_service.create_approval(
                 request_id=request_id,
                 user_id=request.user_id,
@@ -230,7 +229,7 @@ class ChatService:
                 message=f"⚠️ Phản hồi AI (confidence: {result.confidence:.0%}) cần được duyệt trước khi gửi cho user.",
                 message_type=request.message_type,
                 confidence=result.confidence,
-                metadata={**result.metadata, "approval_id": approval.id, "approval_required": True, "threshold": 0.9},
+                metadata={**result.metadata, "approval_id": approval.id, "approval_required": True, "threshold": 0.5},
             )
 
         if result.status == "completed" and settings.power_automate_webhook_url and auto_send_callback:
@@ -295,8 +294,8 @@ class ChatService:
                 model_provider=(result.metadata or {}).get("model_provider"),
                 model_name=(result.metadata or {}).get("model_name") or settings.llm_model,
                 kb_sources=(result.metadata or {}).get("kb_sources", []),
-                approval_required=False,
-                approval_status="not_needed",
+                approval_required=result.status == "needs_review",
+                approval_status="pending" if result.status == "needs_review" else "not_needed",
                 processing_latency_ms=(result.metadata or {}).get("processing_time_ms"),
                 outcome_status=result.status,
                 ticket_id=request.ticket_id,
@@ -308,8 +307,7 @@ class ChatService:
         harness_metrics = result.metadata.get("harness_metrics") if hasattr(result, "metadata") else {}
         harness_evaluation = result.metadata.get("harness_evaluation") if hasattr(result, "metadata") else {}
 
-        needs_approval = await approval_service.needs_approval(result.confidence)
-        if needs_approval:
+        if result.status == "needs_review":
             approval = await approval_service.create_approval(
                 request_id=request_id,
                 user_id=request.user_id,
@@ -370,7 +368,7 @@ class ChatService:
                 message=f"⚠️ Phản hồi AI (confidence: {result.confidence:.0%}) cần được duyệt trước khi gửi cho user.\n\nHarness: {harness_metrics.get('execution_id', 'N/A') if harness_metrics else 'N/A'}",
                 message_type=request.message_type,
                 confidence=result.confidence,
-                metadata={**result.metadata, "approval_id": approval.id, "approval_required": True, "threshold": 0.9, "harness_metrics": harness_metrics, "harness_evaluation": harness_evaluation},
+                metadata={**result.metadata, "approval_id": approval.id, "approval_required": True, "threshold": 0.5, "harness_metrics": harness_metrics, "harness_evaluation": harness_evaluation},
             )
 
         if result.status == "completed" and settings.power_automate_webhook_url and auto_send_callback:

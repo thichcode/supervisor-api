@@ -152,8 +152,18 @@ def test_memory_context_includes_external_memory_in_dict_and_text():
     context = MemoryContext(
         conversation_summary="summary",
         recent_messages=["a"],
+        user_profile={
+            "display_name": "Thuong",
+            "preferences": {
+                "response_persona_hint": "style=concise, tone=formal",
+                "style_profile": {
+                    "response_persona_hint": "style=concise, tone=formal",
+                },
+            },
+        },
         external_memory=[{"content": "external fact", "provider": "mempalace"}],
     )
     as_dict = context.to_dict()
     assert "external_memory" in as_dict
     assert "external fact" in context.get_context_text()
+    assert "style=concise, tone=formal" in context.get_context_text()

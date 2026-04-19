@@ -244,14 +244,29 @@ class TestDecisionEngine:
         assert engine.should_use_subagents(intent, risk, sample_payload) is False
         assert engine.needs_human_review(intent, risk, sample_payload, confidence=0.38) is False
 
+    def test_response_route_confidence_rules(self):
+        from src.core.supervisor import DecisionEngine
+
+        engine = DecisionEngine()
+
+        assert engine.response_route(confidence=0.49, kb_hit=False) == "skip"
+        assert engine.response_route(confidence=0.75, kb_hit=False) == "approve"
+        assert engine.response_route(confidence=0.91, kb_hit=True) == "send"
+        assert engine.response_route(confidence=0.91, kb_hit=False) == "approve"
+
 
 class TestSupervisor:
     @pytest.mark.asyncio
-    async def test_direct_answer_path(self, sample_payload, sample_context):
+    async def test_generate_direct_answer_uses_persona_hint(self, sample_payload):
         from src.core.supervisor import Supervisor
+
+        captured = {}
 
         class FakeLLM:
             async def complete(self, system_prompt, user_message, context=None):
+                captured["system_prompt"] = system_prompt
+                captured["user_message"] = user_message
+                captured["context"] = context
                 from src.llm.provider import LLMResponse
                 return LLMResponse(
                     content="Dynamic answer",
@@ -262,17 +277,27 @@ class TestSupervisor:
                     finish_reason="stop"
                 )
 
-        async def fake_log_audit(*args, **kwargs):
-            return None
-
         supervisor = Supervisor()
         supervisor.set_llm(FakeLLM())
-        supervisor._log_audit = fake_log_audit
+        memory = MemoryContext(
+            conversation_summary="summary",
+            recent_messages=["Hello"],
+            user_profile={
+                "role": "employee",
+                "preferences": {
+                    "response_persona_hint": "style=concise, tone=formal",
+                    "style_profile": {
+                        "response_persona_hint": "style=concise, tone=formal",
+                    },
+                },
+            },
+        )
 
-        result = await supervisor.process(sample_payload, sample_context)
-        assert result.status == "completed"
-        assert result.confidence > 0.8
+        answer, confidence = await supervisor._generate_direct_answer(sample_payload, memory)
 
+        assert answer == "Dynamic answer"
+        assert confidence == 0.91
+        assert "style=concise, tone=formal" in captured["system_prompt"]
     @pytest.mark.asyncio
     @pytest.mark.skip(reason="Supervisor v2 has different architecture - test needs update")
     async def test_subagent_path_with_policy_intent(self, sample_payload, sample_context, monkeypatch):
@@ -371,7 +396,13 @@ class TestUserStyleLearning:
             "user_info": {
                 "role": "employee",
                 "communication_style": "concise",
-                "preferences": {"style_profile": {"style_signals": {"has_bullets": True}}},
+                "preferences": {
+                    "response_persona_hint": "style=concise, tone=formal",
+                    "style_profile": {
+                        "response_persona_hint": "style=concise, tone=formal",
+                        "style_signals": {"has_bullets": True},
+                    },
+                },
             },
         }
 
@@ -382,6 +413,7 @@ class TestUserStyleLearning:
         system_prompt, user_prompt = llm.calls[0]
         assert "Trả lời rất ngắn gọn" in system_prompt
         assert "Ưu tiên định dạng gạch đầu dòng" in system_prompt
+        assert "style=concise, tone=formal" in system_prompt
         assert "Phong cách người dùng: concise" in user_prompt
 
 

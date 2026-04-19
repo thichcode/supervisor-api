@@ -72,6 +72,24 @@ class DecisionEngine:
 
         return False
 
+    def response_route(self, confidence: float, kb_hit: bool = False) -> str:
+        """Classify how a response should be delivered.
+
+        Returns one of:
+        - "skip": do not send the response
+        - "approve": keep the response pending human approval
+        - "send": send immediately
+
+        High-confidence responses only auto-send when they are backed by KB.
+        """
+        if confidence < 0.5:
+            return "skip"
+
+        if confidence >= 0.9 and kb_hit:
+            return "send"
+
+        return "approve"
+
     def needs_human_review(
         self,
         intent: IntentClassification,
@@ -295,6 +313,7 @@ class Supervisor:
         start_time = time.time()
         decision = "direct"
         final_confidence = 0.85
+        kb_hit = False
         # NEW v2: Check cache first
         if NEW_MODULES_AVAILABLE:
             cache_result = self._check_cache(payload)
@@ -370,9 +389,21 @@ class Supervisor:
 
                 answer = self.qa_agent.refine(validation, payload, context)
                 final_confidence = validation["confidence"]
+                kb_hit = bool(knowledge.get("knowledge_results"))
         else:
             agents_used = ["draft"]
             answer, final_confidence = await self._generate_direct_answer(payload, memory)
+
+        response_route = self.decision_engine.response_route(final_confidence, kb_hit=kb_hit)
+        if response_route == "skip":
+            decision = "skipped"
+            answer = ""
+            status = "skipped"
+        elif response_route == "approve" or self.decision_engine.needs_human_review(intent, risk, payload, final_confidence):
+            decision = "review"
+            status = "needs_review"
+        else:
+            status = "completed"
 
         processing_time_ms = int((time.time() - start_time) * 1000)
 
@@ -387,7 +418,7 @@ class Supervisor:
         )
         
         # NEW v2: Cache successful responses
-        if NEW_MODULES_AVAILABLE and final_confidence >= 0.6:
+        if NEW_MODULES_AVAILABLE and status == "completed" and final_confidence >= 0.6:
             self._cache_response(payload, answer, final_confidence)
 
         return self._create_output(
@@ -397,7 +428,7 @@ class Supervisor:
             risk=risk,
             intent=intent,
             agents_used=agents_used,
-            status="completed",
+            status=status,
             processing_time=start_time,
         )
     
@@ -591,9 +622,28 @@ class Supervisor:
         user_name = payload.user.display_name
         message = payload.message.text
 
+        user_profile = memory.user_profile or {}
+        preferences = user_profile.get("preferences", {}) if isinstance(user_profile, dict) else {}
+        style_profile = preferences.get("style_profile", {}) if isinstance(preferences, dict) else {}
+        response_persona_hint = (
+            preferences.get("response_persona_hint")
+            or (style_profile.get("response_persona_hint") if isinstance(style_profile, dict) else None)
+            or user_profile.get("response_persona_hint")
+        )
+        communication_style = user_profile.get("communication_style") or "balanced"
+        persona_lines = []
+        if communication_style:
+            persona_lines.append(f"Phong cách người dùng: {communication_style}")
+        if response_persona_hint:
+            persona_lines.append(f"Persona học được: {response_persona_hint}")
+        persona_block = "\n".join(persona_lines)
+
         if self._llm:
+            system_prompt = "Bạn là một trợ lý AI hữu ích. Trả lời ngắn gọn, chính xác bằng tiếng Việt."
+            if persona_block:
+                system_prompt = f"{system_prompt}\n{persona_block}"
             response: LLMResponse = await self._llm.complete(
-                system_prompt="Bạn là một trợ lý AI hữu ích. Trả lời ngắn gọn, chính xác bằng tiếng Việt.",
+                system_prompt=system_prompt,
                 user_message=f"Người dùng {user_name} hỏi: {message}",
                 context=memory.to_dict(),
             )
