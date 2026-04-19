@@ -225,7 +225,7 @@ class MultiProviderLLMClient:
             "llama", "mistral", "mixtral", "phi", "qwen",
             "codellama", "vicuna", "orca", "wizard", "falcon",
             "stablelm", "neural", "tinydolphin", "dolphin",
-            "aya", "command", "nemo", "solar", " Gemma"
+            "aya", "command", "nemo", "solar", "gemma", " Gemma"
         ]
         if any(m in model_lower for m in ollama_models):
             # Check if it's not OpenAI's official model
