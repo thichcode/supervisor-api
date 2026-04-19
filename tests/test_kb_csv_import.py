@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import asyncio
 import os
 import subprocess
 import sys
@@ -77,3 +78,22 @@ def test_script_runs_from_scripts_directory(tmp_path: Path):
 
     assert result.returncode == 0, result.stderr
     assert '"rows_total"' in result.stdout
+
+
+def test_import_csv_to_db_initializes_schema_on_dry_run(tmp_path: Path, monkeypatch):
+    from src.knowledge.csv_import import import_csv_to_db
+
+    csv_path = tmp_path / "kb.csv"
+    csv_path.write_text(CSV_CONTENT, encoding="utf-8")
+
+    called = {"init_db": False}
+
+    async def fake_init_db():
+        called["init_db"] = True
+
+    monkeypatch.setattr("src.knowledge.csv_import.init_db", fake_init_db)
+
+    summary = asyncio.run(import_csv_to_db(csv_path, dry_run=True))
+
+    assert called["init_db"] is True
+    assert summary["rows_total"] == 4

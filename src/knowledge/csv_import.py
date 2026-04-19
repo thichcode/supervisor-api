@@ -9,7 +9,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, Iterable
 
-from src.db import async_session
+from src.db import async_session, init_db
 from src.db.models import KnowledgeDocument, KnowledgeFAQ, KnowledgeGuide, KnowledgePolicy
 
 
@@ -300,6 +300,7 @@ async def import_csv_to_db(
     encoding: str = "utf-8-sig",
     dry_run: bool = False,
 ) -> dict[str, Any]:
+    await init_db()
     path = Path(csv_path)
     rows = list(parse_csv_rows(path, delimiter=delimiter, encoding=encoding))
 

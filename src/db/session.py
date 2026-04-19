@@ -56,6 +56,7 @@ async def init_db():
     logger.info("Initializing database")
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        await conn.execute(text("ALTER TABLE IF EXISTS knowledge_documents ADD COLUMN IF NOT EXISTS file_url VARCHAR(500)"))
     logger.info("Database initialized successfully")
 
 
