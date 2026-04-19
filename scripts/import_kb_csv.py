@@ -47,7 +47,13 @@ def _get_llm_client():
     return _llm_client
 
 
-async def summarize_content(text: str, max_input_chars: int = 4000, max_output_tokens: int = 500) -> str:
+async def summarize_content(
+    text: str, 
+    max_input_chars: int = 4000, 
+    max_output_tokens: int = 500,
+    model: str = None,
+    base_url: str = None,
+) -> str:
     """Summarize content using Ollama. Returns original if summarization fails."""
     if not text or len(text) < 500:
         return text  # Skip short content
@@ -60,6 +66,14 @@ async def summarize_content(text: str, max_input_chars: int = 4000, max_output_t
         # Initialize client if needed
         if hasattr(client, 'initialize'):
             await client.initialize()
+        
+        # Override model/base_url if provided
+        if model and hasattr(client, 'set_model'):
+            original_model = client.active_model
+            client.set_model(model)
+        
+        if base_url and hasattr(client, 'set_base_url'):
+            client.set_base_url(base_url)
         
         # Truncate input to avoid token limits
         input_text = text[:max_input_chars]
@@ -79,7 +93,7 @@ async def summarize_content(text: str, max_input_chars: int = 4000, max_output_t
     return text[:max_input_chars]
 
 
-async def _summarize_row_content(row: dict, use_summarize: bool = False) -> dict:
+async def _summarize_row_content(row: dict, use_summarize: bool = False, model: str = None, base_url: str = None) -> dict:
     """Summarize content fields in a row if enabled."""
     if not use_summarize:
         return row
@@ -92,7 +106,7 @@ async def _summarize_row_content(row: dict, use_summarize: bool = False) -> dict
             original = row[field]
             if len(original) > 500:  # Only summarize if > 500 chars
                 print(f"  Summarizing {field} ({len(original)} chars -> ...)", end=" ", flush=True)
-                row[field] = await summarize_content(original)
+                row[field] = await summarize_content(original, model=model, base_url=base_url)
                 print(f"({len(row[field])} chars)")
     
     return row
@@ -106,6 +120,8 @@ async def import_csv_with_summarize(
     encoding: str = "utf-8-sig",
     dry_run: bool = False,
     use_summarize: bool = False,
+    summarize_model: str = None,
+    summarize_base_url: str = None,
 ) -> dict:
     """Import CSV with optional summarization."""
     path = Path(csv_path)
@@ -127,7 +143,7 @@ async def import_csv_with_summarize(
     processed_rows = []
     for index, row in enumerate(rows, start=1):
         if use_summarize:
-            row = await _summarize_row_content(row, use_summarize=True)
+            row = await _summarize_row_content(row, use_summarize=True, model=summarize_model, base_url=summarize_base_url)
             if any(len(row.get(f, "")) > 500 for f in ["content", "description", "body", "answer", "text"]):
                 summary["summarized"] += 1
         processed_rows.append(row)
@@ -196,6 +212,8 @@ async def _amain(args: argparse.Namespace) -> int:
         encoding=args.encoding,
         dry_run=args.dry_run,
         use_summarize=args.summarize,
+        summarize_model=args.summarize_model,
+        summarize_base_url=args.summarize_base_url,
     )
     
     print(json.dumps(summary, ensure_ascii=False, indent=2))
@@ -211,6 +229,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dry-run", action="store_true", help="Parse and validate without writing to DB")
     parser.add_argument("--inactive-by-default", action="store_true", help="Mark rows inactive unless they explicitly opt in")
     parser.add_argument("--summarize", action="store_true", help="Summarize large content using Ollama before storing")
+    parser.add_argument("--summarize-model", default=None, help="Model to use for summarization (default: use system default)")
+    parser.add_argument("--summarize-base-url", default=None, help="Base URL for summarization LLM (default: use system default)")
     
     args = parser.parse_args(argv)
     return asyncio.run(_amain(args))
