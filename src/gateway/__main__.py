@@ -19,11 +19,24 @@ def _parse_platforms() -> list[str] | None:
 
 async def main() -> None:
     platforms = _parse_platforms()
+    proxy_present = any(
+        os.getenv(name, "").strip()
+        for name in (
+            "HTTP_PROXY",
+            "HTTPS_PROXY",
+            "ALL_PROXY",
+            "http_proxy",
+            "https_proxy",
+            "all_proxy",
+        )
+    )
     logger.info(
         "Telegram gateway process booting",
         platforms=platforms or ["telegram", "discord", "slack"],
         token_present=bool(os.getenv("TELEGRAM_BOT_TOKEN", "").strip()),
         enable_gateway=os.getenv("ENABLE_TELEGRAM_GATEWAY", "true"),
+        proxy_present=proxy_present,
+        no_proxy=os.getenv("NO_PROXY", os.getenv("no_proxy", "")),
     )
     logger.info("Starting gateway process", platforms=platforms or "configured")
     await start_gateway(platforms)
