@@ -65,6 +65,11 @@ class GatewayRunner:
                 return
             
             from .platforms.telegram import TelegramAdapter
+            logger.info(
+                "Telegram bot starting",
+                supervisor_url=self.config.supervisor_url,
+                token_present=bool(self.config.telegram_token),
+            )
             adapter = TelegramAdapter(
                 token=self.config.telegram_token,
                 session_store=self.session_store,

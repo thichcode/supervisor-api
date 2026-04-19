@@ -9,6 +9,12 @@ else
 fi
 ENABLE_GATEWAY="${ENABLE_TELEGRAM_GATEWAY:-$ENABLE_GATEWAY_DEFAULT}"
 GATEWAY_TOKEN="${TELEGRAM_BOT_TOKEN:-}"
+GATEWAY_TOKEN_PRESENT="false"
+if [ -n "$GATEWAY_TOKEN" ]; then
+  GATEWAY_TOKEN_PRESENT="true"
+fi
+
+echo "[entrypoint] Telegram gateway config: enabled=${ENABLE_GATEWAY} token_present=${GATEWAY_TOKEN_PRESENT}"
 
 cleanup() {
   if [ -n "${API_PID:-}" ] && kill -0 "$API_PID" 2>/dev/null; then

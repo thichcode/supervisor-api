@@ -19,6 +19,12 @@ def _parse_platforms() -> list[str] | None:
 
 async def main() -> None:
     platforms = _parse_platforms()
+    logger.info(
+        "Telegram gateway process booting",
+        platforms=platforms or ["telegram", "discord", "slack"],
+        token_present=bool(os.getenv("TELEGRAM_BOT_TOKEN", "").strip()),
+        enable_gateway=os.getenv("ENABLE_TELEGRAM_GATEWAY", "true"),
+    )
     logger.info("Starting gateway process", platforms=platforms or "configured")
     await start_gateway(platforms)
 
