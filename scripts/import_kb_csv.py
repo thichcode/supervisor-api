@@ -73,7 +73,15 @@ async def summarize_content(
             client.set_model(model)
         
         if base_url and hasattr(client, 'set_base_url'):
-            client.set_base_url(base_url)
+            # Detect provider from model name - default to OLLAMA for non-GPT models
+            model_lower = (model or "").lower()
+            if model_lower.startswith(("gpt-", "o1-", "o3-")):
+                provider = "openai"
+            elif model_lower.startswith("azure"):
+                provider = "azure"
+            else:
+                provider = "ollama"
+            client.set_base_url(provider, base_url)
         
         # Truncate input to avoid token limits
         input_text = text[:max_input_chars]
