@@ -137,6 +137,27 @@ class ChatService:
                         metadata={**routing_metadata, "needs_clarification": True},
                     )
 
+            style_learning_user_id = (settings.user_style_learning_user_id or "").strip()
+            if (
+                settings.enable_user_style_learning
+                and style_learning_user_id
+                and request.user_id == style_learning_user_id
+            ):
+                await memory_service.commit(payload, memory_snapshot=memory)
+                return ChatResponse(
+                    request_id=request_id,
+                    status="skipped",
+                    message="",
+                    message_type=request.message_type,
+                    confidence=0.0,
+                    metadata={
+                        **routing_metadata,
+                        "style_learning_only": True,
+                        "style_learning_user_id": style_learning_user_id,
+                        "skipped": True,
+                    },
+                )
+
             result = await api_module.supervisor.process(payload, memory)
             await memory_service.commit(
                 payload,
