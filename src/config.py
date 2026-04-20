@@ -150,7 +150,8 @@ class Settings(BaseSettings):
     enable_audit_logger: bool = False    # Compliance audit logging
     enable_validators: bool = False      # Input validation
     enable_user_style_learning: bool = True  # Learn user communication style per user_id
-    user_style_learning_user_id: str = ""  # Only learn style for this user_id
+    user_style_learning_user_id: str = ""  # Backward-compatible single user_id
+    user_style_learning_user_ids: str = ""  # Comma-separated list of user_ids
 
     # Notification - enabled if any notification config is set
     enable_notification: bool = False    # Master toggle (auto-enabled if email/sms/teams configured)
@@ -177,6 +178,23 @@ class Settings(BaseSettings):
     # Scheduler Configuration
     scheduler_enabled: bool = False
     scheduler_cron_default: str = "0 9 * * *"  # 9 AM daily
+
+    @property
+    def style_learning_user_ids(self) -> set[str]:
+        raw_values = [self.user_style_learning_user_id, self.user_style_learning_user_ids]
+        user_ids: set[str] = set()
+        for raw in raw_values:
+            if not raw:
+                continue
+            for item in raw.split(","):
+                cleaned = item.strip()
+                if cleaned:
+                    user_ids.add(cleaned)
+        return user_ids
+
+    def should_learn_user_style(self, user_id: str) -> bool:
+        user_ids = self.style_learning_user_ids
+        return bool(user_ids) and user_id in user_ids
 
     @property
     def database_url(self) -> str:

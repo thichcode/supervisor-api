@@ -137,12 +137,11 @@ class ChatService:
                         metadata={**routing_metadata, "needs_clarification": True},
                     )
 
-            style_learning_user_id = (settings.user_style_learning_user_id or "").strip()
             if (
                 settings.enable_user_style_learning
-                and style_learning_user_id
-                and request.user_id == style_learning_user_id
+                and settings.should_learn_user_style(request.user_id)
             ):
+                learning_user_ids = sorted(settings.style_learning_user_ids)
                 await memory_service.commit(payload, memory_snapshot=memory)
                 return ChatResponse(
                     request_id=request_id,
@@ -153,7 +152,7 @@ class ChatService:
                     metadata={
                         **routing_metadata,
                         "style_learning_only": True,
-                        "style_learning_user_id": style_learning_user_id,
+                        "style_learning_user_ids": learning_user_ids,
                         "skipped": True,
                     },
                 )

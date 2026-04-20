@@ -31,7 +31,8 @@ async def test_style_learning_user_skips_answer_generation(monkeypatch):
     monkeypatch.setattr(api_module, "supervisor", supervisor)
     monkeypatch.setattr(chat_service_module, "MemoryService", FakeMemoryService)
     monkeypatch.setattr(chat_service_module.settings, "enable_user_style_learning", True, raising=False)
-    monkeypatch.setattr(chat_service_module.settings, "user_style_learning_user_id", "style-user", raising=False)
+    monkeypatch.setattr(chat_service_module.settings, "user_style_learning_user_id", "", raising=False)
+    monkeypatch.setattr(chat_service_module.settings, "user_style_learning_user_ids", "style-user, other-user", raising=False)
 
     service = ChatService()
     response = await service.handle_chat(
@@ -47,5 +48,6 @@ async def test_style_learning_user_skips_answer_generation(monkeypatch):
     assert response.status == "skipped"
     assert response.message == ""
     assert response.metadata["style_learning_only"] is True
+    assert response.metadata["style_learning_user_ids"] == ["other-user", "style-user"]
     assert response.metadata["skipped"] is True
     supervisor.process.assert_not_called()

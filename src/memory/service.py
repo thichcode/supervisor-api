@@ -494,8 +494,8 @@ class MemoryService:
         style = None
         style_profile = None
         if settings.enable_user_style_learning:
-            owner_id = (settings.user_style_learning_user_id or "").strip()
-            if owner_id and user_id == owner_id:
+            owner_ids = settings.style_learning_user_ids
+            if owner_ids and user_id in owner_ids:
                 user_messages = await self.repo.get_recent_user_messages(user_id, limit=20)
                 style_source_text = "\n".join(m.message_text for m in user_messages)
                 if style_source_text:
