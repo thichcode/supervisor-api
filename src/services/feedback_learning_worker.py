@@ -165,7 +165,9 @@ class FeedbackReplayWorker:
         self._apply_routing_feedback(payload)
 
         event.processed = True
-        event.processed_at = datetime.now(timezone.utc)
+        # response_learning_events.processed_at is stored as TIMESTAMP WITHOUT TIME ZONE
+        # in the legacy schema, so write a naive UTC datetime to avoid asyncpg errors.
+        event.processed_at = datetime.now(timezone.utc).replace(tzinfo=None)
         session.add(event)
 
     def _apply_feedback_signal(self, *, user_id: str, request_id: str, is_positive: bool, model_name: str) -> None:
