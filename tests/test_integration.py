@@ -5,10 +5,12 @@ Tests API endpoints, error handling, and circuit breaker integration
 import pytest
 from httpx import AsyncClient, ASGITransport
 from unittest.mock import AsyncMock, patch, MagicMock
+from contextlib import asynccontextmanager
 import asyncio
 
 from src.api import app
 from src.core.circuit_breaker import CircuitBreaker, CircuitBreakerConfig, CircuitState
+from src.core.schemas import MessageInfo
 from src.core.dlq import DeadLetterQueue, DLQStatus
 from src.core.error_handler import (
     AppError,
@@ -278,25 +280,91 @@ class TestWebhookValidation:
         }
     
     @pytest.mark.asyncio
-    async def test_webhook_with_valid_payload(self, valid_payload):
+    async def test_webhook_needs_review_creates_approval(self, valid_payload):
         mock_result = MagicMock()
-        mock_result.status = "completed"
-        mock_result.confidence = 0.9
-        mock_result.risk_level = "low"
-        mock_result.metadata = {"intent": "faq"}
-        
-        with patch('src.api.supervisor.process', return_value=mock_result):
+        mock_result.status = "needs_review"
+        mock_result.request_id = "test-123"
+        mock_result.confidence = 0.62
+        mock_result.risk_level = "medium"
+        mock_result.answer = "Draft answer"
+        mock_result.message = MessageInfo(text="Draft answer", timestamp=0)
+        mock_result.metadata = {"intent": "faq", "agents_used": ["draft"]}
+
+        mock_memory_service = MagicMock()
+        mock_memory_service.retrieve = AsyncMock(return_value=MagicMock())
+        mock_memory_service.commit = AsyncMock()
+
+        approval_service_mock = MagicMock()
+        approval_service_mock.create_approval = AsyncMock(return_value=MagicMock(id="approval-123"))
+
+        @asynccontextmanager
+        async def fake_async_session():
+            yield MagicMock()
+
+        with (
+            patch("src.api.supervisor.process", return_value=mock_result),
+            patch("src.api.app.MemoryService", return_value=mock_memory_service),
+            patch("src.api.async_session", fake_async_session),
+            patch("src.api.app.approval_service", approval_service_mock),
+            patch("src.api.app.settings.webhook_input_secret", "test-secret"),
+        ):
             transport = ASGITransport(app=app)
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 response = await client.post(
                     "/webhook/n8n",
                     json=valid_payload,
-                    headers={"X-Webhook-Secret": "test-secret"}
+                    headers={"X-Webhook-Secret": "test-secret"},
                 )
-        
-        # With mocked supervisor, should get response
-        # Actual test depends on full setup
-        assert response.status_code in [200, 401, 500]
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["status"] == "pending_approval"
+        assert body["metadata"]["approval_id"] == "approval-123"
+        assert approval_service_mock.create_approval.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_webhook_completed_auto_sends_to_power_automate(self, valid_payload):
+        mock_result = MagicMock()
+        mock_result.status = "completed"
+        mock_result.request_id = "test-123"
+        mock_result.confidence = 0.95
+        mock_result.risk_level = "low"
+        mock_result.answer = "Final answer"
+        mock_result.message = MessageInfo(text="Final answer", timestamp=0)
+        mock_result.metadata = {"intent": "faq", "agents_used": ["draft"]}
+        mock_result.intent = MagicMock(intent=MagicMock(value="faq"))
+        mock_result.processing_time_ms = 123
+
+        mock_memory_service = MagicMock()
+        mock_memory_service.retrieve = AsyncMock(return_value=MagicMock())
+        mock_memory_service.commit = AsyncMock()
+
+        auto_send_mock = AsyncMock(return_value=True)
+
+        @asynccontextmanager
+        async def fake_async_session():
+            yield MagicMock()
+
+        with (
+            patch("src.api.supervisor.process", return_value=mock_result),
+            patch("src.api.app.MemoryService", return_value=mock_memory_service),
+            patch("src.api.async_session", fake_async_session),
+            patch("src.api.app._auto_send_to_power_automate", auto_send_mock),
+            patch("src.api.app.settings.power_automate_webhook_url", "https://example.com/pa"),
+            patch("src.api.app.settings.webhook_input_secret", "test-secret"),
+        ):
+            transport = ASGITransport(app=app)
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/webhook/n8n",
+                    json=valid_payload,
+                    headers={"X-Webhook-Secret": "test-secret"},
+                )
+
+        assert response.status_code == 200
+        assert response.json()["status"] == "completed"
+        assert auto_send_mock.await_count == 1
+
     
     @pytest.mark.asyncio
     async def test_webhook_rejects_empty_message(self):

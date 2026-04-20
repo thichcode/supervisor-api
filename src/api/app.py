@@ -18,6 +18,7 @@ from slowapi.util import get_remote_address
 
 from src.config import get_settings
 from src.core import InputPayload, OutputPayload
+from src.core.approval import approval_service
 from src.core.logging_config import setup_logging, RequestLogger
 from src.core.metrics import metrics
 from src.core.sanitizer import sanitizer
@@ -202,6 +203,33 @@ async def receive_webhook(
                 risk_level=result.risk_level,
             )
             request_logger.log_response_sent(result.status, result.confidence, elapsed_ms)
+
+            if result.status == "needs_review":
+                approval = await approval_service.create_approval(
+                    request_id=payload.request_id,
+                    user_id=payload.user.id,
+                    display_name=payload.user.display_name,
+                    original_message=payload.message.text,
+                    ai_response=result.answer,
+                    confidence=result.confidence,
+                    action_type="send_message",
+                    metadata={
+                        **(result.metadata or {}),
+                        "thread_id": payload.conversation.thread_id,
+                        "approval_required": True,
+                        "threshold": 0.5,
+                    },
+                )
+                result.status = "pending_approval"
+                result.metadata = {
+                    **(result.metadata or {}),
+                    "approval_id": approval.id,
+                    "approval_required": True,
+                    "threshold": 0.5,
+                }
+            elif result.status == "completed" and settings.power_automate_webhook_url:
+                await _auto_send_to_power_automate(result)
+
             return result
     except HTTPException:
         raise
