@@ -169,7 +169,7 @@ async def check_status():
     """Check migration status."""
     migrations_dir = Path(__file__).parent / "migrations"
     migration_files = sorted(migrations_dir.glob("*.sql"))
-    migration_files = [f for f in migration_files if "down.sql" not in f.name]
+    migration_files = [f for f in migration_files if "down.sql" not in f.name and f.name != "init.sql"]
     
     applied = await get_applied_migrations()
     
