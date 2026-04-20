@@ -628,12 +628,28 @@ class Supervisor:
             persona_lines.append(f"Phong cách người dùng: {communication_style}")
         if response_persona_hint:
             persona_lines.append(f"Persona học được: {response_persona_hint}")
+
+        conversation_state = memory.conversation_state or {}
+        state_lines = []
+        if conversation_state.get("active_topic_title"):
+            state_lines.append(f"Chủ đề hiện tại: {conversation_state['active_topic_title']}")
+        if conversation_state.get("conversation_mode"):
+            state_lines.append(f"Chế độ hội thoại: {conversation_state['conversation_mode']}")
+        if conversation_state.get("continuity_score") is not None:
+            state_lines.append(f"Điểm liên tục: {conversation_state['continuity_score']}")
+        if conversation_state.get("open_loops"):
+            state_lines.append(f"Open loops: {conversation_state.get('open_loops', [])[:3]}")
+        if conversation_state.get("key_entities"):
+            state_lines.append(f"Entities: {conversation_state.get('key_entities', [])[:5]}")
+        state_block = "\n".join(state_lines)
         persona_block = "\n".join(persona_lines)
 
         if self._llm:
             system_prompt = "Bạn là một trợ lý AI hữu ích. Trả lời ngắn gọn, chính xác bằng tiếng Việt."
             if persona_block:
                 system_prompt = f"{system_prompt}\n{persona_block}"
+            if state_block:
+                system_prompt = f"{system_prompt}\n{state_block}"
             response: LLMResponse = await self._llm.complete(
                 system_prompt=system_prompt,
                 user_message=f"Người dùng {user_name} hỏi: {message}",

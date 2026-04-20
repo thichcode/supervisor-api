@@ -47,6 +47,22 @@ class ConversationInfo(BaseModel):
     unresolved_points: list[str] = Field(default_factory=list)
 
 
+class ConversationStateInfo(BaseModel):
+    thread_id: str
+    active_topic_title: Optional[str] = None
+    active_topic_summary: Optional[str] = None
+    conversation_mode: str = "continuation"
+    continuity_score: float = 0.5
+    last_user_intent: Optional[str] = None
+    last_assistant_intent: Optional[str] = None
+    open_loops: list[dict] = Field(default_factory=list)
+    key_entities: list[str] = Field(default_factory=list)
+    recent_decisions: list[dict] = Field(default_factory=list)
+    state_json: dict = Field(default_factory=dict)
+    last_message_at: Optional[datetime] = None
+    turn_count: int = 0
+
+
 class CaseInfo(BaseModel):
     case_id: Optional[str] = None
     ticket_id: Optional[str] = None
@@ -67,6 +83,7 @@ class InputPayload(BaseModel):
     timestamp: str
     user: UserInfo
     conversation: ConversationInfo
+    conversation_state: Optional[ConversationStateInfo] = None
     case: Optional[CaseInfo] = None
     message: MessageInfo
 

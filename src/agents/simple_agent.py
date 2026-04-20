@@ -91,6 +91,16 @@ class SimpleAgent:
         if memory.conversation_summary:
             parts.append(f"CONTEXT: {memory.conversation_summary}")
 
+        if memory.conversation_state:
+            topic = memory.conversation_state.get("active_topic_title")
+            mode = memory.conversation_state.get("conversation_mode")
+            if topic:
+                parts.append(f"TOPIC: {topic}")
+            if mode:
+                parts.append(f"MODE: {mode}")
+            if memory.conversation_state.get("open_loops"):
+                parts.append(f"OPEN_LOOPS: {memory.conversation_state.get('open_loops', [])[:3]}")
+
         if memory.recent_messages:
             recent = memory.recent_messages[-3:]
             parts.append(f"RECENT: {' | '.join(recent)}")

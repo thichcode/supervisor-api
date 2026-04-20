@@ -50,6 +50,27 @@ class ConversationSummary(Base):
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 
 
+class ConversationState(Base):
+    __tablename__ = "conversation_state"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    thread_id = Column(String(255), nullable=False, unique=True, index=True)
+    active_topic_title = Column(Text, nullable=True)
+    active_topic_summary = Column(Text, nullable=True)
+    conversation_mode = Column(String(50), default="continuation")
+    continuity_score = Column(Float, default=0.5)
+    last_user_intent = Column(Text, nullable=True)
+    last_assistant_intent = Column(Text, nullable=True)
+    open_loops = Column(JSON, default=list)
+    key_entities = Column(JSON, default=list)
+    recent_decisions = Column(JSON, default=list)
+    state_json = Column(JSON, default=dict)
+    last_message_at = Column(DateTime, nullable=True)
+    turn_count = Column(Integer, default=0)
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+
 class UserProfile(Base):
     __tablename__ = "user_profiles"
 

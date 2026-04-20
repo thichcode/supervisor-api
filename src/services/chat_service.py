@@ -77,7 +77,7 @@ class ChatService:
                 }
 
                 if teams_decision.should_skip:
-                    await memory_service.commit(payload)
+                    await memory_service.commit(payload, memory_snapshot=memory)
                     return ChatResponse(
                         request_id=request_id,
                         status="skipped",
@@ -88,7 +88,7 @@ class ChatService:
                     )
 
                 if teams_decision.should_clarify:
-                    await memory_service.commit(payload)
+                    await memory_service.commit(payload, memory_snapshot=memory)
                     return ChatResponse(
                         request_id=request_id,
                         status="needs_clarification",
@@ -116,7 +116,7 @@ class ChatService:
                 }
 
                 if is_group_chat and target_decision.should_skip:
-                    await memory_service.commit(payload)
+                    await memory_service.commit(payload, memory_snapshot=memory)
                     return ChatResponse(
                         request_id=request_id,
                         status="skipped",
@@ -127,7 +127,7 @@ class ChatService:
                     )
 
                 if is_group_chat and target_decision.should_clarify:
-                    await memory_service.commit(payload)
+                    await memory_service.commit(payload, memory_snapshot=memory)
                     return ChatResponse(
                         request_id=request_id,
                         status="needs_clarification",
@@ -138,7 +138,12 @@ class ChatService:
                     )
 
             result = await api_module.supervisor.process(payload, memory)
-            await memory_service.commit(payload)
+            await memory_service.commit(
+                payload,
+                memory_snapshot=memory,
+                assistant_text=result.answer,
+                result_metadata=result.metadata or {},
+            )
 
             await interaction_service.log_interaction(
                 request_id=request_id,
@@ -281,7 +286,12 @@ class ChatService:
                 result = await harness_bridge.process(payload, memory)
             else:
                 result = await api_module.supervisor.process(payload, memory)
-            await memory_service.commit(payload)
+            await memory_service.commit(
+                payload,
+                memory_snapshot=memory,
+                assistant_text=result.answer,
+                result_metadata=result.metadata or {},
+            )
             await interaction_service.log_interaction(
                 request_id=request_id,
                 thread_id=thread_id,

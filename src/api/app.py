@@ -194,7 +194,12 @@ async def receive_webhook(
             memory_service = MemoryService(session, api_module.redis_cache)
             memory = await memory_service.retrieve(payload)
             result = await api_module.supervisor.process(payload, memory)
-            await memory_service.commit(payload)
+            await memory_service.commit(
+                payload,
+                memory_snapshot=memory,
+                assistant_text=result.answer,
+                result_metadata=result.metadata or {},
+            )
             elapsed_ms = int((time.time() - start_time) * 1000)
             metrics.record_request("POST", "/webhook/n8n", 200, elapsed_ms / 1000)
             metrics.record_decision(

@@ -61,6 +61,7 @@ Trả lời bằng tiếng Việt, ngắn gọn và chính xác.
             user_prompt = f"""Câu hỏi của người dùng: {payload.message.text}
 
 Ngữ cảnh hội thoại: {context.get('conversation_summary', 'Không có')}
+Mạch hội thoại hiện tại: {context.get('conversation_state', {})}
 Tin nhắn gần đây: {context.get('conversation_history', [])}
 Vai trò người dùng: {context.get('user_info', {}).get('role', 'employee')}
 Phong cách người dùng: {context.get('user_info', {}).get('communication_style', 'balanced')}

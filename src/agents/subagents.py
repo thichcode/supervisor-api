@@ -12,6 +12,7 @@ class ContextAgent:
             "current_message": payload.message.text,
             "conversation_history": memory.recent_messages,
             "conversation_summary": memory.conversation_summary or "No prior context",
+            "conversation_state": memory.conversation_state or {},
             "user_info": {
                 "name": payload.user.display_name,
                 "id": payload.user.id,
@@ -23,7 +24,7 @@ class ContextAgent:
             },
             "case_info": None,
             "resolved_points": [],
-            "unresolved_points": memory.to_dict().get("conversation_summary", ""),
+            "unresolved_points": memory.conversation_state.get("open_loops", []) if memory.conversation_state else [],
         }
 
         if payload.case and memory.case_memory:

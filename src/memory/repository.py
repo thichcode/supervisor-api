@@ -9,6 +9,7 @@ from src.db.models import (
     ConversationThread,
     ThreadTicketLink,
     ConversationSummary,
+    ConversationState,
     UserProfile,
     CaseMemory,
     MemoryItem,
@@ -195,6 +196,124 @@ class MemoryRepository:
             await self.session.commit()
             await self.session.refresh(summary)
             return summary
+
+    async def get_conversation_state(self, thread_id: str) -> Optional[ConversationState]:
+        result = await self.session.execute(
+            select(ConversationState).where(ConversationState.thread_id == thread_id)
+        )
+        return result.scalar_one_or_none()
+
+    async def upsert_conversation_state(
+        self,
+        thread_id: str,
+        active_topic_title: Optional[str] = None,
+        active_topic_summary: Optional[str] = None,
+        conversation_mode: Optional[str] = None,
+        continuity_score: Optional[float] = None,
+        last_user_intent: Optional[str] = None,
+        last_assistant_intent: Optional[str] = None,
+        open_loops: Optional[list] = None,
+        key_entities: Optional[list] = None,
+        recent_decisions: Optional[list] = None,
+        state_json: Optional[dict] = None,
+        last_message_at: Optional[datetime] = None,
+        turn_count: Optional[int] = None,
+    ) -> ConversationState:
+        existing = await self.get_conversation_state(thread_id)
+        if existing:
+            if active_topic_title is not None:
+                existing.active_topic_title = active_topic_title
+            if active_topic_summary is not None:
+                existing.active_topic_summary = active_topic_summary
+            if conversation_mode is not None:
+                existing.conversation_mode = conversation_mode
+            if continuity_score is not None:
+                existing.continuity_score = continuity_score
+            if last_user_intent is not None:
+                existing.last_user_intent = last_user_intent
+            if last_assistant_intent is not None:
+                existing.last_assistant_intent = last_assistant_intent
+            if open_loops is not None:
+                existing.open_loops = open_loops
+            if key_entities is not None:
+                existing.key_entities = key_entities
+            if recent_decisions is not None:
+                existing.recent_decisions = recent_decisions
+            if state_json is not None:
+                current_state = dict(existing.state_json or {})
+                current_state.update(state_json)
+                existing.state_json = current_state
+            if last_message_at is not None:
+                existing.last_message_at = last_message_at
+            if turn_count is not None:
+                existing.turn_count = turn_count
+            existing.updated_at = utc_now()
+            await self.session.commit()
+            await self.session.refresh(existing)
+            return existing
+
+        state = ConversationState(
+            thread_id=thread_id,
+            active_topic_title=active_topic_title,
+            active_topic_summary=active_topic_summary,
+            conversation_mode=conversation_mode or "continuation",
+            continuity_score=continuity_score if continuity_score is not None else 0.5,
+            last_user_intent=last_user_intent,
+            last_assistant_intent=last_assistant_intent,
+            open_loops=open_loops or [],
+            key_entities=key_entities or [],
+            recent_decisions=recent_decisions or [],
+            state_json=state_json or {},
+            last_message_at=last_message_at,
+            turn_count=turn_count or 0,
+        )
+        self.session.add(state)
+        await self.session.commit()
+        await self.session.refresh(state)
+        return state
+
+    async def patch_conversation_state(self, thread_id: str, patch: dict) -> ConversationState:
+        existing = await self.get_conversation_state(thread_id)
+        if not existing:
+            return await self.upsert_conversation_state(thread_id, **patch)
+
+        for key, value in patch.items():
+            if key == "state_json" and isinstance(value, dict):
+                current_state = dict(existing.state_json or {})
+                current_state.update(value)
+                existing.state_json = current_state
+            elif hasattr(existing, key) and value is not None:
+                setattr(existing, key, value)
+
+        existing.updated_at = utc_now()
+        await self.session.commit()
+        await self.session.refresh(existing)
+        return existing
+
+    async def append_open_loop(self, thread_id: str, loop_item: dict) -> ConversationState:
+        state = await self.get_conversation_state(thread_id)
+        open_loops = list(state.open_loops or []) if state else []
+        open_loops.append(loop_item)
+        return await self.upsert_conversation_state(
+            thread_id=thread_id,
+            open_loops=open_loops,
+            state_json={"last_open_loop": loop_item},
+        )
+
+    async def close_open_loop(self, thread_id: str, loop_key: str) -> ConversationState:
+        state = await self.get_conversation_state(thread_id)
+        if not state:
+            return await self.upsert_conversation_state(thread_id, state_json={"closed_loop_key": loop_key})
+
+        open_loops = [loop for loop in (state.open_loops or []) if loop.get("key") != loop_key]
+        recent_decisions = list(state.recent_decisions or [])
+        recent_decisions.append({"action": "close_loop", "key": loop_key, "at": utc_now().isoformat()})
+        return await self.upsert_conversation_state(
+            thread_id=thread_id,
+            open_loops=open_loops,
+            recent_decisions=recent_decisions,
+            state_json={"closed_loop_key": loop_key},
+        )
 
     async def get_user_profile(self, user_id: str) -> Optional[UserProfile]:
         result = await self.session.execute(
