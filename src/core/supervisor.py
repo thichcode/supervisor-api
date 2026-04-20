@@ -373,19 +373,11 @@ class Supervisor:
                 validation = await self._enhanced_validate(draft, payload, context, policy, knowledge)
                 
                 if validation["needs_review"]:
-                    if self.decision_engine.needs_human_review(intent, risk, payload, validation["confidence"]):
-                        # Even if needs review, still refine the draft through QA agent
-                        answer = self.qa_agent.refine(validation, payload, context)
-                        return self._create_output(
-                            payload=payload,
-                            answer=answer,
-                            confidence=validation["confidence"],
-                            risk=risk,
-                            intent=intent,
-                            agents_used=agents_used,
-                            status="needs_review",
-                            processing_time=start_time,
-                        )
+                    logger.debug(
+                        "Validation suggests review, but routing will be decided by confidence thresholds",
+                        confidence=validation["confidence"],
+                        issues=validation.get("issues", []),
+                    )
 
                 answer = self.qa_agent.refine(validation, payload, context)
                 final_confidence = validation["confidence"]
@@ -399,7 +391,7 @@ class Supervisor:
             decision = "skipped"
             answer = ""
             status = "skipped"
-        elif response_route == "approve" or self.decision_engine.needs_human_review(intent, risk, payload, final_confidence):
+        elif response_route == "approve":
             decision = "review"
             status = "needs_review"
         else:
