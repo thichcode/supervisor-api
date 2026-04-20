@@ -3,9 +3,12 @@ Telegram Platform Adapter
 """
 
 import asyncio
+from datetime import datetime, timezone
 from typing import Optional, Dict, Any, Tuple
 import structlog
 import httpx
+
+from src.core.conversation_continuity import ConversationContinuityEvaluator
 
 logger = structlog.get_logger()
 
@@ -113,6 +116,10 @@ class TelegramAdapter:
         self._offset = 0
         self._task: Optional[asyncio.Task] = None
         self._pending_kb_search: Dict[str, str] = {}
+        self._conversation_buffers: Dict[str, Dict[str, Any]] = {}
+        self._conversation_flush_tasks: Dict[str, asyncio.Task] = {}
+        self._buffer_delay_seconds = 60
+        self._message_mode_detector = ConversationContinuityEvaluator()
     
     async def start(self):
         """Start the Telegram bot"""
@@ -156,6 +163,11 @@ class TelegramAdapter:
                 await self._task
             except asyncio.CancelledError:
                 pass
+            self._task = None
+        for task in list(self._conversation_flush_tasks.values()):
+            task.cancel()
+        self._conversation_flush_tasks.clear()
+        self._conversation_buffers.clear()
     
     async def _register_bot_commands(self):
         """Register the Telegram command menu so /health appears in the client UI."""
@@ -257,6 +269,17 @@ class TelegramAdapter:
             approval_id = self._pending_kb_search.pop(chat_id)
             await self._handle_kb_search(chat_id, user_id, text, approval_id)
             return
+
+        # Buffer regular messages for 60s so multi-line / burst updates are merged before asking Supervisor.
+        await self._buffer_conversation_message(
+            thread_id=thread_id,
+            chat_id=chat_id,
+            user_id=user_id,
+            display_name=display_name,
+            text=text,
+            metadata=metadata,
+        )
+        return
         
         # Process as regular message
         reply = await self._call_supervisor(user_id, display_name, text, thread_id, metadata)
@@ -404,6 +427,122 @@ class TelegramAdapter:
             logger.error("KB search failed", error=str(e), approval_id=approval_id)
             await self._send_message(chat_id, f"Có lỗi xảy ra: {str(e)}")
     
+    async def _buffer_conversation_message(
+        self,
+        thread_id: str,
+        chat_id: str,
+        user_id: str,
+        display_name: str,
+        text: str,
+        metadata: Dict[str, Any],
+    ) -> None:
+        """Buffer Telegram user messages for a short window so multi-line bursts are merged before calling Supervisor."""
+        now = datetime.now(timezone.utc)
+        buffer = self._conversation_buffers.setdefault(
+            thread_id,
+            {
+                "thread_id": thread_id,
+                "chat_id": chat_id,
+                "user_id": user_id,
+                "display_name": display_name,
+                "metadata": {},
+                "messages": [],
+                "created_at": now.isoformat(),
+                "updated_at": now.isoformat(),
+                "message_mode": "statement",
+            },
+        )
+
+        buffer["chat_id"] = chat_id
+        buffer["user_id"] = user_id
+        buffer["display_name"] = display_name
+        buffer["updated_at"] = now.isoformat()
+        buffer["metadata"] = {**buffer.get("metadata", {}), **(metadata or {})}
+        buffer["message_mode"] = self._message_mode_detector.detect_message_mode(text)
+        buffer["messages"].append(
+            {
+                "text": text,
+                "message_mode": buffer["message_mode"],
+                "timestamp": now.isoformat(),
+            }
+        )
+
+        session_id = f"telegram_{user_id}"
+        self.session_store.add_message(
+            session_id=session_id,
+            role="user",
+            content=text,
+            metadata={
+                **(metadata or {}),
+                "message_mode": buffer["message_mode"],
+                "buffered": True,
+                "buffer_thread_id": thread_id,
+            },
+        )
+
+        await self._schedule_conversation_flush(thread_id)
+
+    async def _schedule_conversation_flush(self, thread_id: str) -> None:
+        existing = self._conversation_flush_tasks.get(thread_id)
+        if existing and not existing.done():
+            existing.cancel()
+        task = asyncio.create_task(self._flush_conversation_after_delay(thread_id))
+        self._conversation_flush_tasks[thread_id] = task
+
+    async def _flush_conversation_after_delay(self, thread_id: str) -> None:
+        try:
+            await asyncio.sleep(self._buffer_delay_seconds)
+            await self._flush_conversation_buffer(thread_id)
+        except asyncio.CancelledError:
+            return
+
+    async def _flush_conversation_buffer(self, thread_id: str) -> None:
+        buffer = self._conversation_buffers.get(thread_id)
+        if not buffer or not buffer.get("messages"):
+            return
+
+        last_updated = buffer.get("updated_at")
+        if last_updated:
+            updated_at = datetime.fromisoformat(last_updated)
+            if updated_at.tzinfo is None:
+                updated_at = updated_at.replace(tzinfo=timezone.utc)
+            if (datetime.now(timezone.utc) - updated_at).total_seconds() < self._buffer_delay_seconds - 1:
+                await self._schedule_conversation_flush(thread_id)
+                return
+
+        messages = buffer.get("messages", [])
+        merged_text = "\n".join(msg.get("text", "").strip() for msg in messages if msg.get("text", "").strip())
+        if not merged_text:
+            self._conversation_buffers.pop(thread_id, None)
+            self._conversation_flush_tasks.pop(thread_id, None)
+            return
+
+        chat_id = buffer.get("chat_id", "")
+        user_id = buffer.get("user_id", "")
+        display_name = buffer.get("display_name", user_id)
+        metadata = dict(buffer.get("metadata", {}))
+        metadata.update(
+            {
+                "platform": "telegram",
+                "chat_id": chat_id,
+                "thread_buffered": True,
+                "buffer_delay_seconds": self._buffer_delay_seconds,
+                "buffer_message_count": len(messages),
+                "buffer_message_modes": [msg.get("message_mode") for msg in messages if msg.get("message_mode")],
+                "message_mode": buffer.get("message_mode", "statement"),
+            }
+        )
+
+        try:
+            reply = await self._call_supervisor(user_id, display_name, merged_text, thread_id, metadata)
+            if reply:
+                await self._send_message(chat_id, reply)
+        finally:
+            self._conversation_buffers.pop(thread_id, None)
+            task = self._conversation_flush_tasks.pop(thread_id, None)
+            if task and not task.done():
+                task.cancel()
+
     async def _call_supervisor(
         self,
         user_id: str,
@@ -425,17 +564,16 @@ class TelegramAdapter:
                         "metadata": metadata,
                     },
                     headers={"Authorization": f"Bearer {self.api_key}"} if self.api_key else {},
-                    timeout=30.0
+                    timeout=30.0,
                 )
-                
+
                 if response.status_code == 200:
                     payload = response.json()
                     if payload.get("status") == "skipped":
                         return ""
                     return payload.get("message", payload.get("response", "No response"))
-                else:
-                    return f"Lỗi: {response.status_code}"
-                    
+                return f"Lỗi: {response.status_code}"
+
         except Exception as e:
             logger.error("Supervisor call failed", error=str(e))
             return "Xin lỗi, có lỗi xảy ra."

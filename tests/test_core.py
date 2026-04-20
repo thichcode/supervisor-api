@@ -431,6 +431,14 @@ class TestKnowledgeSearch:
         assert "device" in clarification["missing_fields"]
         assert clarification["clarification_question"]
 
+    def test_detect_message_mode_question_vs_problem(self):
+        from src.core.conversation_continuity import ConversationContinuityEvaluator
+
+        evaluator = ConversationContinuityEvaluator()
+        assert evaluator.detect_message_mode("Bạn có thể hướng dẫn mình không?") == "question"
+        assert evaluator.detect_message_mode("VPN không vào được, báo lỗi 720") == "problem"
+        assert evaluator.detect_message_mode("Mình đã làm xong rồi") == "statement"
+
 
 class TestUserStyleLearning:
     def test_infer_structured_style(self):

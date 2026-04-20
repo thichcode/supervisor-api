@@ -94,10 +94,17 @@ class SimpleAgent:
         if memory.conversation_state:
             topic = memory.conversation_state.get("active_topic_title")
             mode = memory.conversation_state.get("conversation_mode")
+            message_mode = memory.conversation_state.get("last_user_message_mode")
             if topic:
                 parts.append(f"TOPIC: {topic}")
             if mode:
                 parts.append(f"MODE: {mode}")
+            if message_mode:
+                parts.append(f"MESSAGE_MODE: {message_mode}")
+                if message_mode == "problem":
+                    parts.append("INTENT: user is reporting a problem; ask for missing details only if needed.")
+                elif message_mode == "question":
+                    parts.append("INTENT: user is asking a question; answer directly if possible.")
             if memory.conversation_state.get("open_loops"):
                 parts.append(f"OPEN_LOOPS: {memory.conversation_state.get('open_loops', [])[:3]}")
 

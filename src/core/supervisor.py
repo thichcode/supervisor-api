@@ -663,26 +663,30 @@ class Supervisor:
             or user_profile.get("response_persona_hint")
         )
         communication_style = user_profile.get("communication_style") or "balanced"
+
         persona_lines = []
         if communication_style:
             persona_lines.append(f"Phong cách người dùng: {communication_style}")
         if response_persona_hint:
             persona_lines.append(f"Persona học được: {response_persona_hint}")
 
-        conversation_state = memory.conversation_state or {}
         state_lines = []
+        conversation_state = memory.conversation_state or {}
         if conversation_state.get("active_topic_title"):
             state_lines.append(f"Chủ đề hiện tại: {conversation_state['active_topic_title']}")
         if conversation_state.get("conversation_mode"):
-            state_lines.append(f"Chế độ hội thoại: {conversation_state['conversation_mode']}")
+            state_lines.append(f"Trạng thái hội thoại: {conversation_state['conversation_mode']}")
+        if conversation_state.get("last_user_message_mode"):
+            state_lines.append(f"Người dùng đang: {conversation_state['last_user_message_mode']}")
         if conversation_state.get("continuity_score") is not None:
             state_lines.append(f"Điểm liên tục: {conversation_state['continuity_score']}")
         if conversation_state.get("open_loops"):
             state_lines.append(f"Open loops: {conversation_state.get('open_loops', [])[:3]}")
         if conversation_state.get("key_entities"):
             state_lines.append(f"Entities: {conversation_state.get('key_entities', [])[:5]}")
-        state_block = "\n".join(state_lines)
+
         persona_block = "\n".join(persona_lines)
+        state_block = "\n".join(state_lines)
 
         if self._llm:
             system_prompt = "Bạn là một trợ lý AI hữu ích. Trả lời ngắn gọn, chính xác bằng tiếng Việt."

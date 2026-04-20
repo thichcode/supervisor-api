@@ -1,4 +1,5 @@
 import pytest
+from datetime import datetime, timedelta, timezone
 
 from src.core.schemas import ApprovalRequest, ApprovalStatus
 from src.gateway.platforms.telegram import (
@@ -60,6 +61,59 @@ def test_build_approval_inline_keyboard_has_approve_and_reject_buttons(sample_ap
             ]
         ]
     }
+
+
+@pytest.mark.asyncio
+async def test_flush_conversation_buffer_merges_messages_and_tracks_mode(monkeypatch):
+    adapter = TelegramAdapter(
+        token="bot-token",
+        session_store=object(),
+        supervisor_url="http://localhost:8000",
+        api_key=None,
+    )
+    adapter._buffer_delay_seconds = 60
+    adapter._conversation_buffers = {
+        "telegram_123": {
+            "thread_id": "telegram_123",
+            "chat_id": "123",
+            "user_id": "user-123",
+            "display_name": "Thuong",
+            "metadata": {"platform": "telegram"},
+            "messages": [
+                {"text": "VPN không vào được", "message_mode": "problem", "timestamp": datetime.now(timezone.utc).isoformat()},
+                {"text": "Mã lỗi 720", "message_mode": "problem", "timestamp": datetime.now(timezone.utc).isoformat()},
+            ],
+            "created_at": (datetime.now(timezone.utc) - timedelta(seconds=61)).isoformat(),
+            "updated_at": (datetime.now(timezone.utc) - timedelta(seconds=61)).isoformat(),
+            "message_mode": "problem",
+        }
+    }
+
+    replies = []
+    supervisor_calls = []
+
+    async def fake_call_supervisor(user_id, display_name, message, thread_id, metadata):
+        supervisor_calls.append((user_id, display_name, message, thread_id, metadata))
+        return "Đã nhận, mình kiểm tra ngay"
+
+    async def fake_send_message(chat_id, text):
+        replies.append((chat_id, text))
+
+    monkeypatch.setattr(adapter, "_call_supervisor", fake_call_supervisor)
+    monkeypatch.setattr(adapter, "_send_message", fake_send_message)
+
+    await adapter._flush_conversation_buffer("telegram_123")
+
+    assert supervisor_calls
+    user_id, display_name, merged_message, thread_id, metadata = supervisor_calls[0]
+    assert user_id == "user-123"
+    assert display_name == "Thuong"
+    assert merged_message == "VPN không vào được\nMã lỗi 720"
+    assert thread_id == "telegram_123"
+    assert metadata["thread_buffered"] is True
+    assert metadata["buffer_message_count"] == 2
+    assert metadata["message_mode"] == "problem"
+    assert replies == [("123", "Đã nhận, mình kiểm tra ngay")]
 
 
 @pytest.mark.asyncio

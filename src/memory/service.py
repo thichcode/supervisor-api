@@ -78,6 +78,8 @@ class MemoryContext:
                 parts.append(f"Current Topic: {self.conversation_state['active_topic_title']}")
             if self.conversation_state.get("conversation_mode"):
                 parts.append(f"Conversation Mode: {self.conversation_state['conversation_mode']}")
+            if self.conversation_state.get("last_user_message_mode"):
+                parts.append(f"Message Mode: {self.conversation_state['last_user_message_mode']}")
             if self.conversation_state.get("continuity_score") is not None:
                 parts.append(f"Continuity Score: {self.conversation_state['continuity_score']}")
             if self.conversation_state.get("open_loops"):
@@ -339,6 +341,7 @@ class MemoryService:
         )
 
         current_state = dict(memory.conversation_state or {})
+        current_state["last_user_message_mode"] = state_result.get("message_mode")
         merged_open_loops = list(current_state.get("open_loops", []))
         for loop in state_result.get("new_open_loops", []):
             if loop not in merged_open_loops:

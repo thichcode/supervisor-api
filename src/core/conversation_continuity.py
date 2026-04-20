@@ -27,10 +27,17 @@ QUESTION_CUES = {
     "?", "how", "what", "why", "làm sao", "thế nào", "tại sao", "có thể", "giúp mình", "giúp tôi",
 }
 
+PROBLEM_CUES = {
+    "lỗi", "error", "issue", "problem", "không được", "không hoạt động", "bị lỗi", "treo", "đơ",
+    "chậm", "lag", "giật", "không vào được", "không đăng nhập được", "cannot", "can't", "unable",
+    "stuck", "broken", "fail", "crash", "problem with", "need help",
+}
+
 
 @dataclass
 class ConversationContinuityResult:
     mode: str
+    message_mode: str
     continuity_score: float
     reason: str
     matched_entities: list[str]
@@ -42,6 +49,7 @@ class ConversationContinuityResult:
     def to_dict(self) -> dict:
         return {
             "mode": self.mode,
+            "message_mode": self.message_mode,
             "continuity_score": self.continuity_score,
             "reason": self.reason,
             "matched_entities": self.matched_entities,
@@ -84,6 +92,16 @@ class ConversationContinuityEvaluator:
 
     def _loop_key(self, text: str) -> str:
         return sha1(self._normalize(text).encode("utf-8")).hexdigest()[:12]
+
+    def detect_message_mode(self, text: str) -> str:
+        normalized = self._normalize(text)
+        if not normalized:
+            return "statement"
+        if any(cue in normalized for cue in QUESTION_CUES):
+            return "question"
+        if any(cue in normalized for cue in PROBLEM_CUES):
+            return "problem"
+        return "statement"
 
     def evaluate(
         self,
@@ -182,8 +200,11 @@ class ConversationContinuityEvaluator:
                 if loop_text and any(ent in loop_text for ent in current_entities):
                     closed_loops.append(loop.get("key"))
 
+        message_mode = self.detect_message_mode(current_message)
+
         return ConversationContinuityResult(
             mode=mode,
+            message_mode=message_mode,
             continuity_score=score,
             reason=reason,
             matched_entities=matched_entities,

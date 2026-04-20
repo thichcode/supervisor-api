@@ -65,6 +65,7 @@ Mạch hội thoại hiện tại: {context.get('conversation_state', {})}
 Tin nhắn gần đây: {context.get('conversation_history', [])}
 Vai trò người dùng: {context.get('user_info', {}).get('role', 'employee')}
 Phong cách người dùng: {context.get('user_info', {}).get('communication_style', 'balanced')}
+Mục đích người dùng: {context.get('conversation_state', {}).get('last_user_message_mode', 'unknown')}
 
 {context.get('url_context', '')}
 
