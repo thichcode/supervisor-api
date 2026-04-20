@@ -209,6 +209,8 @@ class ChatService:
                     "agents_used": result.metadata.get("agents_used", []),
                     "intent": result.metadata.get("intent"),
                     "risk_level": result.risk_level,
+                    "kb_sources": (result.metadata or {}).get("kb_sources", []),
+                    "kb_evidence": (result.metadata or {}).get("kb_evidence", []),
                     **group_chat_metadata,
                 },
             )

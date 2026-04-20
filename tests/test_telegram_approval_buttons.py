@@ -21,7 +21,16 @@ def sample_approval():
         threshold=0.9,
         status=ApprovalStatus.PENDING,
         action_type="send_message",
-        metadata={"thread_id": "thread-1", "risk_level": "low"},
+        metadata={
+            "thread_id": "thread-1",
+            "risk_level": "low",
+            "kb_sources": [
+                {"id": "kb-1", "title": "Reset VPN", "similarity": 0.91},
+            ],
+            "kb_evidence": [
+                {"id": "kb-1", "title": "Reset VPN", "similarity": 0.91, "content": "Use the VPN portal..."},
+            ],
+        },
     )
 
 
@@ -33,6 +42,8 @@ def test_build_approval_message_text_includes_buttons_context(sample_approval):
     assert "Thuong" in text
     assert "42.0%" in text
     assert "Xin chào" in text
+    assert "KB Sources:" in text
+    assert "Reset VPN" in text
 
 
 def test_build_approval_inline_keyboard_has_approve_and_reject_buttons(sample_approval):

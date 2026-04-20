@@ -314,6 +314,7 @@ class Supervisor:
         decision = "direct"
         final_confidence = 0.85
         kb_hit = False
+        kb_sources = []
         # NEW v2: Check cache first
         if NEW_MODULES_AVAILABLE:
             cache_result = self._check_cache(payload)
@@ -351,6 +352,7 @@ class Supervisor:
             context = self.context_agent.build(payload, memory)
             policy = await self.policy_agent.extract(payload, memory, self._llm)
             knowledge = await self.knowledge_agent.retrieve(payload, memory, self._llm)
+            kb_sources = knowledge.get("knowledge_results", [])
 
             if policy.get("guide_requested") and policy.get("guide_id"):
                 answer = await self._handle_guide_request(payload, policy)
@@ -413,6 +415,23 @@ class Supervisor:
         if NEW_MODULES_AVAILABLE and status == "completed" and final_confidence >= 0.6:
             self._cache_response(payload, answer, final_confidence)
 
+        extra_metadata = {
+            "kb_hit": kb_hit,
+            "kb_sources": kb_sources,
+        }
+        if kb_sources:
+            extra_metadata["kb_evidence"] = [
+                {
+                    "id": item.get("id"),
+                    "type": item.get("type"),
+                    "title": item.get("title"),
+                    "category": item.get("category"),
+                    "similarity": item.get("similarity"),
+                    "content": item.get("content", "")[:200],
+                }
+                for item in kb_sources[:3]
+            ]
+
         return self._create_output(
             payload=payload,
             answer=answer,
@@ -422,6 +441,7 @@ class Supervisor:
             agents_used=agents_used,
             status=status,
             processing_time=start_time,
+            extra_metadata=extra_metadata,
         )
     
     # ===== NEW v2 Methods =====
@@ -672,6 +692,7 @@ class Supervisor:
         agents_used: list,
         status: str,
         processing_time: float,
+        extra_metadata: Optional[dict] = None,
     ) -> OutputPayload:
         from src.core.schemas import MessageInfo
         
@@ -689,6 +710,7 @@ class Supervisor:
             processing_time_ms=int(processing_time * 1000),
         )
         
+        output.metadata.update(extra_metadata or {})
         output.request_id = payload.request_id
         
         return output

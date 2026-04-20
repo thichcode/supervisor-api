@@ -83,6 +83,8 @@ class ApprovalService:
             "ai_response": approval.ai_response,
             "confidence": round(approval.confidence * 100, 1),
             "threshold": round(approval.threshold * 100, 1),
+            "kb_sources": approval.metadata.get("kb_sources", []),
+            "kb_evidence": approval.metadata.get("kb_evidence", []),
             "message": f"⚠️ Cần duyệt phản hồi cho {approval.display_name}\n\n"
                       f"Confidence: {round(approval.confidence * 100, 1)}% (threshold: {round(approval.threshold * 100, 1)}%)\n\n"
                       f"**Tin nhắn gốc:** {approval.original_message[:100] if approval.original_message else 'N/A'}...\n\n"

@@ -16,6 +16,28 @@ def build_approval_message_text(approval) -> str:
     threshold_pct = round((approval.threshold * 100) if approval.threshold <= 1 else approval.threshold, 1)
     thread_id = approval.metadata.get("thread_id", "") if getattr(approval, "metadata", None) else ""
     risk_level = approval.metadata.get("risk_level", "") if getattr(approval, "metadata", None) else ""
+    kb_sources = approval.metadata.get("kb_sources", []) if getattr(approval, "metadata", None) else []
+    kb_evidence = approval.metadata.get("kb_evidence", []) if getattr(approval, "metadata", None) else []
+
+    kb_lines = []
+    if kb_sources:
+        kb_lines.append("KB Sources:")
+        for idx, source in enumerate(kb_sources[:3], start=1):
+            title = source.get("title") or source.get("name") or source.get("id") or "N/A"
+            similarity = source.get("similarity")
+            similarity_text = f" ({similarity:.2f})" if isinstance(similarity, (int, float)) else ""
+            kb_lines.append(f"{idx}. {title}{similarity_text}")
+    if kb_evidence:
+        kb_lines.append("KB Evidence:")
+        for idx, item in enumerate(kb_evidence[:3], start=1):
+            title = item.get("title") or item.get("id") or "N/A"
+            similarity = item.get("similarity")
+            similarity_text = f" ({similarity:.2f})" if isinstance(similarity, (int, float)) else ""
+            kb_lines.append(f"{idx}. {title}{similarity_text}")
+
+    kb_section = "\n".join(kb_lines)
+    if kb_section:
+        kb_section = f"\n\n{kb_section}"
 
     return (
         "⚠️ Approval Required\n\n"
@@ -26,7 +48,7 @@ def build_approval_message_text(approval) -> str:
         f"Risk: {risk_level or 'N/A'}\n"
         f"Confidence: {confidence_pct}% (threshold: {threshold_pct}%)\n\n"
         f"Original:\n{approval.original_message}\n\n"
-        f"AI Response:\n{approval.ai_response}\n\n"
+        f"AI Response:\n{approval.ai_response}{kb_section}\n\n"
         "Use the buttons below to approve or reject."
     )
 
