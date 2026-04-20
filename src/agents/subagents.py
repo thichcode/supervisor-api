@@ -176,8 +176,12 @@ class KnowledgeAgent:
                 knowledge_base_query,
                 llm,
             )
-            knowledge["knowledge_results"] = search_results
-            knowledge["confidence"] = 0.85 if search_results else 0.4
+            knowledge["knowledge_results"] = search_results.get("results", []) if isinstance(search_results, dict) else search_results
+            knowledge["knowledge_clarification_needed"] = bool(search_results.get("clarification", {}).get("needs_clarification")) if isinstance(search_results, dict) else False
+            knowledge["knowledge_clarification_question"] = search_results.get("clarification", {}).get("clarification_question", "") if isinstance(search_results, dict) else ""
+            knowledge["knowledge_missing_fields"] = search_results.get("clarification", {}).get("missing_fields", []) if isinstance(search_results, dict) else []
+            knowledge["knowledge_required_fields"] = search_results.get("clarification", {}).get("required_fields", []) if isinstance(search_results, dict) else []
+            knowledge["confidence"] = 0.85 if knowledge["knowledge_results"] else 0.4
 
         if memory.episodic_memory:
             knowledge["patterns"] = [
@@ -243,7 +247,7 @@ Trả về JSON format:
         query: str,
         search_type: str,
         llm: Optional[MultiProviderLLMClient],
-    ) -> list:
+    ) -> dict:
         async with async_session() as session:
             if llm:
                 kb_service = KnowledgeRetrievalService(session, llm)
@@ -252,7 +256,7 @@ Trả về JSON format:
                 kb_service = KnowledgeRetrievalService(session, None)
                 results = await kb_service.search(query, search_type)
 
-            return [
+            formatted_results = [
                 {
                     "type": r.knowledge_type.value,
                     "id": r.id,
@@ -260,6 +264,12 @@ Trả về JSON format:
                     "content": r.content[:500],
                     "category": r.category,
                     "similarity": r.similarity,
+                    "metadata": r.metadata or {},
                 }
                 for r in results.results
             ]
+            clarification = kb_service.infer_clarification(query, results.results)
+            return {
+                "results": formatted_results,
+                "clarification": clarification,
+            }

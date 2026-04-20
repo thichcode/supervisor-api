@@ -354,6 +354,26 @@ class Supervisor:
             knowledge = await self.knowledge_agent.retrieve(payload, memory, self._llm)
             kb_sources = knowledge.get("knowledge_results", [])
 
+            if knowledge.get("knowledge_clarification_needed") and kb_sources:
+                clarification_question = knowledge.get("knowledge_clarification_question") or self._build_kb_clarification_question(kb_sources[0], knowledge.get("knowledge_missing_fields", []))
+                return self._create_output(
+                    payload=payload,
+                    answer=clarification_question,
+                    confidence=knowledge.get("confidence", 0.6),
+                    intent=intent,
+                    risk=risk,
+                    agents_used=agents_used + ["kb_clarification"],
+                    status="needs_clarification",
+                    processing_time=start_time,
+                    extra_metadata={
+                        "kb_hit": True,
+                        "kb_clarification_needed": True,
+                        "kb_missing_fields": knowledge.get("knowledge_missing_fields", []),
+                        "kb_required_fields": knowledge.get("knowledge_required_fields", []),
+                        "kb_sources": kb_sources,
+                    },
+                )
+
             if policy.get("guide_requested") and policy.get("guide_id"):
                 answer = await self._handle_guide_request(payload, policy)
                 final_confidence = 0.95
@@ -728,6 +748,26 @@ class Supervisor:
 
     def _format_system_query_response(self, query_result: Dict) -> str:
         return f"System query result: {query_result.get('result', 'N/A')}"
+
+    def _build_kb_clarification_question(self, kb_source: Dict, missing_fields: list[str]) -> str:
+        labels = {
+            "error_message": "thông báo lỗi chính xác",
+            "error_code": "mã lỗi",
+            "system": "tên hệ thống/dịch vụ liên quan",
+            "environment": "môi trường (prod/dev/staging)",
+            "device": "thiết bị đang dùng",
+            "os": "hệ điều hành/phiên bản máy",
+            "step": "bạn đang kẹt ở bước nào",
+            "user_id": "user_id/tài khoản liên quan",
+            "policy_scope": "phạm vi áp dụng",
+            "document_scope": "phạm vi tài liệu cần tra",
+            "use_case": "trường hợp sử dụng cụ thể",
+            "user_role": "vai trò/phòng ban liên quan",
+        }
+        friendly_fields = [labels.get(field, field.replace("_", " ")) for field in missing_fields[:4]]
+        fields_text = "; ".join(friendly_fields)
+        title = kb_source.get("title") or kb_source.get("id") or "KB"
+        return f"Mình tìm thấy KB phù hợp về '{title}'. Để support đúng theo KB, bạn cho mình thêm: {fields_text}."
 
     async def _log_audit(
         self,

@@ -1,5 +1,6 @@
 import pytest
 from datetime import datetime, timezone
+from unittest.mock import AsyncMock, MagicMock
 from src.core import (
     InputPayload,
     UserInfo,
@@ -299,6 +300,48 @@ class TestSupervisor:
         assert confidence == 0.91
         assert "style=concise, tone=formal" in captured["system_prompt"]
     @pytest.mark.asyncio
+    async def test_process_returns_kb_clarification_when_context_missing(self, sample_payload, sample_context, monkeypatch):
+        from src.core.supervisor import Supervisor
+
+        sample_payload.message.text = "VPN is not working"
+
+        supervisor = Supervisor()
+        supervisor.set_llm(None)
+        supervisor.decision_engine.should_use_subagents = lambda *args, **kwargs: True
+        supervisor._fetch_urls = AsyncMock(return_value="")
+        supervisor.context_agent.build = lambda payload, memory: {}
+        supervisor.policy_agent.extract = AsyncMock(return_value={"guide_requested": False, "guide_id": None})
+        supervisor.knowledge_agent.retrieve = AsyncMock(return_value={
+            "facts": [],
+            "patterns": [],
+            "confidence": 0.85,
+            "system_query_requested": False,
+            "query_type": None,
+            "knowledge_results": [
+                {
+                    "type": "faq",
+                    "id": "faq-vpn-1",
+                    "title": "VPN access issue",
+                    "content": "Use the VPN portal to reset your VPN profile",
+                    "category": "access",
+                    "similarity": 0.82,
+                    "metadata": {},
+                }
+            ],
+            "knowledge_clarification_needed": True,
+            "knowledge_clarification_question": "Mình tìm thấy KB phù hợp về 'VPN access issue'. Để support đúng theo KB, bạn cho mình thêm: thiết bị đang dùng; hệ điều hành/phiên bản máy; mã lỗi.",
+            "knowledge_missing_fields": ["device", "os", "error_code"],
+            "knowledge_required_fields": ["device", "os", "error_code"],
+        })
+
+        result = await supervisor.process(sample_payload, sample_context)
+
+        assert result.status == "needs_clarification"
+        assert "thiết bị" in result.answer.lower() or "mã lỗi" in result.answer.lower()
+        assert result.metadata["kb_clarification_needed"] is True
+        assert result.metadata["kb_missing_fields"] == ["device", "os", "error_code"]
+
+    @pytest.mark.asyncio
     @pytest.mark.skip(reason="Supervisor v2 has different architecture - test needs update")
     async def test_subagent_path_with_policy_intent(self, sample_payload, sample_context, monkeypatch):
         from src.core.supervisor import Supervisor
@@ -366,6 +409,27 @@ class TestKnowledgeSearch:
         assert all(len(query) <= 512 for query in captured_queries)
         assert all("\n" not in query for query in captured_queries)
         assert result.total == 0
+
+    def test_infer_clarification_for_vague_kb_match(self):
+        from src.knowledge.schemas import KnowledgeSearchResult, KnowledgeType
+
+        service = KnowledgeRetrievalService(session=object())
+        result = KnowledgeSearchResult(
+            knowledge_type=KnowledgeType.FAQ,
+            id="faq-vpn-1",
+            title="VPN access issue",
+            content="Use the VPN portal to reset your VPN profile",
+            category="access",
+            tags=[],
+            similarity=0.82,
+            metadata={},
+        )
+
+        clarification = service.infer_clarification("VPN not working", [result])
+
+        assert clarification["needs_clarification"] is True
+        assert "device" in clarification["missing_fields"]
+        assert clarification["clarification_question"]
 
 
 class TestUserStyleLearning:

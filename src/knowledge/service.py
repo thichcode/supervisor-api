@@ -51,6 +51,140 @@ class KnowledgeRetrievalService:
             query=query,
         )
 
+    def infer_clarification(
+        self,
+        query: str,
+        results: List[KnowledgeSearchResult],
+    ) -> dict:
+        """Infer whether the KB match is too vague and needs more user details."""
+        if not results:
+            return {
+                "needs_clarification": False,
+                "missing_fields": [],
+                "clarification_question": "",
+                "reason": "no_results",
+            }
+
+        top = results[0]
+        if top.similarity < 0.55:
+            return {
+                "needs_clarification": False,
+                "missing_fields": [],
+                "clarification_question": "",
+                "reason": "low_similarity",
+            }
+
+        required_fields = self._extract_required_fields(top)
+        if not required_fields:
+            required_fields = self._default_required_fields(top.knowledge_type.value, top.category, top.title)
+
+        missing_fields = self._missing_fields(query, required_fields)
+        if not missing_fields:
+            return {
+                "needs_clarification": False,
+                "missing_fields": [],
+                "clarification_question": "",
+                "reason": "enough_context",
+            }
+
+        clarification_question = self._build_clarification_question(top, missing_fields)
+        return {
+            "needs_clarification": True,
+            "missing_fields": missing_fields,
+            "clarification_question": clarification_question,
+            "reason": "missing_kb_context",
+            "required_fields": required_fields,
+        }
+
+    def _extract_required_fields(self, result: KnowledgeSearchResult) -> List[str]:
+        metadata = result.metadata or {}
+        required_fields = metadata.get("required_fields") or []
+        if isinstance(required_fields, str):
+            required_fields = [required_fields]
+        required_fields = [str(field).strip() for field in required_fields if str(field).strip()]
+
+        placeholder_text = f"{result.title} {result.content}"
+        placeholder_matches = re.findall(r"[<\[{]([^>\]}]+)[>\]}]", placeholder_text)
+        for field in placeholder_matches:
+            cleaned = field.strip().lower()
+            if cleaned and cleaned not in required_fields:
+                required_fields.append(cleaned)
+
+        return required_fields
+
+    def _default_required_fields(self, kb_type: str, category: str, title: str) -> List[str]:
+        kb_type = (kb_type or "").lower()
+        category = (category or "").lower()
+        title = (title or "").lower()
+        fields: List[str] = []
+
+        if kb_type == "faq":
+            fields.extend(["error_message", "system", "environment"])
+        elif kb_type == "guide":
+            fields.extend(["step", "environment", "error_message"])
+        elif kb_type == "document":
+            fields.extend(["document_scope", "use_case", "system"])
+        elif kb_type == "policy":
+            fields.extend(["policy_scope", "system", "user_role"])
+
+        if any(keyword in title for keyword in ["vpn", "remote", "network"]):
+            fields.extend(["device", "os", "error_code"])
+        if any(keyword in category for keyword in ["access", "auth", "login"]):
+            fields.extend(["user_id", "system", "error_message"])
+
+        unique_fields: List[str] = []
+        for field in fields:
+            if field not in unique_fields:
+                unique_fields.append(field)
+        return unique_fields
+
+    def _missing_fields(self, query: str, required_fields: List[str]) -> List[str]:
+        normalized = (query or "").lower()
+        synonyms = {
+            "error_message": ["lỗi", "error", "message", "thông báo"],
+            "error_code": ["code", "mã lỗi", "error code"],
+            "system": ["hệ thống", "system", "app", "application", "dịch vụ", "service"],
+            "environment": ["prod", "production", "dev", "staging", "môi trường", "env"],
+            "device": ["device", "máy", "laptop", "pc", "desktop", "mobile", "android", "ios"],
+            "os": ["windows", "mac", "linux", "ubuntu", "os"],
+            "step": ["bước", "step", "đã làm", "đang kẹt", "kẹt ở"],
+            "user_id": ["user", "user_id", "id người dùng", "tài khoản"],
+            "policy_scope": ["phạm vi", "scope", "đối tượng", "áp dụng cho"],
+            "document_scope": ["tài liệu", "document", "file", "báo cáo", "chứng từ"],
+            "use_case": ["use case", "trường hợp", "tình huống", "mục đích"],
+            "user_role": ["vai trò", "role", "chức danh", "phòng ban"],
+        }
+
+        missing = []
+        for field in required_fields:
+            field_key = field.lower().strip()
+            field_synonyms = synonyms.get(field_key, [field_key.replace("_", " ")])
+            if not any(token in normalized for token in field_synonyms):
+                missing.append(field)
+        return missing
+
+    def _build_clarification_question(self, result: KnowledgeSearchResult, missing_fields: List[str]) -> str:
+        labels = {
+            "error_message": "thông báo lỗi chính xác",
+            "error_code": "mã lỗi",
+            "system": "tên hệ thống/dịch vụ liên quan",
+            "environment": "môi trường (prod/dev/staging)",
+            "device": "thiết bị đang dùng",
+            "os": "hệ điều hành/phiên bản máy",
+            "step": "bạn đang kẹt ở bước nào",
+            "user_id": "user_id/tài khoản liên quan",
+            "policy_scope": "phạm vi áp dụng",
+            "document_scope": "phạm vi tài liệu cần tra",
+            "use_case": "trường hợp sử dụng cụ thể",
+            "user_role": "vai trò/phòng ban liên quan",
+        }
+        friendly_fields = [labels.get(field, field.replace("_", " ")) for field in missing_fields[:4]]
+        fields_text = "; ".join(friendly_fields)
+        return (
+            f"Mình tìm thấy KB phù hợp về '{result.title}'. Để support đúng theo KB, "
+            f"bạn cho mình thêm: {fields_text}."
+        )
+
     def _resolve_search_types(self, search_type: Optional[str]) -> List[str]:
         if search_type:
             return [search_type]
