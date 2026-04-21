@@ -83,6 +83,7 @@ class KnowledgeSearchRequest(BaseModel):
     category: Optional[str] = None
     tags: Optional[List[str]] = None
     limit: int = 5
+    offset: int = 0
 
 
 class KnowledgeSearchResult(BaseModel):

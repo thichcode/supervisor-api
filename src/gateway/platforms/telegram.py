@@ -5,6 +5,7 @@ Telegram Platform Adapter
 import asyncio
 from datetime import datetime, timezone
 from typing import Optional, Dict, Any, Tuple
+import secrets
 import structlog
 import httpx
 
@@ -120,6 +121,7 @@ class TelegramAdapter:
         self._conversation_flush_tasks: Dict[str, asyncio.Task] = {}
         self._buffer_delay_seconds = 60
         self._message_mode_detector = ConversationContinuityEvaluator()
+        self._kb_sessions: Dict[str, Dict[str, Any]] = {}
     
     async def start(self):
         """Start the Telegram bot"""
@@ -177,6 +179,8 @@ class TelegramAdapter:
             {"command": "health", "description": "Check bot and supervisor health"},
             {"command": "history", "description": "View history guidance"},
             {"command": "clear", "description": "Clear chat history"},
+            {"command": "kb", "description": "Search or browse the knowledge base"},
+            {"command": "super_analytics", "description": "View quick supervisor analytics"},
         ]
 
         try:
@@ -296,6 +300,9 @@ class TelegramAdapter:
         data = callback_query.get("data", "")
         parsed = parse_approval_callback_data(data)
         if not parsed:
+            parsed_kb = self._parse_kb_callback_data(data)
+            if parsed_kb:
+                return await self._handle_kb_callback(callback_query, *parsed_kb)
             return False
 
         action, approval_id = parsed
@@ -341,12 +348,16 @@ class TelegramAdapter:
     
     async def _handle_command(self, chat_id: str, user_id: str, command: str):
         """Handle a command"""
-        cmd = command.split()[0].lower()
-        
+        tokens = command.split()
+        cmd = tokens[0].lower()
+
         if cmd == "/start":
             await self._send_message(chat_id, "Xin chào! Tôi là Supervisor Agent. Gửi tin nhắn để được hỗ trợ.")
         elif cmd == "/help":
-            await self._send_message(chat_id, "Commands:\n/start - Start\n/help - Help\n/health - Check bot and supervisor health\n/history - View history")
+            await self._send_message(
+                chat_id,
+                "Commands:\n/start - Start\n/help - Help\n/health - Check bot and supervisor health\n/history - View history\n/clear - Clear history\n/kb - Search or browse KB\n/super_analytics - Quick analytics report",
+            )
         elif cmd == "/history":
             await self._send_message(chat_id, "Use /clear to clear history")
         elif cmd == "/health":
@@ -355,6 +366,10 @@ class TelegramAdapter:
             session_id = f"telegram_{user_id}"
             self.session_store.clear_history(session_id)
             await self._send_message(chat_id, "History cleared!")
+        elif cmd == "/kb":
+            await self._handle_kb_command(chat_id, user_id, command)
+        elif cmd == "/super_analytics":
+            await self._handle_super_analytics_command(chat_id, command)
         else:
             await self._send_message(chat_id, f"Unknown command: {command}")
 
@@ -429,6 +444,288 @@ class TelegramAdapter:
             logger.error("KB search failed", error=str(e), approval_id=approval_id)
             await self._send_message(chat_id, f"Có lỗi xảy ra: {str(e)}")
     
+    def _normalize_kb_kind(self, kind: str) -> str:
+        kind = (kind or "all").strip().lower()
+        aliases = {
+            "policies": "policy",
+            "policy": "policy",
+            "faqs": "faq",
+            "faq": "faq",
+            "guides": "guide",
+            "guide": "guide",
+            "documents": "document",
+            "document": "document",
+            "all": "all",
+        }
+        return aliases.get(kind, "all")
+
+    def _parse_kb_callback_data(self, data: str) -> Optional[Tuple[str, str, int]]:
+        if not data.startswith("kb:page:"):
+            return None
+        parts = data.split(":", 3)
+        if len(parts) != 4:
+            return None
+        _, _, session_id, page_text = parts
+        if not session_id:
+            return None
+        try:
+            page = int(page_text)
+        except ValueError:
+            return None
+        return "page", session_id, page
+
+    def _kb_session_label(self, session: Dict[str, Any]) -> str:
+        if session.get("mode") == "search":
+            query = session.get("query", "").strip()
+            return f"🔍 KB Search: {query or 'all'}"
+        kind = session.get("search_type", "all")
+        kind_label = {
+            "policy": "Policies",
+            "faq": "FAQs",
+            "guide": "Guides",
+            "document": "Documents",
+            "all": "All KB",
+        }.get(kind, kind.title())
+        return f"📚 KB List: {kind_label}"
+
+    def _build_kb_inline_keyboard(self, session_id: str, page: int, total_pages: int) -> Dict[str, Any]:
+        buttons = []
+        nav_row = []
+        if page > 1:
+            nav_row.append({"text": "⬅️ Prev", "callback_data": f"kb:page:{session_id}:{page - 1}"})
+        if page < total_pages:
+            nav_row.append({"text": "➡️ Next", "callback_data": f"kb:page:{session_id}:{page + 1}"})
+        if nav_row:
+            buttons.append(nav_row)
+        return {"inline_keyboard": buttons} if buttons else {}
+
+    def _format_kb_results_text(self, session: Dict[str, Any], results: list, page: int, total_pages: int, total: int) -> str:
+        header_lines = [self._kb_session_label(session), f"Page: {page}/{total_pages}", f"Total results: {total}"]
+        if session.get("category"):
+            header_lines.append(f"Category: {session['category']}")
+        if session.get("query"):
+            header_lines.append(f"Query: {session['query']}")
+        header_lines.append("")
+
+        body_lines = []
+        start_index = (page - 1) * session.get("page_size", 5) + 1
+        for idx, item in enumerate(results, start=start_index):
+            title = item.get("title") or item.get("id") or "N/A"
+            kind = (item.get("knowledge_type") or "").upper()
+            category = item.get("category") or "N/A"
+            similarity = item.get("similarity")
+            similarity_text = f"{similarity:.2f}" if isinstance(similarity, (int, float)) else "N/A"
+            content = (item.get("content") or "").replace("\n", " ").strip()
+            snippet = content[:180]
+            if len(content) > 180:
+                snippet += "..."
+            body_lines.append(f"{idx}. [{kind}] {title}")
+            body_lines.append(f"   ID: {item.get('id', 'N/A')} | Category: {category} | Score: {similarity_text}")
+            if snippet:
+                body_lines.append(f"   {snippet}")
+            body_lines.append("")
+
+        if not body_lines:
+            body_lines.append("Không có kết quả KB phù hợp.")
+
+        return "\n".join(header_lines + body_lines).strip()
+
+    async def _handle_kb_command(self, chat_id: str, user_id: str, command: str):
+        tokens = command.split()
+        if len(tokens) < 2:
+            await self._send_message(
+                chat_id,
+                "Dùng:\n/kb search <từ khoá>\n/kb list <policy|faq|guide|document|all> [page]\nVí dụ:\n/kb search vpn\n/kb list faq 2",
+                parse_mode=None,
+            )
+            return
+
+        action = tokens[1].lower()
+        if action in {"search", "find"}:
+            query = command.split(maxsplit=2)[2].strip() if len(tokens) > 2 else ""
+            if not query:
+                await self._send_message(chat_id, "Nhập từ khoá sau /kb search để tìm KB.", parse_mode=None)
+                return
+            session = {
+                "mode": "search",
+                "query": query,
+                "search_type": "all",
+                "category": None,
+                "tags": [],
+                "page_size": 5,
+                "user_id": user_id,
+            }
+            await self._render_kb_results(chat_id, session, page=1)
+            return
+
+        if action in {"list", "ls"}:
+            kind = self._normalize_kb_kind(tokens[2] if len(tokens) > 2 else "all")
+            page = 1
+            if len(tokens) > 3:
+                try:
+                    page = max(1, int(tokens[3]))
+                except ValueError:
+                    page = 1
+            session = {
+                "mode": "list",
+                "query": "",
+                "search_type": kind,
+                "category": None,
+                "tags": [],
+                "page_size": 5,
+                "user_id": user_id,
+            }
+            await self._render_kb_results(chat_id, session, page=page)
+            return
+
+        kind = self._normalize_kb_kind(action)
+        if kind != "all":
+            page = 1
+            if len(tokens) > 2:
+                try:
+                    page = max(1, int(tokens[2]))
+                except ValueError:
+                    page = 1
+            session = {
+                "mode": "list",
+                "query": "",
+                "search_type": kind,
+                "category": None,
+                "tags": [],
+                "page_size": 5,
+                "user_id": user_id,
+            }
+            await self._render_kb_results(chat_id, session, page=page)
+            return
+
+        query = command.split(maxsplit=1)[1].strip()
+        session = {
+            "mode": "search",
+            "query": query,
+            "search_type": "all",
+            "category": None,
+            "tags": [],
+            "page_size": 5,
+            "user_id": user_id,
+        }
+        await self._render_kb_results(chat_id, session, page=1)
+
+    async def _handle_kb_callback(self, callback_query: Dict[str, Any], action: str, session_id: str, page: int) -> bool:
+        callback_query_id = callback_query.get("id")
+        message = callback_query.get("message") or {}
+        chat = message.get("chat") or {}
+        chat_id = str(chat.get("id", ""))
+        message_id = message.get("message_id")
+
+        if action != "page":
+            await self._answer_callback_query(callback_query_id, "Không hỗ trợ action KB này.", show_alert=True)
+            return False
+
+        if session_id not in self._kb_sessions:
+            await self._answer_callback_query(callback_query_id, "Phiên KB đã hết hạn. Hãy tìm lại.", show_alert=True)
+            return False
+
+        await self._answer_callback_query(callback_query_id, f"Đang mở trang {page}...", show_alert=False)
+        await self._render_kb_results(chat_id, self._kb_sessions[session_id], page=page, edit_message_id=message_id)
+        return True
+
+    async def _render_kb_results(self, chat_id: str, session: Dict[str, Any], page: int = 1, edit_message_id: Any = None) -> None:
+        session_id = session.get("session_id")
+        if not session_id:
+            session_id = secrets.token_hex(3)
+            session = {**session, "session_id": session_id}
+            self._kb_sessions[session_id] = session
+        else:
+            self._kb_sessions[session_id] = session
+
+        page_size = session.get("page_size", 5)
+        offset = max(0, (page - 1) * page_size)
+        payload = {
+            "query": session.get("query", ""),
+            "search_type": session.get("search_type", "all"),
+            "category": session.get("category"),
+            "tags": session.get("tags") or [],
+            "limit": page_size,
+            "offset": offset,
+        }
+
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    f"{self.supervisor_url}/knowledge/search",
+                    json=payload,
+                    timeout=30.0,
+                )
+
+            if response.status_code != 200:
+                await self._send_message(chat_id, f"Lỗi khi tìm KB: {response.status_code}", parse_mode=None)
+                return
+
+            data = response.json()
+            results = data.get("results", []) or []
+            total = int(data.get("total", len(results)) or 0)
+            total_pages = max(1, (total + page_size - 1) // page_size) if total else 1
+            current_page = max(1, min(page, total_pages))
+            if current_page != page and total > 0:
+                offset = max(0, (current_page - 1) * page_size)
+                payload["offset"] = offset
+                async with httpx.AsyncClient() as client:
+                    response = await client.post(
+                        f"{self.supervisor_url}/knowledge/search",
+                        json=payload,
+                        timeout=30.0,
+                    )
+                if response.status_code != 200:
+                    await self._send_message(chat_id, f"Lỗi khi tìm KB: {response.status_code}", parse_mode=None)
+                    return
+                data = response.json()
+                results = data.get("results", []) or []
+
+            text = self._format_kb_results_text(session, results, current_page, total_pages, total)
+            keyboard = self._build_kb_inline_keyboard(session_id, current_page, total_pages)
+
+            if edit_message_id is not None:
+                await self._edit_message_text(chat_id, edit_message_id, text, reply_markup=keyboard or None, parse_mode=None)
+            else:
+                await self._send_message(chat_id, text, reply_markup=keyboard or None, parse_mode=None)
+        except Exception as e:
+            logger.error("KB browse failed", error=str(e), session=session)
+            await self._send_message(chat_id, f"Có lỗi xảy ra khi tìm KB: {str(e)}", parse_mode=None)
+
+    async def _handle_super_analytics_command(self, chat_id: str, command: str) -> None:
+        """Fetch a quick supervisor analytics report for Telegram."""
+        tokens = command.split()
+        days = 1
+        if len(tokens) > 1:
+            try:
+                days = max(1, min(90, int(tokens[1])))
+            except ValueError:
+                days = 1
+
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    f"{self.supervisor_url}/metrics/dashboard/boss-report",
+                    params={"days": days},
+                    timeout=20.0,
+                )
+
+            if response.status_code != 200:
+                await self._send_message(chat_id, f"Lỗi khi lấy super analytics: {response.status_code}", parse_mode=None)
+                return
+
+            report = (response.text or "").strip()
+            if not report:
+                report = "Không có dữ liệu analytics hiện tại."
+            if len(report) > 3900:
+                report = report[:3900] + "..."
+
+            header = f"📈 Super Analytics ({days} ngày)"
+            await self._send_message(chat_id, f"{header}\n\n{report}", parse_mode=None)
+        except Exception as e:
+            logger.error("Super analytics failed", error=str(e), command=command)
+            await self._send_message(chat_id, f"Có lỗi xảy ra khi lấy super analytics: {str(e)}", parse_mode=None)
+
     async def _buffer_conversation_message(
         self,
         thread_id: str,
@@ -613,28 +910,37 @@ class TelegramAdapter:
                 },
             )
 
-    async def _edit_message_text(self, chat_id: str, message_id: Any, text: str):
+    async def _edit_message_text(self, chat_id: str, message_id: Any, text: str, reply_markup: Optional[Dict[str, Any]] = None, parse_mode: Optional[str] = "Markdown"):
 
         async with httpx.AsyncClient() as client:
+            payload = {
+                "chat_id": chat_id,
+                "message_id": message_id,
+                "text": text,
+            }
+            if parse_mode:
+                payload["parse_mode"] = parse_mode
+            if reply_markup is not None:
+                payload["reply_markup"] = reply_markup
             await client.post(
                 f"{self.api_base}/editMessageText",
-                json={
-                    "chat_id": chat_id,
-                    "message_id": message_id,
-                    "text": text,
-                },
+                json=payload,
             )
     
-    async def _send_message(self, chat_id: str, text: str):
+    async def _send_message(self, chat_id: str, text: str, reply_markup: Optional[Dict[str, Any]] = None, parse_mode: Optional[str] = "Markdown"):
         """Send a message via Telegram"""
         async with httpx.AsyncClient() as client:
+            payload = {
+                "chat_id": chat_id,
+                "text": text,
+            }
+            if parse_mode:
+                payload["parse_mode"] = parse_mode
+            if reply_markup is not None:
+                payload["reply_markup"] = reply_markup
             await client.post(
                 f"{self.api_base}/sendMessage",
-                json={
-                    "chat_id": chat_id,
-                    "text": text,
-                    "parse_mode": "Markdown"
-                }
+                json=payload,
             )
 
 

@@ -28,6 +28,7 @@ class KnowledgeRetrievalService:
         category: Optional[str] = None,
         tags: Optional[List[str]] = None,
         limit: int = 5,
+        offset: int = 0,
     ) -> KnowledgeSearchResponse:
         results: List[KnowledgeSearchResult] = []
 
@@ -48,9 +49,12 @@ class KnowledgeRetrievalService:
         results = self._deduplicate_and_rank(results, normalized_query)
         self._record_search_outcome(primary_search_type, results)
 
+        total_results = len(results)
+        page_results = results[max(0, offset):max(0, offset) + limit]
+
         return KnowledgeSearchResponse(
-            results=results[:limit],
-            total=len(results),
+            results=page_results,
+            total=total_results,
             search_type=search_type or "all",
             query=query,
         )
@@ -288,6 +292,9 @@ class KnowledgeRetrievalService:
                 seen_ids.add(r.id)
                 unique_results.append(r)
 
+        if not query:
+            return sorted(unique_results, key=lambda x: (x.knowledge_type.value, x.title.lower()))
+
         boost_keywords = self._extract_keywords(query)
         for r in unique_results:
             for keyword in boost_keywords:
@@ -334,8 +341,9 @@ class KnowledgeRetrievalService:
         search_type: Optional[str] = None,
         category: Optional[str] = None,
         limit: int = 5,
+        offset: int = 0,
     ) -> KnowledgeSearchResponse:
-        base_results = await self.search(query, search_type, category, None, limit)
+        base_results = await self.search(query, search_type, category, None, limit, offset)
 
         if not self.llm or not base_results.results:
             return base_results

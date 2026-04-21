@@ -39,6 +39,7 @@ async def search_knowledge(request: KnowledgeSearchRequest):
             category=request.category,
             tags=request.tags,
             limit=request.limit,
+            offset=request.offset,
         )
 
 
@@ -433,6 +434,7 @@ async def search_knowledge_enhanced(request: KnowledgeSearchRequest):
             category=request.category,
             tags=request.tags,
             limit=request.limit,
+            offset=request.offset,
         )
 
 

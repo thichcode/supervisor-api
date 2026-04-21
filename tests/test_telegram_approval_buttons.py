@@ -162,6 +162,199 @@ async def test_register_bot_commands_includes_health(monkeypatch):
     assert url.endswith("/setMyCommands")
     assert any(cmd["command"] == "health" for cmd in payload["commands"])
     assert any(cmd["command"] == "help" for cmd in payload["commands"])
+    assert any(cmd["command"] == "kb" for cmd in payload["commands"])
+    assert any(cmd["command"] == "super_analytics" for cmd in payload["commands"])
+
+
+@pytest.mark.asyncio
+async def test_handle_kb_command_search_shows_paginated_results(monkeypatch):
+    adapter = TelegramAdapter(
+        token="bot-token",
+        session_store=object(),
+        supervisor_url="http://localhost:8000",
+        api_key=None,
+    )
+
+    calls = []
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {
+                "results": [
+                    {
+                        "knowledge_type": "faq",
+                        "id": "faq-1",
+                        "title": "Reset VPN",
+                        "content": "Use the VPN portal to reset access.",
+                        "category": "access",
+                        "similarity": 0.91,
+                    }
+                ],
+                "total": 6,
+            }
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, url, json=None, headers=None, timeout=None):
+            calls.append((url, json, headers, timeout))
+            return FakeResponse()
+
+    class FakeHttpx:
+        def AsyncClient(self, self_arg=None):
+            return FakeClient()
+
+    monkeypatch.setattr("src.gateway.platforms.telegram.httpx", FakeHttpx())
+
+    await adapter._handle_command("123", "user-1", "/kb search vpn")
+
+    search_calls = [call for call in calls if call[0].endswith("/knowledge/search")]
+    send_calls = [call for call in calls if call[0].endswith("/sendMessage")]
+    assert search_calls
+    assert send_calls
+    payload = send_calls[0][1]
+    assert "KB Search" in payload["text"]
+    assert payload["reply_markup"]["inline_keyboard"][0][0]["callback_data"].startswith("kb:page:")
+
+
+@pytest.mark.asyncio
+async def test_handle_kb_callback_pages_results(monkeypatch):
+    adapter = TelegramAdapter(
+        token="bot-token",
+        session_store=object(),
+        supervisor_url="http://localhost:8000",
+        api_key=None,
+    )
+    adapter._kb_sessions = {
+        "sess123": {
+            "session_id": "sess123",
+            "mode": "search",
+            "query": "vpn",
+            "search_type": "all",
+            "category": None,
+            "tags": [],
+            "page_size": 5,
+            "user_id": "user-1",
+        }
+    }
+
+    calls = []
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {
+                "results": [
+                    {
+                        "knowledge_type": "faq",
+                        "id": "faq-2",
+                        "title": "VPN lỗi 720",
+                        "content": "Kiểm tra credential và profile.",
+                        "category": "access",
+                        "similarity": 0.88,
+                    }
+                ],
+                "total": 6,
+            }
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, url, json=None, headers=None, timeout=None):
+            calls.append((url, json, headers, timeout))
+            return FakeResponse()
+
+    class FakeHttpx:
+        def AsyncClient(self, self_arg=None):
+            return FakeClient()
+
+    monkeypatch.setattr("src.gateway.platforms.telegram.httpx", FakeHttpx())
+
+    edits = []
+    answers = []
+
+    async def fake_answer_callback_query(callback_query_id, text=None, show_alert=False):
+        answers.append((callback_query_id, text, show_alert))
+
+    async def fake_edit_message_text(chat_id, message_id, text, reply_markup=None, parse_mode=None):
+        edits.append((chat_id, message_id, text, reply_markup, parse_mode))
+
+    monkeypatch.setattr(adapter, "_answer_callback_query", fake_answer_callback_query)
+    monkeypatch.setattr(adapter, "_edit_message_text", fake_edit_message_text)
+
+    result = await adapter.handle_callback_query(
+        {
+            "id": "cb-kb-1",
+            "from": {"id": 111, "first_name": "Admin"},
+            "message": {"chat": {"id": 123}, "message_id": 77},
+            "data": "kb:page:sess123:2",
+        }
+    )
+
+    assert result is True
+    assert answers and answers[0][1].startswith("Đang mở trang 2")
+    assert edits
+    assert "Page: 2/2" in edits[0][2]
+    assert edits[0][3]["inline_keyboard"][0][0]["callback_data"] == "kb:page:sess123:1"
+@pytest.mark.asyncio
+async def test_handle_super_analytics_command_fetches_report(monkeypatch):
+    adapter = TelegramAdapter(
+        token="bot-token",
+        session_store=object(),
+        supervisor_url="http://localhost:8000",
+        api_key=None,
+    )
+
+    calls = []
+
+    class FakeResponse:
+        status_code = 200
+        text = "Supervisor boss report\nWindow: last 1 day(s)\n- KB hit rate: 60%"
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def get(self, url, params=None, timeout=None):
+            calls.append((url, params, timeout))
+            return FakeResponse()
+
+    class FakeHttpx:
+        def AsyncClient(self, self_arg=None):
+            return FakeClient()
+
+    monkeypatch.setattr("src.gateway.platforms.telegram.httpx", FakeHttpx())
+
+    sent = []
+
+    async def fake_send_message(chat_id, text, reply_markup=None, parse_mode=None):
+        sent.append((chat_id, text, reply_markup, parse_mode))
+
+    monkeypatch.setattr(adapter, "_send_message", fake_send_message)
+
+    await adapter._handle_super_analytics_command("123", "/super_analytics 1")
+
+    assert calls
+    assert calls[0][0].endswith("/metrics/dashboard/boss-report")
+    assert calls[0][1] == {"days": 1}
+    assert sent
+    assert sent[0][0] == "123"
+    assert "Super Analytics (1 ngày)" in sent[0][1]
+    assert "Supervisor boss report" in sent[0][1]
 
 
 @pytest.mark.asyncio
