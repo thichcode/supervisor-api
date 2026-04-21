@@ -8,7 +8,7 @@ import json
 class FileMemoryHit:
     text: str
     source_file: str
-    similarity: float = 0.5
+    similarity: float = 0.4
 
 
 @dataclass
@@ -55,7 +55,7 @@ class FileExternalMemoryProvider:
 
         data = json.loads(file_path.read_text(encoding="utf-8"))
         hits = [
-            FileMemoryHit(text=item["content"], source_file=file_path.name, similarity=float(item.get("confidence", 0.5)))
+            FileMemoryHit(text=item["content"], source_file=file_path.name, similarity=float(item.get("confidence", 0.4)))
             for item in data
             if message_text.lower().split()[0] in item["content"].lower()
         ]

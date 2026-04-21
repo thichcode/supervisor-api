@@ -570,10 +570,10 @@ class Supervisor:
             # Extract confidence factors
             factors = ConfidenceFactors(
                 context_relevance=min(1.0, len(context.get("user_info", {})) / 3),
-                policy_match=1.0 if policy.get("relevant_policies") else 0.5,
-                knowledge_freshness=0.7,
-                user_satisfaction=0.7,
-                agent_experience=0.75
+                policy_match=1.0 if policy.get("relevant_policies") else 0.45,
+                knowledge_freshness=0.45,
+                user_satisfaction=0.45,
+                agent_experience=0.5
             )
             
             # Calculate Bayesian confidence
@@ -599,7 +599,7 @@ class Supervisor:
     def _original_validate(self, draft: str, payload: InputPayload, context: Dict) -> Dict:
         """Original QA validation as fallback"""
         needs_review = len(draft) < 50 or len(draft) > 2000
-        confidence = 0.7 if not needs_review else 0.5
+        confidence = 0.45 if not needs_review else 0.4
         
         return {
             "draft": draft,

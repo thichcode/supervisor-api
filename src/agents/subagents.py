@@ -149,7 +149,7 @@ class KnowledgeAgent:
         knowledge = {
             "facts": [],
             "patterns": [],
-            "confidence": 0.5,
+            "confidence": 0.4,
             "system_query_requested": False,
             "query_type": None,
             "knowledge_results": [],

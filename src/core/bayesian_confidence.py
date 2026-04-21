@@ -295,7 +295,7 @@ class BayesianConfidence:
         feedback = self.user_feedback.get(user_id, [])
         
         if not feedback:
-            return 0.5  # Neutral for new users
+            return 0.4  # Neutral for new users
         
         return sum(feedback) / len(feedback)
 

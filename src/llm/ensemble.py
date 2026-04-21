@@ -27,7 +27,7 @@ class ModelResult:
     """Result from a single model"""
     model: str
     content: str
-    confidence: float = 0.5
+    confidence: float = 0.4
     latency_ms: float = 0
     success: bool = True
     error: Optional[str] = None

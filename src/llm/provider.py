@@ -686,7 +686,7 @@ CHỉ trả về JSON, không giải thích gì thêm."""
             parsed = json.loads(response.content)
             return parsed
         except json.JSONDecodeError:
-            return {"intent": "general", "confidence": 0.5, "reasoning": "Parse failed"}
+            return {"intent": "general", "confidence": 0.4, "reasoning": "Parse failed"}
 
     def _format_context(self, context: dict) -> str:
         """Format context dictionary for prompt"""

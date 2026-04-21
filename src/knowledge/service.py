@@ -66,7 +66,7 @@ class KnowledgeRetrievalService:
             }
 
         top = results[0]
-        if top.similarity < 0.55:
+        if top.similarity < 0.5:
             return {
                 "needs_clarification": False,
                 "missing_fields": [],

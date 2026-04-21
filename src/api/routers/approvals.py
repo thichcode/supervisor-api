@@ -343,10 +343,10 @@ Tạo câu trả lời mới dựa trên thông tin KB."""
 
                 response = await llm_client.complete(system_prompt, user_prompt)
                 new_response = response.content
-                confidence = response.confidence if response.confidence else 0.45
+                confidence = response.confidence if response.confidence else (0.45 if not kb_context else 0.7)
             else:
                 new_response = kb_context or "Không tìm thấy kết quả phù hợp."
-                confidence = 0.7
+                confidence = 0.45 if not kb_context else 0.7
 
             return {
                 "status": "success",

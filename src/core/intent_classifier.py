@@ -256,14 +256,17 @@ class IntentClassifier:
             scores[IntentType.SUPPORT_CASE] += 0.5
 
         # Default to FAQ if no match
-        if not any(scores.values()):
-            scores[IntentType.FAQ] = 0.5
+        no_match = not any(scores.values())
+        if no_match:
+            scores[IntentType.FAQ] = 0.4
 
         max_intent = max(scores, key=scores.get)
         max_score = scores[max_intent]
 
-        if max_score == 0:
-            confidence = 0.5
+        if no_match:
+            confidence = 0.4
+        elif max_score == 0:
+            confidence = 0.4
         else:
             confidence = min(0.95, 0.6 + (max_score * 0.1))
 

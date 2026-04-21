@@ -112,11 +112,18 @@ class TestIntentClassifier:
         assert result.intent == IntentType.EXECUTIVE_REQUEST
         assert result.confidence >= 0.7
 
+    def test_classify_unknown_defaults_below_half(self, sample_payload, sample_context):
+        classifier = IntentClassifier()
+        sample_payload.message.text = "xyzqv random gibberish with no business meaning"
+        result = classifier.classify(sample_payload, sample_context)
+        assert result.confidence < 0.5
+
     def test_classify_vietnamese_policy(self, sample_payload_vietnamese, sample_context):
         classifier = IntentClassifier()
         result = classifier.classify(sample_payload_vietnamese, sample_context)
         assert result.intent in [IntentType.POLICY, IntentType.FAQ]
         assert result.confidence > 0.5
+
 
 
 class TestRiskEvaluator:
