@@ -479,7 +479,7 @@ def create_document(
 ) -> Document:
     """Create a document with auto-generated ID"""
     if doc_id is None:
-        doc_id = hashlib.md5(content.encode()).hexdigest()[:16]
+        doc_id = hashlib.md5(content.encode(), usedforsecurity=False).hexdigest()[:16]
     
     return Document(
         id=doc_id,

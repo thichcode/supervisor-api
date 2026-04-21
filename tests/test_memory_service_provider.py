@@ -4,7 +4,11 @@ import pytest
 
 from src.core import InputPayload, UserInfo, ConversationInfo, MessageInfo
 from src.memory.file_provider import FileExternalMemoryProvider
-from src.memory.providers import ExternalMemoryProviderConfig, NullExternalMemoryProvider, get_external_memory_provider
+from src.memory.providers import (
+    ExternalMemoryProviderConfig,
+    NullExternalMemoryProvider,
+    get_external_memory_provider,
+)
 from src.memory.routing import ExternalMemoryRoutingPolicy
 from src.memory.service import MemoryService
 
@@ -51,6 +55,9 @@ class FakeRepo:
     async def upsert_user_profile(self, **kwargs):
         return None
 
+    async def get_conversation_state(self, thread_id):
+        return None
+
 
 class FakeProvider:
     enabled = True
@@ -93,7 +100,9 @@ async def test_memory_service_uses_injected_external_provider(sample_payload_for
 @pytest.mark.asyncio
 async def test_provider_factory_returns_null_provider_when_disabled():
     provider = get_external_memory_provider(
-        ExternalMemoryProviderConfig(provider_name="mempalace", enabled=False, path="/tmp/palace", top_k=3)
+        ExternalMemoryProviderConfig(
+            provider_name="mempalace", enabled=False, path="/tmp/palace", top_k=3
+        )
     )
     assert isinstance(provider, NullExternalMemoryProvider)
 
@@ -101,14 +110,18 @@ async def test_provider_factory_returns_null_provider_when_disabled():
 def test_provider_factory_rejects_unknown_provider():
     with pytest.raises(ValueError):
         get_external_memory_provider(
-            ExternalMemoryProviderConfig(provider_name="unknown", enabled=True, path="/tmp/x", top_k=1)
+            ExternalMemoryProviderConfig(
+                provider_name="unknown", enabled=True, path="/tmp/x", top_k=1
+            )
         )
 
 
 @pytest.mark.asyncio
 async def test_provider_factory_returns_file_provider(tmp_path):
     provider = get_external_memory_provider(
-        ExternalMemoryProviderConfig(provider_name="file", enabled=True, path=str(tmp_path / "memory.json"), top_k=3)
+        ExternalMemoryProviderConfig(
+            provider_name="file", enabled=True, path=str(tmp_path / "memory.json"), top_k=3
+        )
     )
     assert isinstance(provider, FileExternalMemoryProvider)
 

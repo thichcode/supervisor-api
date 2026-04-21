@@ -149,7 +149,7 @@ async def import_file_to_knowledge(request: FileProcessRequest):
     if request.auto_classify:
         knowledge_type, tags = await _classify_content(content, knowledge_type, tags)
 
-    file_id = hashlib.md5(f"{Path(file_path).name}{time.time()}".encode()).hexdigest()[:12]
+    file_id = hashlib.md5(f"{Path(file_path).name}{time.time()}".encode(), usedforsecurity=False).hexdigest()[:12]
     file_name = Path(file_path).name
 
     async with async_session() as session:

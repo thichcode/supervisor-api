@@ -26,9 +26,14 @@ logger = structlog.get_logger()
 # Import NEW modules (v2 enhancements)
 try:
     from src.knowledge.bm25_search import HybridSearch
-    from src.core.bayesian_confidence import BayesianConfidence, ResponseValidator, ConfidenceFactors
+    from src.core.bayesian_confidence import (
+        BayesianConfidence,
+        ResponseValidator,
+        ConfidenceFactors,
+    )
     from src.memory.lru_cache import LRUCache, PolicyCache, KnowledgeCache
     from src.agents.router import AdaptiveRouter
+
     NEW_MODULES_AVAILABLE = True
 except ImportError as e:
     NEW_MODULES_AVAILABLE = False
@@ -37,10 +42,10 @@ except ImportError as e:
 
 class DecisionEngine:
     """Enhanced decision engine with agent routing"""
-    
+
     def __init__(self, router=None):
         self.router = router or AdaptiveRouter()
-    
+
     def _is_low_risk_faq(
         self,
         intent: IntentClassification,
@@ -115,7 +120,7 @@ class DecisionEngine:
             return True
 
         return False
-    
+
     def get_agent_path(self, query: str, query_type: str = "general") -> list:
         """NEW v2: Get optimal agent path using router"""
         try:
@@ -124,7 +129,7 @@ class DecisionEngine:
                 return path
         except Exception as e:
             logger.warning("Router failed", error=str(e))
-        
+
         # Fallback to default path
         return ["context", "policy", "knowledge", "draft", "qa"]
 
@@ -138,7 +143,7 @@ class Supervisor:
     - Agent Router for optimal path selection
     - URL Fetcher for auto-detecting and fetching URLs
     """
-    
+
     def __init__(self):
         self.decision_engine = DecisionEngine()
         self.context_agent = ContextAgent()
@@ -148,14 +153,14 @@ class Supervisor:
         self.qa_agent = QAAgent()
         self.simple_agent = SimpleAgent()
         self._llm: Optional[MultiProviderLLMClient] = None
-        
+
         # NEW v2: Initialize enhanced components (based on config)
         self._init_enhancements()
-    
+
     def _init_enhancements(self):
         """Initialize v2 enhancement modules based on config"""
         settings = get_settings()
-        
+
         if NEW_MODULES_AVAILABLE:
             try:
                 # LRU Cache (query + response) - only if enabled
@@ -163,59 +168,62 @@ class Supervisor:
                     self.query_cache = LRUCache(maxsize=300, ttl_seconds=600)
                     self.policy_cache = PolicyCache(maxsize=200)
                     self.knowledge_cache = KnowledgeCache(maxsize=500)
-                
+
                 # BM25 Search - only if enabled
                 if settings.enable_bm25_search:
                     self.policy_search = HybridSearch(bm25_weight=0.7, tfidf_weight=0.3)
                     self.knowledge_search = HybridSearch(bm25_weight=0.6, tfidf_weight=0.4)
-                
+
                 # Bayesian Confidence - only if enabled
                 if settings.enable_bayesian_confidence:
                     self.bayesian_confidence = BayesianConfidence()
                     self.response_validator = ResponseValidator()
-                
+
                 # Agent Router - only if enabled
                 if settings.enable_agent_router:
                     self.agent_router = AdaptiveRouter()
-                
+
                 # URL Fetcher - only if enabled
                 if settings.enable_url_fetcher:
                     from src.tools.url_fetcher import URLFetcher
-                    self.url_fetcher = URLFetcher(
-                        timeout=10,
-                        max_urls=5
-                    )
-                
+
+                    self.url_fetcher = URLFetcher(timeout=10, max_urls=5)
+
                 # n8n Connector - only if enabled
                 if settings.enable_tools and settings.n8n_base_url:
                     from src.tools import get_n8n_connector
+
                     self.n8n_connector = get_n8n_connector()
-                
+
                 # Extended Tools - Disabled by default (for future use)
                 # RAG Pipeline - Hybrid search for knowledge base
                 if settings.enable_rag_pipeline:
                     from src.tools.rag_pipeline import get_rag_pipeline
+
                     self.rag_pipeline = get_rag_pipeline()
-                
+
                 # File Processor - Process PDF/Excel/CSV attachments
                 if settings.enable_file_processor:
                     from src.tools.file_processor import get_file_processor
+
                     self.file_processor = get_file_processor()
-                
+
                 # Scheduler - Cron jobs for automation
                 if settings.enable_scheduler:
                     from src.tools.scheduler import get_scheduler
+
                     self.scheduler = get_scheduler()
-                
+
                 # Notification - Multi-channel notifications (auto-enabled if any config set)
                 notification_configured = (
-                    settings.notification_email_enabled or 
-                    settings.notification_sms_enabled or 
-                    settings.notification_teams_enabled or
-                    settings.notification_webhook_url
+                    settings.notification_email_enabled
+                    or settings.notification_sms_enabled
+                    or settings.notification_teams_enabled
+                    or settings.notification_webhook_url
                 )
                 if settings.enable_notification or notification_configured:
                     from src.tools.notification import NotificationSender, ChannelConfig
+
                     config = ChannelConfig(
                         smtp_host=settings.smtp_host or "",
                         smtp_port=settings.smtp_port or 587,
@@ -226,46 +234,53 @@ class Supervisor:
                         webhook_url=settings.notification_webhook_url or "",
                     )
                     self.notification_sender = NotificationSender(config=config)
-                
+
                 # API Client - External API integrations
                 if settings.enable_api_client:
                     from src.tools.api_client import create_api_client
+
                     self.api_client = create_api_client()
-                
+
                 # Audit Logger - Compliance audit logging
                 if settings.enable_audit_logger:
                     from src.tools.audit_logger import get_audit_logger
+
                     self.audit_logger = get_audit_logger()
-                
+
                 # Validators - Input validation
                 if settings.enable_validators:
                     from src.tools.validators import SchemaValidator
+
                     self.validators = SchemaValidator()
-                
-                logger.info("Supervisor v2 enhancements initialized",
-                          cache=settings.enable_lru_cache, 
-                          bm25=settings.enable_bm25_search, 
-                          bayesian=settings.enable_bayesian_confidence, 
-                          routing=settings.enable_agent_router, 
-                          url_fetcher=settings.enable_url_fetcher,
-                          tools=settings.enable_tools,
-                          # Extended tools (disabled by default)
-                          rag_pipeline=settings.enable_rag_pipeline,
-                          file_processor=settings.enable_file_processor,
-                          scheduler=settings.enable_scheduler,
-                          notification=settings.enable_notification,
-                          api_client=settings.enable_api_client,
-                          audit_logger=settings.enable_audit_logger,
-                          validators=settings.enable_validators)
+
+                logger.info(
+                    "Supervisor v2 enhancements initialized",
+                    cache=settings.enable_lru_cache,
+                    bm25=settings.enable_bm25_search,
+                    bayesian=settings.enable_bayesian_confidence,
+                    routing=settings.enable_agent_router,
+                    url_fetcher=settings.enable_url_fetcher,
+                    tools=settings.enable_tools,
+                    # Extended tools (disabled by default)
+                    rag_pipeline=settings.enable_rag_pipeline,
+                    file_processor=settings.enable_file_processor,
+                    scheduler=settings.enable_scheduler,
+                    notification=settings.enable_notification,
+                    api_client=settings.enable_api_client,
+                    audit_logger=settings.enable_audit_logger,
+                    validators=settings.enable_validators,
+                )
             except Exception as e:
                 logger.error("Failed to initialize enhancements", error=str(e))
         else:
             logger.warning("Running in legacy mode (no v2 enhancements)")
-    
+
     def set_llm(self, llm: MultiProviderLLMClient):
         self._llm = llm
 
-    async def simple_process(self, payload: InputPayload, memory: MemoryContextModel) -> OutputPayload:
+    async def simple_process(
+        self, payload: InputPayload, memory: MemoryContextModel
+    ) -> OutputPayload:
         """
         SIMPLIFIED process - Steve Jobs style.
         1. Check cache
@@ -275,7 +290,7 @@ class Supervisor:
         start_time = time.time()
         cache_key = f"{payload.user.id}:{payload.message.text[:100]}"
 
-        if hasattr(self, 'query_cache'):
+        if hasattr(self, "query_cache"):
             cached = self.query_cache.get(cache_key)
             if cached:
                 return self._create_output(
@@ -291,12 +306,10 @@ class Supervisor:
 
         answer, confidence = await self.simple_agent.answer(payload, memory, self._llm)
 
-        if hasattr(self, 'query_cache') and confidence >= 0.6:
-            self.query_cache.set(cache_key, {
-                "response": answer,
-                "confidence": confidence,
-                "timestamp": time.time()
-            })
+        if hasattr(self, "query_cache") and confidence >= 0.6:
+            self.query_cache.set(
+                cache_key, {"response": answer, "confidence": confidence, "timestamp": time.time()}
+            )
 
         return self._create_output(
             payload=payload,
@@ -350,10 +363,10 @@ class Supervisor:
 
         if self.decision_engine.should_use_subagents(intent, risk, payload):
             decision = "subagents"
-            
+
             # Use agent router for optimized path (v2)
             agents_used = self._get_agents_from_path(intent, risk, payload, memory)
-            
+
             # Context + Policy + Knowledge flow
             context = self.context_agent.build(payload, memory)
             policy = await self.policy_agent.extract(payload, memory, self._llm)
@@ -361,7 +374,11 @@ class Supervisor:
             kb_sources = knowledge.get("knowledge_results", [])
 
             if knowledge.get("knowledge_clarification_needed") and kb_sources:
-                clarification_question = knowledge.get("knowledge_clarification_question") or self._build_kb_clarification_question(kb_sources[0], knowledge.get("knowledge_missing_fields", []))
+                clarification_question = knowledge.get(
+                    "knowledge_clarification_question"
+                ) or self._build_kb_clarification_question(
+                    kb_sources[0], knowledge.get("knowledge_missing_fields", [])
+                )
                 return self._create_output(
                     payload=payload,
                     answer=clarification_question,
@@ -386,7 +403,9 @@ class Supervisor:
                 agents_used.append("guide_delivery")
                 kb_hit = True
             elif knowledge.get("system_query_requested"):
-                query_result = await self._handle_system_query(payload, memory, knowledge.get("query_type"))
+                query_result = await self._handle_system_query(
+                    payload, memory, knowledge.get("query_type")
+                )
                 answer = self._format_system_query_response(query_result)
                 final_confidence = query_result.get("confidence", 0.9)
                 agents_used.append("system_query")
@@ -396,12 +415,16 @@ class Supervisor:
                 context_with_urls = dict(context)
                 if url_context:
                     context_with_urls["url_context"] = url_context
-                
-                draft = await self.draft_agent.generate(payload, context_with_urls, policy, knowledge, self._llm)
-                
+
+                draft = await self.draft_agent.generate(
+                    payload, context_with_urls, policy, knowledge, self._llm
+                )
+
                 # Enhanced validation with Bayesian confidence (v2)
-                validation = await self._enhanced_validate(draft, payload, context, policy, knowledge)
-                
+                validation = await self._enhanced_validate(
+                    draft, payload, context, policy, knowledge
+                )
+
                 if validation["needs_review"]:
                     logger.debug(
                         "Validation suggests review, but routing will be decided by confidence thresholds",
@@ -414,8 +437,16 @@ class Supervisor:
                 kb_hit = bool(knowledge.get("knowledge_results"))
                 qa_needs_review = bool(validation.get("needs_review"))
         else:
-            agents_used = ["draft"]
-            answer, final_confidence = await self._generate_direct_answer(payload, memory)
+            # Check patterns first (SimpleAgent logic)
+            pattern_result = await self._check_patterns(payload)
+            if pattern_result:
+                answer, similarity = pattern_result
+                final_confidence = min(1.0, similarity + 0.05)
+                kb_hit = True
+                agents_used = ["pattern_match"]
+            else:
+                agents_used = ["draft"]
+                answer, final_confidence = await self._generate_direct_answer(payload, memory)
 
         final_confidence = self._normalize_final_confidence(
             final_confidence,
@@ -445,7 +476,7 @@ class Supervisor:
             output_summary=answer[:200],
             processing_time_ms=processing_time_ms,
         )
-        
+
         # NEW v2: Cache successful responses
         if NEW_MODULES_AVAILABLE and status == "completed" and final_confidence >= 0.6:
             self._cache_response(payload, answer, final_confidence)
@@ -478,49 +509,47 @@ class Supervisor:
             processing_time=start_time,
             extra_metadata=extra_metadata,
         )
-    
+
     # ===== NEW v2 Methods =====
-    
+
     def _check_cache(self, payload: InputPayload) -> Optional[Dict]:
         """Check LRU cache for cached response"""
-        if not hasattr(self, 'query_cache'):
+        if not hasattr(self, "query_cache"):
             return None
-        
+
         cache_key = f"{payload.user.id}:{payload.message.text[:100]}"
         return self.query_cache.get(cache_key)
-    
+
     def _cache_response(self, payload: InputPayload, response: str, confidence: float):
         """Cache response for future use"""
-        if not hasattr(self, 'query_cache'):
+        if not hasattr(self, "query_cache"):
             return
-        
+
         cache_key = f"{payload.user.id}:{payload.message.text[:100]}"
-        self.query_cache.set(cache_key, {
-            "response": response,
-            "confidence": confidence,
-            "timestamp": time.time()
-        })
-    
+        self.query_cache.set(
+            cache_key, {"response": response, "confidence": confidence, "timestamp": time.time()}
+        )
+
     def _get_agents_from_path(
         self,
         intent: IntentClassification,
         risk: RiskEvaluation,
         payload: InputPayload,
-        memory: MemoryContextModel
+        memory: MemoryContextModel,
     ) -> list:
         """Get agents based on query type and router"""
         # Determine query type
         query_type = self._determine_query_type(intent)
-        
+
         # Get optimized path from router
         try:
             path = self.decision_engine.get_agent_path(payload.message.text, query_type)
             # Convert AgentType to string list
-            return [a.value if hasattr(a, 'value') else str(a) for a in path]
+            return [a.value if hasattr(a, "value") else str(a) for a in path]
         except Exception as e:
             logger.warning("Agent path failed, using default", error=str(e))
             return ["context", "policy", "knowledge", "draft", "qa"]
-    
+
     def _determine_query_type(self, intent: IntentClassification) -> str:
         """Map intent to query type for routing"""
         mapping = {
@@ -531,41 +560,36 @@ class Supervisor:
             IntentType.ANALYSIS: "analysis",
         }
         return mapping.get(intent.intent, "general")
-    
+
     async def _fetch_urls(self, payload: InputPayload) -> str:
         """Fetch URLs from message and return context string"""
-        if not NEW_MODULES_AVAILABLE or not hasattr(self, 'url_fetcher'):
+        if not NEW_MODULES_AVAILABLE or not hasattr(self, "url_fetcher"):
             return ""
-        
+
         try:
             urls_detected = self.url_fetcher.detect_urls(payload.message.text)
             if not urls_detected:
                 return ""
-            
+
             # Fetch all URLs concurrently
             url_infos = await self.url_fetcher.fetch_all(payload.message.text)
-            
+
             # Build context string
             context = self.url_fetcher.build_context(url_infos)
-            
+
             return context
         except Exception as e:
             logger.warning("URL fetch failed", error=str(e))
             return ""
-    
+
     async def _enhanced_validate(
-        self,
-        draft: str,
-        payload: InputPayload,
-        context: Dict,
-        policy: Dict,
-        knowledge: Dict
+        self, draft: str, payload: InputPayload, context: Dict, policy: Dict, knowledge: Dict
     ) -> Dict:
         """Enhanced validation with Bayesian confidence"""
         if not NEW_MODULES_AVAILABLE:
             # Fallback to original validation
             return self._original_validate(draft, payload, context)
-        
+
         try:
             # Extract confidence factors
             factors = ConfidenceFactors(
@@ -573,108 +597,147 @@ class Supervisor:
                 policy_match=1.0 if policy.get("relevant_policies") else 0.45,
                 knowledge_freshness=0.45,
                 user_satisfaction=0.45,
-                agent_experience=0.5
+                agent_experience=0.5,
             )
-            
+
             # Calculate Bayesian confidence
-            confidence, factor_scores = self.bayesian_confidence.calculate_confidence(factors, "llama3")
-            
+            confidence, factor_scores = self.bayesian_confidence.calculate_confidence(
+                factors, "llama3"
+            )
+
             # Also use ResponseValidator for issues detection
             validation = {
                 "draft": draft,
                 "confidence": confidence,
                 "factor_scores": factor_scores,
-                "needs_review": confidence < 0.7
+                "needs_review": confidence < 0.7,
             }
-            
-            logger.debug("Bayesian validation",
-                      confidence=confidence,
-                      factors=list(factor_scores.keys()))
-            
+
+            logger.debug(
+                "Bayesian validation", confidence=confidence, factors=list(factor_scores.keys())
+            )
+
             return validation
         except Exception as e:
             logger.warning("Bayesian validation failed, using original", error=str(e))
             return self._original_validate(draft, payload, context)
-    
+
     def _original_validate(self, draft: str, payload: InputPayload, context: Dict) -> Dict:
         """Original QA validation as fallback"""
         needs_review = len(draft) < 50 or len(draft) > 2000
         confidence = 0.45 if not needs_review else 0.4
-        
-        return {
-            "draft": draft,
-            "confidence": confidence,
-            "needs_review": needs_review
-        }
-    
+
+        return {"draft": draft, "confidence": confidence, "needs_review": needs_review}
+
     def _search_knowledge_bm25(self, query: str, kb_type: str = "knowledge") -> list:
         """BM25 search for knowledge/policy"""
-        if not NEW_MODULES_AVAILABLE or not hasattr(self, 'knowledge_search'):
+        if not NEW_MODULES_AVAILABLE or not hasattr(self, "knowledge_search"):
             return []
-        
+
         search = self.knowledge_search if kb_type == "knowledge" else self.policy_search
-        
+
         try:
             results = search.search(query, top_k=5)
             return [
-                {
-                    "title": r.get("title", ""),
-                    "text": r.get("text", ""),
-                    "score": r.get("score", 0)
-                }
+                {"title": r.get("title", ""), "text": r.get("text", ""), "score": r.get("score", 0)}
                 for r in results
             ]
         except Exception as e:
             logger.warning("BM25 search failed", error=str(e))
             return []
-    
+
     def get_stats(self) -> Dict:
         """Get supervisor statistics including v2 enhancements"""
         stats = {
             "version": "v2" if NEW_MODULES_AVAILABLE else "legacy",
-            "new_modules": NEW_MODULES_AVAILABLE
+            "new_modules": NEW_MODULES_AVAILABLE,
         }
-        
+
         if NEW_MODULES_AVAILABLE:
-            if hasattr(self, 'query_cache'):
+            if hasattr(self, "query_cache"):
                 cache_stats = self.query_cache.get_stats()
                 stats["cache"] = {
                     "size": cache_stats.get("size", 0),
                     "hit_rate": cache_stats.get("hit_rate", 0),
                     "hits": cache_stats.get("hit_count", 0),
-                    "misses": cache_stats.get("miss_count", 0)
+                    "misses": cache_stats.get("miss_count", 0),
                 }
-            
-            if hasattr(self, 'decision_engine') and self.decision_engine.router:
+
+            if hasattr(self, "decision_engine") and self.decision_engine.router:
                 try:
                     stats["routing"] = self.decision_engine.router.get_routing_stats()
                 except Exception:
                     pass
-        
+
         return stats
-    
+
     # ===== Original Methods =====
-    
-    def _classify_intent(self, payload: InputPayload, memory: MemoryContextModel) -> IntentClassification:
+
+    def _classify_intent(
+        self, payload: InputPayload, memory: MemoryContextModel
+    ) -> IntentClassification:
         from src.core.intent_classifier import IntentClassifier
+
         classifier = IntentClassifier()
         return classifier.classify(payload, memory)
 
     def _evaluate_risk(self, payload: InputPayload, memory: MemoryContextModel) -> RiskEvaluation:
         from src.core.risk_evaluator import RiskEvaluator
+
         evaluator = RiskEvaluator()
         return evaluator.evaluate(payload, memory)
 
-    async def _generate_direct_answer(self, payload: InputPayload, memory: MemoryContextModel) -> tuple[str, float]:
+    async def _check_patterns(self, payload: InputPayload) -> Optional[tuple[str, float]]:
+        """Check for matching learned patterns before generating answer."""
+        try:
+            from src.services.pattern_learning_service import PatternLearningService
+
+            async_session_maker = self._get_async_session()
+            async with async_session_maker() as session:
+                pattern_service = PatternLearningService(session)
+                result = await pattern_service.find_similar_pattern(
+                    question=payload.message.text,
+                    user_id=payload.user.id,
+                    team_id=payload.user.team,
+                )
+
+                if result:
+                    pattern, similarity = result
+                    await pattern_service.increment_usage(pattern.id)
+                    logger.info(
+                        "pattern_matched", similarity=similarity, question=payload.message.text[:50]
+                    )
+                    return pattern.answer_text, similarity
+
+        except Exception as e:
+            logger.warning("pattern_check_failed", error=str(e))
+
+        return None
+
+    def _get_async_session(self):
+        """Get async session factory."""
+        from src.db.session import async_session
+
+        return async_session
+
+    async def _generate_direct_answer(
+        self, payload: InputPayload, memory: MemoryContextModel
+    ) -> tuple[str, float]:
         user_name = payload.user.display_name
         message = payload.message.text
 
         user_profile = memory.user_profile or {}
         preferences = user_profile.get("preferences", {}) if isinstance(user_profile, dict) else {}
-        style_profile = preferences.get("style_profile", {}) if isinstance(preferences, dict) else {}
+        style_profile = (
+            preferences.get("style_profile", {}) if isinstance(preferences, dict) else {}
+        )
         response_persona_hint = (
             preferences.get("response_persona_hint")
-            or (style_profile.get("response_persona_hint") if isinstance(style_profile, dict) else None)
+            or (
+                style_profile.get("response_persona_hint")
+                if isinstance(style_profile, dict)
+                else None
+            )
             or user_profile.get("response_persona_hint")
         )
         communication_style = user_profile.get("communication_style") or "balanced"
@@ -689,7 +752,11 @@ class Supervisor:
         conversation_state = memory.conversation_state or {}
         chat_type = payload.conversation.chat_type or conversation_state.get("chat_type")
         chat_scope = payload.conversation.chat_scope or conversation_state.get("chat_scope")
-        group_chat = payload.conversation.group_chat if payload.conversation.group_chat is not None else conversation_state.get("group_chat")
+        group_chat = (
+            payload.conversation.group_chat
+            if payload.conversation.group_chat is not None
+            else conversation_state.get("group_chat")
+        )
         platform = payload.conversation.platform or payload.source
         if platform:
             state_lines.append(f"Kênh: {platform}")
@@ -716,7 +783,9 @@ class Supervisor:
         state_block = "\n".join(state_lines)
 
         if self._llm:
-            system_prompt = "Bạn là một trợ lý AI hữu ích. Trả lời ngắn gọn, chính xác bằng tiếng Việt."
+            system_prompt = (
+                "Bạn là một trợ lý AI hữu ích. Trả lời ngắn gọn, chính xác bằng tiếng Việt."
+            )
             if persona_block:
                 system_prompt = f"{system_prompt}\n{persona_block}"
             if state_block:
@@ -729,7 +798,7 @@ class Supervisor:
             return response.content, response.confidence
 
         return (
-            f"Xin chào {user_name}, về câu hỏi của bạn \"{message[:100]}...\", tôi có thể giúp bạn. Bạn cần thêm thông tin gì không?",
+            f'Xin chào {user_name}, về câu hỏi của bạn "{message[:100]}...", tôi có thể giúp bạn. Bạn cần thêm thông tin gì không?',
             0.4,
         )
 
@@ -762,7 +831,7 @@ class Supervisor:
         extra_metadata: Optional[dict] = None,
     ) -> OutputPayload:
         from src.core.schemas import MessageInfo
-        
+
         output = OutputPayload(
             answer=answer,
             message=MessageInfo(
@@ -776,10 +845,10 @@ class Supervisor:
             status=status,
             processing_time_ms=int(processing_time * 1000),
         )
-        
+
         output.metadata.update(extra_metadata or {})
         output.request_id = payload.request_id
-        
+
         return output
 
     async def _handle_guide_request(self, payload: InputPayload, policy: Dict) -> str:
@@ -811,7 +880,9 @@ class Supervisor:
             "use_case": "trường hợp sử dụng cụ thể",
             "user_role": "vai trò/phòng ban liên quan",
         }
-        friendly_fields = [labels.get(field, field.replace("_", " ")) for field in missing_fields[:4]]
+        friendly_fields = [
+            labels.get(field, field.replace("_", " ")) for field in missing_fields[:4]
+        ]
         fields_text = "; ".join(friendly_fields)
         title = kb_source.get("title") or kb_source.get("id") or "KB"
         return f"Mình tìm thấy KB phù hợp về '{title}'. Để support đúng theo KB, bạn cho mình thêm: {fields_text}."

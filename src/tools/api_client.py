@@ -294,7 +294,7 @@ class APIClient:
     def _get_cache_key(self, method: str, url: str, params: Dict) -> str:
         """Generate cache key"""
         key_data = f"{method}:{url}:{json.dumps(params or {}, sort_keys=True)}"
-        return hashlib.md5(key_data.encode()).hexdigest()
+        return hashlib.md5(key_data.encode(), usedforsecurity=False).hexdigest()
     
     def _get_cached(self, cache_key: str) -> Optional[APIResponse]:
         """Get cached response"""

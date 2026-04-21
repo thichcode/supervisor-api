@@ -231,7 +231,7 @@ class PolicyCache:
     def _make_key(self, query: str, policy_type: str) -> str:
         """Create cache key from query and policy type."""
         content = f"{query}:{policy_type}"
-        return hashlib.md5(content.encode()).hexdigest()
+        return hashlib.md5(content.encode(), usedforsecurity=False).hexdigest()
     
     def get_policy(self, query: str, policy_type: str) -> Optional[list]:
         """Get cached policy results."""
@@ -268,7 +268,7 @@ class KnowledgeCache:
     def _make_key(self, query: str, kb_type: str) -> str:
         """Create cache key."""
         content = f"{query}:{kb_type}"
-        return hashlib.md5(content.encode()).hexdigest()
+        return hashlib.md5(content.encode(), usedforsecurity=False).hexdigest()
     
     def get_results(self, query: str, kb_type: str) -> Optional[list]:
         """Get cached knowledge base results."""

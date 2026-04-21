@@ -23,7 +23,7 @@ logger = structlog.get_logger()
 class PatternLearningService:
     """Learn approved Q&A pairs and retrieve the closest semantic match."""
 
-    SIMILARITY_THRESHOLD = 0.78
+    SIMILARITY_THRESHOLD = 0.90  # 90% match = use stored answer
 
     def __init__(self, session: AsyncSession, encoder: Optional[SemanticTextEncoder] = None):
         self.session = session
@@ -120,9 +120,13 @@ class PatternLearningService:
 
         query = select(ResponsePattern).where(ResponsePattern.is_active.is_(True))
         if team_id:
-            query = query.where(or_(ResponsePattern.team_id == team_id, ResponsePattern.team_id.is_(None)))
+            query = query.where(
+                or_(ResponsePattern.team_id == team_id, ResponsePattern.team_id.is_(None))
+            )
         if intent:
-            query = query.where(or_(ResponsePattern.intent == intent, ResponsePattern.intent.is_(None)))
+            query = query.where(
+                or_(ResponsePattern.intent == intent, ResponsePattern.intent.is_(None))
+            )
 
         result = await self.session.execute(query)
         patterns = list(result.scalars().all())
