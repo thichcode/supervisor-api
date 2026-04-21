@@ -43,11 +43,11 @@ class SimpleAgent:
             return answer, min(1.0, similarity + 0.05)
 
         if not llm:
-            return self._fallback_answer(payload, memory), 0.5
+            return self._fallback_answer(payload, memory), 0.4
 
         context = self._build_context(payload, memory)
         answer = await self._generate(context, payload, llm)
-        return answer, 0.85
+        return answer, 0.45
 
     async def _check_patterns(
         self,

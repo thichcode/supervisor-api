@@ -336,9 +336,9 @@ class TestSupervisor:
 
         result = await supervisor.process(sample_payload, sample_context)
 
-        assert result.status == "needs_review"
-        assert result.confidence < 0.9
-        assert result.confidence == 0.89
+        assert result.status == "skipped"
+        assert result.confidence < 0.5
+        assert result.confidence == 0.49
 
     @pytest.mark.asyncio
     async def test_process_promotes_kb_answer_to_point_nine_when_qa_is_stable(self, sample_payload, sample_context, monkeypatch):

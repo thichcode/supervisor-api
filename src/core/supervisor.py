@@ -384,11 +384,13 @@ class Supervisor:
                 answer = await self._handle_guide_request(payload, policy)
                 final_confidence = 0.95
                 agents_used.append("guide_delivery")
+                kb_hit = True
             elif knowledge.get("system_query_requested"):
                 query_result = await self._handle_system_query(payload, memory, knowledge.get("query_type"))
                 answer = self._format_system_query_response(query_result)
                 final_confidence = query_result.get("confidence", 0.9)
                 agents_used.append("system_query")
+                kb_hit = True
             else:
                 # Inject URL context into context dict
                 context_with_urls = dict(context)
@@ -728,7 +730,7 @@ class Supervisor:
 
         return (
             f"Xin chào {user_name}, về câu hỏi của bạn \"{message[:100]}...\", tôi có thể giúp bạn. Bạn cần thêm thông tin gì không?",
-            0.6,
+            0.4,
         )
 
     def _normalize_final_confidence(
@@ -739,6 +741,8 @@ class Supervisor:
     ) -> float:
         """Keep confidence conservative unless KB evidence and QA both support 0.9."""
         confidence = max(0.0, min(1.0, confidence))
+        if not kb_hit:
+            return min(confidence, 0.49)
         if kb_hit and not qa_needs_review and confidence >= 0.85:
             return 0.9
         if confidence >= 0.9:

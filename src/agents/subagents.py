@@ -194,7 +194,7 @@ class KnowledgeAgent:
                 item["content"] for item in memory.episodic_memory[:3]
             ]
             if not knowledge["search_performed"]:
-                knowledge["confidence"] = 0.7
+                knowledge["confidence"] = 0.4
 
         question_types = {
             "who": ["who", "ai là", "người nào"],

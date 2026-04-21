@@ -705,12 +705,12 @@ CHỉ trả về JSON, không giải thích gì thêm."""
         promote a response later when KB evidence and QA validation both support it.
         """
         if finish_reason == "stop":
-            return 0.8
+            return 0.45
         elif finish_reason == "length":
-            return 0.65
+            return 0.35
         elif finish_reason == "content_filter":
-            return 0.5
-        return 0.72
+            return 0.25
+        return 0.4
 
     def get_cost_stats(self) -> dict:
         """Get cost tracking statistics"""

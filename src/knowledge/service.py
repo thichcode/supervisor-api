@@ -265,7 +265,7 @@ class KnowledgeRetrievalService:
         text_words = set(text.lower().split())
 
         if not query_words or not text_words:
-            return 0.5
+            return 0.4
 
         intersection = query_words.intersection(text_words)
         return min(1.0, len(intersection) / len(query_words))
