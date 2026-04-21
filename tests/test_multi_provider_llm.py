@@ -83,6 +83,12 @@ class TestLLMResponse:
         assert response.model == "llama3"
         assert response.provider == "ollama"
 
+    def test_calculate_confidence_is_conservative(self):
+        client = MultiProviderLLMClient()
+        assert client._calculate_confidence("stop") < 0.9
+        assert client._calculate_confidence("length") < 0.8
+        assert client._calculate_confidence("content_filter") <= 0.5
+
 
 class TestVietnamesePrompts:
     """Test Vietnamese-specific functionality"""

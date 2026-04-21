@@ -312,20 +312,26 @@ class Supervisor:
     async def process(self, payload: InputPayload, memory: MemoryContextModel) -> OutputPayload:
         start_time = time.time()
         decision = "direct"
-        final_confidence = 0.85
+        final_confidence = 0.8
         kb_hit = False
         kb_sources = []
+        qa_needs_review = False
         # NEW v2: Check cache first
         if NEW_MODULES_AVAILABLE:
             cache_result = self._check_cache(payload)
             if cache_result:
-                final_confidence = cache_result.get("confidence", 0.9)
+                final_confidence = cache_result.get("confidence", 0.8)
+                final_confidence = self._normalize_final_confidence(
+                    final_confidence,
+                    kb_hit=False,
+                    qa_needs_review=False,
+                )
                 logger.debug("Cache hit", request_id=payload.request_id)
                 return self._create_output(
                     payload=payload,
                     answer=cache_result["response"],
                     confidence=final_confidence,
-                    intent=IntentClassification(intent=IntentType.FAQ, confidence=0.9),
+                    intent=IntentClassification(intent=IntentType.FAQ, confidence=0.8),
                     risk=RiskEvaluation(risk_level=RiskLevel.LOW, reasons=[]),
                     agents_used=["cache"],
                     status="completed",
@@ -404,9 +410,16 @@ class Supervisor:
                 answer = self.qa_agent.refine(validation, payload, context)
                 final_confidence = validation["confidence"]
                 kb_hit = bool(knowledge.get("knowledge_results"))
+                qa_needs_review = bool(validation.get("needs_review"))
         else:
             agents_used = ["draft"]
             answer, final_confidence = await self._generate_direct_answer(payload, memory)
+
+        final_confidence = self._normalize_final_confidence(
+            final_confidence,
+            kb_hit=kb_hit,
+            qa_needs_review=qa_needs_review,
+        )
 
         response_route = self.decision_engine.response_route(final_confidence, kb_hit=kb_hit)
         if response_route == "skip":
@@ -717,6 +730,20 @@ class Supervisor:
             f"Xin chào {user_name}, về câu hỏi của bạn \"{message[:100]}...\", tôi có thể giúp bạn. Bạn cần thêm thông tin gì không?",
             0.6,
         )
+
+    def _normalize_final_confidence(
+        self,
+        confidence: float,
+        kb_hit: bool,
+        qa_needs_review: bool,
+    ) -> float:
+        """Keep confidence conservative unless KB evidence and QA both support 0.9."""
+        confidence = max(0.0, min(1.0, confidence))
+        if kb_hit and not qa_needs_review and confidence >= 0.85:
+            return 0.9
+        if confidence >= 0.9:
+            return 0.89
+        return round(confidence, 2)
 
     def _create_output(
         self,

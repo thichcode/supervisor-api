@@ -308,6 +308,92 @@ class TestSupervisor:
         assert confidence == 0.91
         assert "style=concise, tone=formal" in captured["system_prompt"]
     @pytest.mark.asyncio
+    async def test_process_caps_confidence_without_kb(self, sample_payload, sample_context, monkeypatch):
+        from src.core.supervisor import Supervisor
+
+        class FakeLLM:
+            async def complete(self, system_prompt, user_message, context=None):
+                from src.llm.provider import LLMResponse
+                return LLMResponse(
+                    content="Direct answer",
+                    confidence=0.91,
+                    usage={},
+                    model="fake",
+                    provider="fake",
+                    finish_reason="stop"
+                )
+
+        async def fake_fetch_urls(self, payload):
+            return ""
+
+        async def fake_log_audit(*args, **kwargs):
+            return None
+
+        supervisor = Supervisor()
+        supervisor.set_llm(FakeLLM())
+        supervisor._fetch_urls = fake_fetch_urls.__get__(supervisor, Supervisor)
+        supervisor._log_audit = fake_log_audit
+
+        result = await supervisor.process(sample_payload, sample_context)
+
+        assert result.status == "needs_review"
+        assert result.confidence < 0.9
+        assert result.confidence == 0.89
+
+    @pytest.mark.asyncio
+    async def test_process_promotes_kb_answer_to_point_nine_when_qa_is_stable(self, sample_payload, sample_context, monkeypatch):
+        from src.core.supervisor import Supervisor
+
+        sample_payload.message.text = "VPN is not working"
+
+        async def fake_fetch_urls(self, payload):
+            return ""
+
+        async def fake_log_audit(*args, **kwargs):
+            return None
+
+        supervisor = Supervisor()
+        supervisor.set_llm(None)
+        supervisor._fetch_urls = fake_fetch_urls.__get__(supervisor, Supervisor)
+        supervisor._log_audit = fake_log_audit
+        supervisor.decision_engine.should_use_subagents = lambda *args, **kwargs: True
+        supervisor.context_agent.build = lambda payload, memory: {}
+        supervisor.policy_agent.extract = AsyncMock(return_value={"guide_requested": False, "guide_id": None})
+        supervisor.knowledge_agent.retrieve = AsyncMock(return_value={
+            "facts": [],
+            "patterns": [],
+            "confidence": 0.87,
+            "system_query_requested": False,
+            "query_type": None,
+            "knowledge_results": [
+                {
+                    "type": "faq",
+                    "id": "faq-vpn-1",
+                    "title": "VPN access issue",
+                    "content": "Use the VPN portal to reset your VPN profile",
+                    "category": "access",
+                    "similarity": 0.82,
+                    "metadata": {},
+                }
+            ],
+        })
+        supervisor.draft_agent.generate = AsyncMock(return_value="KB-backed draft")
+        supervisor._enhanced_validate = AsyncMock(return_value={
+            "draft": "KB-backed draft",
+            "confidence": 0.87,
+            "issues": [],
+            "needs_review": False,
+        })
+        supervisor.qa_agent.refine = lambda validation, payload, context: validation["draft"]
+
+        result = await supervisor.process(sample_payload, sample_context)
+
+        assert result.status == "completed"
+        assert result.confidence == 0.9
+        assert result.metadata["kb_hit"] is True
+
+
+    @pytest.mark.asyncio
     async def test_process_returns_kb_clarification_when_context_missing(self, sample_payload, sample_context, monkeypatch):
         from src.core.supervisor import Supervisor
 

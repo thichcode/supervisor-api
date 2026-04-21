@@ -699,14 +699,18 @@ CHỉ trả về JSON, không giải thích gì thêm."""
         return "\n".join(parts)
 
     def _calculate_confidence(self, finish_reason: str) -> float:
-        """Calculate confidence from finish reason"""
+        """Calculate confidence from finish reason.
+
+        Keep the provider-side default conservative; the supervisor may still
+        promote a response later when KB evidence and QA validation both support it.
+        """
         if finish_reason == "stop":
-            return 0.9
+            return 0.8
         elif finish_reason == "length":
-            return 0.7
+            return 0.65
         elif finish_reason == "content_filter":
             return 0.5
-        return 0.8
+        return 0.72
 
     def get_cost_stats(self) -> dict:
         """Get cost tracking statistics"""
