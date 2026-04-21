@@ -16,6 +16,7 @@ from src.memory import MemoryContext
 from src.agents import ContextAgent, DraftAgent, QAAgent
 from src.llm.provider import MultiProviderLLMClient, LLMProvider
 from src.knowledge.service import KnowledgeRetrievalService
+from src.core.metrics import KB_SEARCHES, KB_RERANKS
 from src.memory.service import MemoryService
 
 
@@ -348,6 +349,64 @@ class TestSupervisor:
         assert result.confidence == 0.49
 
     @pytest.mark.asyncio
+    async def test_process_uses_pattern_match_on_main_path(self, sample_payload, sample_context):
+        from src.core.supervisor import Supervisor
+
+        async def fake_fetch_urls(self, payload):
+            return ""
+
+        async def fake_log_audit(*args, **kwargs):
+            return None
+
+        supervisor = Supervisor()
+        supervisor.set_llm(None)
+        supervisor._fetch_urls = fake_fetch_urls.__get__(supervisor, Supervisor)
+        supervisor._log_audit = fake_log_audit
+        supervisor.decision_engine.should_use_subagents = lambda *args, **kwargs: True
+        supervisor.context_agent.build = lambda payload, memory: {}
+        supervisor.policy_agent.extract = AsyncMock(return_value={"guide_requested": False, "guide_id": None})
+        supervisor.knowledge_agent.retrieve = AsyncMock(return_value={
+            "facts": [],
+            "patterns": [],
+            "confidence": 0.4,
+            "system_query_requested": False,
+            "query_type": None,
+            "knowledge_results": [],
+            "knowledge_clarification_needed": False,
+        })
+        supervisor._check_patterns = AsyncMock(return_value=("Pattern answer", 0.92))
+        supervisor.draft_agent.generate = AsyncMock(side_effect=AssertionError("draft should not run when pattern matches"))
+        supervisor._enhanced_validate = AsyncMock(side_effect=AssertionError("qa should not run when pattern matches"))
+
+        result = await supervisor.process(sample_payload, sample_context)
+
+        assert result.status == "completed"
+        assert result.answer == "Pattern answer"
+        assert result.confidence == 0.9
+        assert result.metadata["pattern_hit"] is True
+        assert result.metadata["kb_hit"] is True
+        assert "pattern_match" in result.metadata["agents_used"]
+
+    @pytest.mark.asyncio
+    async def test_process_routes_cached_response_through_thresholds(self, sample_payload, sample_context):
+        from src.core.supervisor import Supervisor
+
+        async def fake_log_audit(*args, **kwargs):
+            return None
+
+        supervisor = Supervisor()
+        supervisor._log_audit = fake_log_audit
+        supervisor._check_cache = lambda payload: {"response": "Cached answer", "confidence": 0.91}
+
+        result = await supervisor.process(sample_payload, sample_context)
+
+        assert result.status == "skipped"
+        assert result.answer == ""
+        assert result.confidence == 0.49
+        assert result.metadata["cache_hit"] is True
+        assert result.metadata["kb_hit"] is False
+
+    @pytest.mark.asyncio
     async def test_process_promotes_kb_answer_to_point_nine_when_qa_is_stable(self, sample_payload, sample_context, monkeypatch):
         from src.core.supervisor import Supervisor
 
@@ -609,3 +668,99 @@ class TestLLMProvider:
         client = MultiProviderLLMClient()
         await client.initialize()
         assert client.is_initialized
+
+
+class TestKnowledgeMetrics:
+    @pytest.mark.asyncio
+    async def test_kb_search_records_hit_metric(self):
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        before = KB_SEARCHES.labels(search_type="faq", outcome="hit")._value.get()
+        session = MagicMock()
+        service = KnowledgeRetrievalService(session)
+        service.repo.search_faqs = AsyncMock(
+            return_value=[
+                SimpleNamespace(
+                    question_id="faq-1",
+                    question="password reset",
+                    answer="password reset steps",
+                    category="it",
+                    tags=[],
+                    keywords=[],
+                    usage_count=0,
+                )
+            ]
+        )
+        service.repo.increment_faq_usage = AsyncMock(return_value=None)
+
+        result = await service.search(query="password reset", search_type="faq", limit=5)
+
+        after = KB_SEARCHES.labels(search_type="faq", outcome="hit")._value.get()
+        assert result.total == 1
+        assert after == before + 1
+
+    @pytest.mark.asyncio
+    async def test_kb_search_records_fallback_metric(self):
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        before = KB_SEARCHES.labels(search_type="faq", outcome="miss")._value.get()
+        service = KnowledgeRetrievalService(MagicMock())
+        service.repo.search_faqs = AsyncMock(
+            return_value=[
+                SimpleNamespace(
+                    question_id="faq-1",
+                    question="password reset",
+                    answer="password reset steps",
+                    category="it",
+                    tags=[],
+                    keywords=[],
+                    usage_count=0,
+                )
+            ]
+        )
+        service.repo.increment_faq_usage = AsyncMock(return_value=None)
+
+        result = await service.search(query="unrelated gibberish", search_type="faq", limit=5)
+
+        after = KB_SEARCHES.labels(search_type="faq", outcome="miss")._value.get()
+        assert result.total == 1
+        assert after == before + 1
+
+    @pytest.mark.asyncio
+    async def test_kb_rerank_records_success_metric(self):
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        before = KB_RERANKS.labels(search_type="faq", status="success")._value.get()
+        service = KnowledgeRetrievalService(MagicMock())
+        service.repo.search_faqs = AsyncMock(
+            return_value=[
+                SimpleNamespace(
+                    question_id="faq-1",
+                    question="password reset",
+                    answer="password reset steps",
+                    category="it",
+                    tags=[],
+                    keywords=[],
+                    usage_count=0,
+                )
+            ]
+        )
+        service.repo.increment_faq_usage = AsyncMock(return_value=None)
+
+        class FakeLLM:
+            async def complete(self, system_prompt, user_message):
+                return type("Resp", (), {"content": '{"relevant_ids": ["faq-1"], "reason": "ok"}', "confidence": 0.9})()
+
+        service.llm = FakeLLM()
+        result = await service.search_with_llm_enhancement(
+            query="password reset",
+            search_type="faq",
+            limit=5,
+        )
+
+        after = KB_RERANKS.labels(search_type="faq", status="success")._value.get()
+        assert result.total == 1
+        assert after == before + 1

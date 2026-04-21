@@ -119,6 +119,42 @@ REDIS_ERRORS = Counter(
     ['error_type']
 )
 
+KB_SEARCHES = Counter(
+    'supervisor_kb_searches_total',
+    'Knowledge base searches and outcomes',
+    ['search_type', 'outcome']
+)
+
+KB_RERANKS = Counter(
+    'supervisor_kb_reranks_total',
+    'Knowledge base re-rank attempts',
+    ['search_type', 'status']
+)
+
+KB_CLARIFICATIONS = Counter(
+    'supervisor_kb_clarifications_total',
+    'Knowledge base clarification prompts',
+    ['search_type', 'reason']
+)
+
+KB_FALLBACKS = Counter(
+    'supervisor_kb_fallbacks_total',
+    'Knowledge base fallback outcomes',
+    ['search_type', 'reason']
+)
+
+APPROVAL_ACTIONS = Counter(
+    'supervisor_approval_actions_total',
+    'Approval lifecycle actions',
+    ['status']
+)
+
+DELIVERY_ACTIONS = Counter(
+    'supervisor_delivery_actions_total',
+    'Response delivery actions',
+    ['channel', 'status']
+)
+
 EXTERNAL_MEMORY_OPERATIONS = Counter(
     'supervisor_external_memory_operations_total',
     'External memory provider operations',
@@ -197,6 +233,30 @@ class MetricsCollector:
     @staticmethod
     def record_redis_error(error_type: str):
         REDIS_ERRORS.labels(error_type=error_type).inc()
+
+    @staticmethod
+    def record_kb_search(search_type: str, outcome: str):
+        KB_SEARCHES.labels(search_type=search_type, outcome=outcome).inc()
+
+    @staticmethod
+    def record_kb_rerank(search_type: str, status: str):
+        KB_RERANKS.labels(search_type=search_type, status=status).inc()
+
+    @staticmethod
+    def record_kb_clarification(search_type: str, reason: str):
+        KB_CLARIFICATIONS.labels(search_type=search_type, reason=reason).inc()
+
+    @staticmethod
+    def record_kb_fallback(search_type: str, reason: str):
+        KB_FALLBACKS.labels(search_type=search_type, reason=reason).inc()
+
+    @staticmethod
+    def record_approval_action(status: str):
+        APPROVAL_ACTIONS.labels(status=status).inc()
+
+    @staticmethod
+    def record_delivery_action(channel: str, status: str):
+        DELIVERY_ACTIONS.labels(channel=channel, status=status).inc()
 
     @staticmethod
     def record_external_memory(provider: str, operation: str, status: str):

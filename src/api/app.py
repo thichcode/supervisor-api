@@ -241,6 +241,7 @@ async def receive_webhook(
                         **chat_context,
                     },
                 )
+                metrics.record_delivery_action("approval", "queued")
                 result.status = "pending_approval"
                 result.metadata = {
                     **(result.metadata or {}),
@@ -265,6 +266,7 @@ async def receive_webhook(
 @app.post("/output/power-automate")
 async def send_to_power_automate(payload: OutputPayload):
     if not settings.power_automate_webhook_url:
+        metrics.record_delivery_action("power_automate", "skipped")
         return {"status": "skipped", "message": "Power Automate webhook not configured"}
 
     import httpx
@@ -284,14 +286,17 @@ async def send_to_power_automate(payload: OutputPayload):
     try:
         status_code = await _send()
         metrics.record_request("POST", "/output/power-automate", status_code, 0)
+        metrics.record_delivery_action("power_automate", "sent")
         return {"status": "sent", "response_code": status_code}
     except httpx.HTTPError:
         metrics.record_error("power_automate", "output/power-automate")
+        metrics.record_delivery_action("power_automate", "failed")
         raise HTTPException(status_code=502, detail="Failed to reach Power Automate")
 # NEW: Auto-send helper for integrated sending
 async def _auto_send_to_power_automate(payload: OutputPayload) -> bool:
     """Auto-send response to Power Automate (called automatically after chat)"""
     if not settings.power_automate_webhook_url:
+        metrics.record_delivery_action("power_automate", "skipped")
         return False
 
     import httpx
@@ -326,11 +331,13 @@ async def _auto_send_to_power_automate(payload: OutputPayload) -> bool:
         logger.info("Auto-sent to Power Automate", 
                  request_id=getattr(payload, 'request_id', ''),
                  status_code=status_code)
+        metrics.record_delivery_action("power_automate", "sent")
         return True
     except Exception as e:
         logger.error("Auto-send to Power Automate failed", 
                    request_id=getattr(payload, 'request_id', ''),
                    error=str(e))
+        metrics.record_delivery_action("power_automate", "failed")
         return False
 # =============================================================================
 # Agent Harness Integration - Supervisor wrapped by Harness

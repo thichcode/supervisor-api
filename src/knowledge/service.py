@@ -9,6 +9,7 @@ from src.knowledge.schemas import (
     KnowledgeSearchResponse,
     KnowledgeType,
 )
+from src.core.metrics import metrics
 from src.llm import MultiProviderLLMClient
 
 logger = structlog.get_logger()
@@ -35,6 +36,8 @@ class KnowledgeRetrievalService:
             normalized_query = normalized_query[:512]
 
         search_types = self._resolve_search_types(search_type)
+        primary_search_type = search_type or "all"
+        metrics.record_kb_search(primary_search_type, "started")
 
         for kb_type in search_types:
             kb_results = await self._search_knowledge_base(
@@ -43,6 +46,7 @@ class KnowledgeRetrievalService:
             results.extend(kb_results)
 
         results = self._deduplicate_and_rank(results, normalized_query)
+        self._record_search_outcome(primary_search_type, results)
 
         return KnowledgeSearchResponse(
             results=results[:limit],
@@ -88,6 +92,7 @@ class KnowledgeRetrievalService:
             }
 
         clarification_question = self._build_clarification_question(top, missing_fields)
+        metrics.record_kb_clarification(top.knowledge_type.value, "missing_context")
         return {
             "needs_clarification": True,
             "missing_fields": missing_fields,
@@ -291,6 +296,19 @@ class KnowledgeRetrievalService:
 
         return sorted(unique_results, key=lambda x: x.similarity, reverse=True)
 
+    def _record_search_outcome(self, search_type: str, results: List[KnowledgeSearchResult]) -> None:
+        if not results:
+            metrics.record_kb_fallback(search_type, "no_results")
+            metrics.record_kb_search(search_type, "miss")
+            return
+
+        top = results[0]
+        if top.similarity >= 0.5:
+            metrics.record_kb_search(search_type, "hit")
+        else:
+            metrics.record_kb_fallback(search_type, "low_similarity")
+            metrics.record_kb_search(search_type, "miss")
+
     def _extract_keywords(self, text: str) -> List[str]:
         keywords = []
         text_lower = text.lower()
@@ -328,6 +346,7 @@ class KnowledgeRetrievalService:
                 for i, r in enumerate(base_results.results[:3])
             ]
             context = "\n\n".join(context_parts)
+            metrics.record_kb_rerank(search_type or "all", "success")
 
             system_prompt = """Bạn là trợ lý tìm kiếm knowledge base. 
 Dựa trên kết quả search và câu hỏi người dùng, chọn kết quả phù hợp nhất và re-rank.
@@ -356,6 +375,7 @@ Trả về JSON: {"relevant_ids": ["id1", "id2"], "reason": "..."}"""
 
         except Exception as e:
             logger.warning("LLM enhancement failed", error=str(e))
+            metrics.record_kb_rerank(search_type or "all", "failure")
 
         return base_results
 

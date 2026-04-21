@@ -10,6 +10,7 @@ from src.core.schemas import ApprovalRequest, ApprovalStatus
 from src.config import get_settings
 from src.memory.cache import redis_cache
 from src.gateway.platforms.telegram import build_approval_inline_keyboard, build_approval_message_text
+from src.core.metrics import metrics
 
 logger = structlog.get_logger()
 settings = get_settings()
@@ -86,7 +87,7 @@ class ApprovalService:
             confidence=confidence,
             threshold=self.default_threshold,
         )
-        
+        metrics.record_approval_action("created")
         return approval
     
     async def _notify_approval_request(self, approval: ApprovalRequest):
@@ -259,6 +260,7 @@ class ApprovalService:
             approval_id=approval_id,
             reviewed_by=reviewed_by,
         )
+        metrics.record_approval_action("approved")
         
         return approval
     
@@ -290,6 +292,7 @@ class ApprovalService:
             approval_id=approval_id,
             reviewed_by=reviewed_by,
         )
+        metrics.record_approval_action("rejected")
         
         return approval
     
@@ -321,6 +324,7 @@ class ApprovalService:
             vote=vote,
             user_id=user_id,
         )
+        metrics.record_approval_action(f"vote_{vote}")
         
         return approval
     

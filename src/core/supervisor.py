@@ -329,26 +329,53 @@ class Supervisor:
         kb_hit = False
         kb_sources = []
         qa_needs_review = False
+        pattern_hit = False
         # NEW v2: Check cache first
         if NEW_MODULES_AVAILABLE:
             cache_result = self._check_cache(payload)
             if cache_result:
-                final_confidence = cache_result.get("confidence", 0.8)
+                cached_answer = cache_result.get("response", "")
                 final_confidence = self._normalize_final_confidence(
-                    final_confidence,
+                    cache_result.get("confidence", 0.8),
                     kb_hit=False,
                     qa_needs_review=False,
                 )
                 logger.debug("Cache hit", request_id=payload.request_id)
+                response_route = self.decision_engine.response_route(final_confidence, kb_hit=False)
+                if response_route == "skip":
+                    return self._create_output(
+                        payload=payload,
+                        answer="",
+                        confidence=final_confidence,
+                        intent=IntentClassification(intent=IntentType.FAQ, confidence=0.8),
+                        risk=RiskEvaluation(risk_level=RiskLevel.LOW, reasons=[]),
+                        agents_used=["cache"],
+                        status="skipped",
+                        processing_time=start_time,
+                        extra_metadata={"cache_hit": True, "kb_hit": False, "agents_used": ["cache"]},
+                    )
+                if response_route == "approve":
+                    return self._create_output(
+                        payload=payload,
+                        answer=cached_answer,
+                        confidence=final_confidence,
+                        intent=IntentClassification(intent=IntentType.FAQ, confidence=0.8),
+                        risk=RiskEvaluation(risk_level=RiskLevel.LOW, reasons=[]),
+                        agents_used=["cache"],
+                        status="needs_review",
+                        processing_time=start_time,
+                        extra_metadata={"cache_hit": True, "kb_hit": False, "agents_used": ["cache"]},
+                    )
                 return self._create_output(
                     payload=payload,
-                    answer=cache_result["response"],
+                    answer=cached_answer,
                     confidence=final_confidence,
                     intent=IntentClassification(intent=IntentType.FAQ, confidence=0.8),
                     risk=RiskEvaluation(risk_level=RiskLevel.LOW, reasons=[]),
                     agents_used=["cache"],
                     status="completed",
                     processing_time=start_time,
+                    extra_metadata={"cache_hit": True, "kb_hit": False},
                 )
 
         # NEW v2: Auto-fetch URLs from message
@@ -411,31 +438,39 @@ class Supervisor:
                 agents_used.append("system_query")
                 kb_hit = True
             else:
-                # Inject URL context into context dict
-                context_with_urls = dict(context)
-                if url_context:
-                    context_with_urls["url_context"] = url_context
+                pattern_result = await self._check_patterns(payload)
+                if pattern_result:
+                    answer, similarity = pattern_result
+                    final_confidence = min(1.0, similarity + 0.05)
+                    kb_hit = True
+                    pattern_hit = True
+                    agents_used.append("pattern_match")
+                else:
+                    # Inject URL context into context dict
+                    context_with_urls = dict(context)
+                    if url_context:
+                        context_with_urls["url_context"] = url_context
 
-                draft = await self.draft_agent.generate(
-                    payload, context_with_urls, policy, knowledge, self._llm
-                )
-
-                # Enhanced validation with Bayesian confidence (v2)
-                validation = await self._enhanced_validate(
-                    draft, payload, context, policy, knowledge
-                )
-
-                if validation["needs_review"]:
-                    logger.debug(
-                        "Validation suggests review, but routing will be decided by confidence thresholds",
-                        confidence=validation["confidence"],
-                        issues=validation.get("issues", []),
+                    draft = await self.draft_agent.generate(
+                        payload, context_with_urls, policy, knowledge, self._llm
                     )
 
-                answer = self.qa_agent.refine(validation, payload, context)
-                final_confidence = validation["confidence"]
-                kb_hit = bool(knowledge.get("knowledge_results"))
-                qa_needs_review = bool(validation.get("needs_review"))
+                    # Enhanced validation with Bayesian confidence (v2)
+                    validation = await self._enhanced_validate(
+                        draft, payload, context, policy, knowledge
+                    )
+
+                    if validation["needs_review"]:
+                        logger.debug(
+                            "Validation suggests review, but routing will be decided by confidence thresholds",
+                            confidence=validation["confidence"],
+                            issues=validation.get("issues", []),
+                        )
+
+                    answer = self.qa_agent.refine(validation, payload, context)
+                    final_confidence = validation["confidence"]
+                    kb_hit = bool(knowledge.get("knowledge_results"))
+                    qa_needs_review = bool(validation.get("needs_review"))
         else:
             # Check patterns first (SimpleAgent logic)
             pattern_result = await self._check_patterns(payload)
@@ -484,6 +519,8 @@ class Supervisor:
         extra_metadata = {
             "kb_hit": kb_hit,
             "kb_sources": kb_sources,
+            "pattern_hit": pattern_hit,
+            "agents_used": agents_used,
         }
         if kb_sources:
             extra_metadata["kb_evidence"] = [
