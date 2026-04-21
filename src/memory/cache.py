@@ -56,6 +56,15 @@ class RedisCache:
             logger.warning("Redis SET failed", key=key, error=str(e))
             return False
 
+    async def set_if_absent(self, key: str, value: str, ttl: int = 3600) -> bool:
+        if not self._client:
+            return False
+        try:
+            return bool(await self._client.set(key, value, ex=ttl, nx=True))
+        except redis.RedisError as e:
+            logger.warning("Redis SETNX failed", key=key, error=str(e))
+            return False
+
     async def delete(self, key: str) -> bool:
         if not self._client:
             return False

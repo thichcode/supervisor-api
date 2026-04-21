@@ -101,6 +101,8 @@ class SlackAdapter:
                 "platform": "slack",
                 "channel": channel,
                 "channel_type": channel_type,
+                "chat_type": "group" if channel_type in {"channel", "group", "mpim"} or (isinstance(channel, str) and channel[:1] in {"C", "G"}) else "private",
+                "chat_scope": "group" if channel_type in {"channel", "group", "mpim"} or (isinstance(channel, str) and channel[:1] in {"C", "G"}) else "dm",
                 "group_chat": channel_type in {"channel", "group", "mpim"} or (isinstance(channel, str) and channel[:1] in {"C", "G"}),
                 "thread_ts": thread_ts,
             }
@@ -132,6 +134,8 @@ class SlackAdapter:
                 "platform": "slack",
                 "channel": channel,
                 "channel_type": channel_type,
+                "chat_type": "group" if channel_type in {"channel", "group", "mpim"} or (isinstance(channel, str) and channel[:1] in {"C", "G"}) else "private",
+                "chat_scope": "group" if channel_type in {"channel", "group", "mpim"} or (isinstance(channel, str) and channel[:1] in {"C", "G"}) else "dm",
                 "group_chat": channel_type in {"channel", "group", "mpim"} or (isinstance(channel, str) and channel[:1] in {"C", "G"}),
                 "thread_ts": thread_ts,
             }

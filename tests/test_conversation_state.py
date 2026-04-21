@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from src.api.app import _chat_context_from_payload
 from src.core.conversation_continuity import ConversationContinuityEvaluator
 from src.core.schemas import ConversationInfo, InputPayload, MessageInfo, UserInfo
 from src.memory.service import MemoryContext, MemoryService
@@ -106,7 +107,14 @@ def sample_payload():
         source="telegram",
         timestamp="2026-04-20T09:16:00Z",
         user=UserInfo(id="u1", display_name="Thuong", role="employee", team="it"),
-        conversation=ConversationInfo(thread_id="thread-1", message_id="msg-1"),
+        conversation=ConversationInfo(
+            thread_id="thread-1",
+            message_id="msg-1",
+            chat_type="private",
+            chat_scope="dm",
+            group_chat=False,
+            platform="telegram",
+        ),
         message=MessageInfo(text="tiếp đi"),
     )
 
@@ -150,6 +158,10 @@ async def test_memory_context_includes_conversation_state_text():
         recent_messages=["a"],
         user_profile={"role": "employee"},
         conversation_state={
+            "platform": "telegram",
+            "chat_type": "private",
+            "chat_scope": "dm",
+            "group_chat": False,
             "active_topic_title": "KB import",
             "conversation_mode": "continuation",
             "continuity_score": 0.83,
@@ -161,6 +173,10 @@ async def test_memory_context_includes_conversation_state_text():
     text = context.get_context_text()
     as_dict = context.to_dict()
 
+    assert "Platform: telegram" in text
+    assert "Chat Type: private" in text
+    assert "Chat Scope: dm" in text
+    assert "Group Chat: False" in text
     assert "Current Topic: KB import" in text
     assert "Conversation Mode: continuation" in text
     assert "Continuity Score: 0.83" in text
@@ -179,7 +195,14 @@ async def test_memory_service_commit_updates_conversation_state(monkeypatch):
         source="telegram",
         timestamp="2026-04-20T09:16:00Z",
         user=UserInfo(id="u1", display_name="Thuong", role="employee", team="it"),
-        conversation=ConversationInfo(thread_id="thread-1", message_id="msg-1"),
+        conversation=ConversationInfo(
+            thread_id="thread-1",
+            message_id="msg-1",
+            chat_type="private",
+            chat_scope="dm",
+            group_chat=False,
+            platform="telegram",
+        ),
         message=MessageInfo(text="tiếp đi"),
     )
     memory = MemoryContext(
@@ -214,3 +237,86 @@ async def test_memory_service_commit_updates_conversation_state(monkeypatch):
     assert state.state_json["continuity_reason"]
     assert summary.summary_text
     assert summary.unresolved_points
+
+
+@pytest.mark.asyncio
+async def test_memory_service_retrieve_merges_runtime_chat_context():
+    service = MemoryService(session=None, cache=FakeCache())
+    repo = FakeStateRepo()
+    service.repo = repo
+    service.cache.store["memory:thread-1"] = {
+        "conversation_summary": "summary",
+        "recent_messages": ["hello"],
+        "user_profile": {"role": "employee"},
+        "case_memory": {},
+        "episodic_memory": [],
+        "external_memory": [],
+        "conversation_state": {"active_topic_title": "KB import"},
+    }
+
+    payload = InputPayload(
+        request_id="req-2",
+        source="telegram",
+        timestamp="2026-04-20T09:16:00Z",
+        user=UserInfo(id="u1", display_name="Thuong", role="employee", team="it"),
+        conversation=ConversationInfo(
+            thread_id="thread-1",
+            message_id="msg-2",
+            chat_type="private",
+            chat_scope="dm",
+            group_chat=False,
+            platform="telegram",
+        ),
+        message=MessageInfo(text="xem tiếp"),
+    )
+
+    context = await service.retrieve(payload)
+
+    assert context.conversation_state["chat_type"] == "private"
+    assert context.conversation_state["chat_scope"] == "dm"
+    assert context.conversation_state["group_chat"] is False
+    assert context.conversation_state["platform"] == "telegram"
+    assert context.conversation_state["active_topic_title"] == "KB import"
+
+
+@pytest.mark.asyncio
+async def test_chat_context_helper_normalizes_private_and_group():
+    private_payload = InputPayload(
+        request_id="req-3",
+        source="telegram",
+        timestamp="2026-04-20T09:16:00Z",
+        user=UserInfo(id="u1", display_name="Thuong"),
+        conversation=ConversationInfo(thread_id="thread-2", message_id="msg-3", platform="telegram"),
+        message=MessageInfo(text="hello"),
+    )
+    group_payload = InputPayload(
+        request_id="req-4",
+        source="slack",
+        timestamp="2026-04-20T09:16:00Z",
+        user=UserInfo(id="u2", display_name="Thuong"),
+        conversation=ConversationInfo(
+            thread_id="thread-3",
+            message_id="msg-4",
+            chat_type="group",
+            chat_scope="group",
+            group_chat=True,
+            platform="slack",
+        ),
+        message=MessageInfo(text="ping"),
+    )
+
+    private_context = _chat_context_from_payload(private_payload)
+    group_context = _chat_context_from_payload(group_payload)
+
+    assert private_context == {
+        "platform": "telegram",
+        "chat_type": "private",
+        "chat_scope": "dm",
+        "group_chat": False,
+    }
+    assert group_context == {
+        "platform": "slack",
+        "chat_type": "group",
+        "chat_scope": "group",
+        "group_chat": True,
+    }

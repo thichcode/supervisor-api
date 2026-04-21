@@ -672,6 +672,18 @@ class Supervisor:
 
         state_lines = []
         conversation_state = memory.conversation_state or {}
+        chat_type = payload.conversation.chat_type or conversation_state.get("chat_type")
+        chat_scope = payload.conversation.chat_scope or conversation_state.get("chat_scope")
+        group_chat = payload.conversation.group_chat if payload.conversation.group_chat is not None else conversation_state.get("group_chat")
+        platform = payload.conversation.platform or payload.source
+        if platform:
+            state_lines.append(f"Kênh: {platform}")
+        if chat_type:
+            state_lines.append(f"Loại chat: {chat_type}")
+        if chat_scope:
+            state_lines.append(f"Chat scope: {chat_scope}")
+        if group_chat is not None:
+            state_lines.append(f"Group chat: {group_chat}")
         if conversation_state.get("active_topic_title"):
             state_lines.append(f"Chủ đề hiện tại: {conversation_state['active_topic_title']}")
         if conversation_state.get("conversation_mode"):

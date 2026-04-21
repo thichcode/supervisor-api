@@ -85,6 +85,8 @@ class DiscordAdapter:
                 "platform": "discord",
                 "guild_id": guild_id,
                 "channel_id": channel_id,
+                "chat_type": "group" if guild_id else "private",
+                "chat_scope": "group" if guild_id else "dm",
                 "group_chat": bool(guild_id),
             }
             

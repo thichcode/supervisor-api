@@ -74,6 +74,14 @@ class MemoryContext:
             parts.append(f"\n=== Case Memory ===\n{self.case_memory.get('summary', 'No summary')}")
         if self.conversation_state:
             parts.append("\n=== Conversation State ===")
+            if self.conversation_state.get("platform"):
+                parts.append(f"Platform: {self.conversation_state['platform']}")
+            if self.conversation_state.get("chat_type"):
+                parts.append(f"Chat Type: {self.conversation_state['chat_type']}")
+            if self.conversation_state.get("chat_scope"):
+                parts.append(f"Chat Scope: {self.conversation_state['chat_scope']}")
+            if self.conversation_state.get("group_chat") is not None:
+                parts.append(f"Group Chat: {self.conversation_state['group_chat']}")
             if self.conversation_state.get("active_topic_title"):
                 parts.append(f"Current Topic: {self.conversation_state['active_topic_title']}")
             if self.conversation_state.get("conversation_mode"):
@@ -203,12 +211,14 @@ class MemoryService:
 
         cached = await self.cache.get_json(f"memory:{thread_id}")
         if cached:
-            return MemoryContext(**cached)
+            context = MemoryContext(**cached)
+            context.conversation_state = self._merge_runtime_chat_context(payload, context.conversation_state)
+            return context
 
         conversation_summary = await self.repo.get_conversation_summary(thread_id)
         summary_text = conversation_summary.summary_text if conversation_summary else None
         conversation_state_model = await self.repo.get_conversation_state(thread_id)
-        conversation_state = self._conversation_state_to_dict(conversation_state_model)
+        conversation_state = self._merge_runtime_chat_context(payload, self._conversation_state_to_dict(conversation_state_model))
 
         messages = await self.repo.get_recent_messages(thread_id, limit=10)
         recent_messages = [m.message_text for m in messages]
@@ -303,6 +313,42 @@ class MemoryService:
             "last_message_at": state_model.last_message_at.isoformat() if getattr(state_model, "last_message_at", None) else None,
             "turn_count": state_model.turn_count or 0,
         }
+
+    def _runtime_chat_context(self, payload: InputPayload) -> dict:
+        conversation = payload.conversation
+        chat_type = conversation.chat_type
+        chat_scope = conversation.chat_scope
+        group_chat = conversation.group_chat
+        platform = conversation.platform or payload.source
+
+        if chat_type is None and chat_scope:
+            chat_type = "group" if chat_scope == "group" else "private"
+        if chat_scope is None:
+            if group_chat or chat_type in {"group", "supergroup", "channel"}:
+                chat_scope = "group"
+            elif chat_type == "private":
+                chat_scope = "dm"
+        if group_chat is None:
+            group_chat = chat_type in {"group", "supergroup", "channel"} or chat_scope == "group"
+
+        return {
+            "platform": platform,
+            "chat_type": chat_type,
+            "chat_scope": chat_scope,
+            "group_chat": bool(group_chat),
+        }
+
+    def _merge_runtime_chat_context(self, payload: InputPayload, conversation_state: Optional[dict]) -> dict:
+        merged = dict(conversation_state or {})
+        runtime_context = self._runtime_chat_context(payload)
+        for key, value in runtime_context.items():
+            if value is not None:
+                merged[key] = value
+
+        if payload.conversation_state:
+            for key, value in payload.conversation_state.model_dump(exclude_none=True).items():
+                merged[key] = value
+        return merged
 
     def _build_topic_summary(self, payload: InputPayload, memory: MemoryContext, state_result: dict, assistant_text: Optional[str]) -> tuple[str, list[str]]:
         topic_title = state_result.get("suggested_topic_title") or payload.message.text[:80].strip()

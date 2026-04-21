@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     telegram_bot_token: str = ""
     telegram_approval_chat_ids: str = ""  # Comma-separated chat IDs or @channels
     telegram_parse_mode: str = "Markdown"
+    approval_notification_cooldown_seconds: int = 0  # 0 = unlimited; e.g. 60 => 1/min per channel
 
     agent_timeout: int = 10
     agent_retry: int = 1

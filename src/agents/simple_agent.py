@@ -92,6 +92,18 @@ class SimpleAgent:
             parts.append(f"CONTEXT: {memory.conversation_summary}")
 
         if memory.conversation_state:
+            chat_platform = memory.conversation_state.get("platform") or payload.source
+            chat_type = memory.conversation_state.get("chat_type")
+            chat_scope = memory.conversation_state.get("chat_scope")
+            group_chat = memory.conversation_state.get("group_chat")
+            if chat_platform:
+                parts.append(f"CHANNEL: {chat_platform}")
+            if chat_type:
+                parts.append(f"CHAT_TYPE: {chat_type}")
+            if chat_scope:
+                parts.append(f"CHAT_SCOPE: {chat_scope}")
+            if group_chat is not None:
+                parts.append(f"GROUP_CHAT: {group_chat}")
             topic = memory.conversation_state.get("active_topic_title")
             mode = memory.conversation_state.get("conversation_mode")
             message_mode = memory.conversation_state.get("last_user_message_mode")

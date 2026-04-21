@@ -13,6 +13,12 @@ class ContextAgent:
             "conversation_history": memory.recent_messages,
             "conversation_summary": memory.conversation_summary or "No prior context",
             "conversation_state": memory.conversation_state or {},
+            "chat_context": {
+                "platform": payload.conversation.platform or payload.source,
+                "chat_type": payload.conversation.chat_type or (memory.conversation_state or {}).get("chat_type"),
+                "chat_scope": payload.conversation.chat_scope or (memory.conversation_state or {}).get("chat_scope"),
+                "group_chat": payload.conversation.group_chat if payload.conversation.group_chat is not None else (memory.conversation_state or {}).get("group_chat", False),
+            },
             "user_info": {
                 "name": payload.user.display_name,
                 "id": payload.user.id,

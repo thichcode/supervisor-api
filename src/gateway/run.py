@@ -181,7 +181,7 @@ class GatewayRunner:
                         "display_name": display_name or user_id,
                         "message": message,
                         "thread_id": thread_id or session_id,
-                        "metadata": metadata or {"platform": platform, "group_chat": False},
+                        "metadata": metadata or {"platform": platform, "group_chat": False, "chat_type": "private", "chat_scope": "dm"},
                     },
                     headers={"Authorization": f"Bearer {self.config.supervisor_api_key}"} if self.config.supervisor_api_key else {},
                     timeout=30.0

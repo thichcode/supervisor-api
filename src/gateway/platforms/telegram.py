@@ -248,11 +248,13 @@ class TelegramAdapter:
         )
         chat_type = message.get("chat", {}).get("type", "private")
         group_chat = chat_type in {"group", "supergroup"}
+        chat_scope = "group" if group_chat else "dm"
         thread_id = f"telegram_{chat_id}"
         metadata = {
             "platform": "telegram",
             "chat_id": chat_id,
             "chat_type": chat_type,
+            "chat_scope": chat_scope,
             "group_chat": group_chat,
         }
         

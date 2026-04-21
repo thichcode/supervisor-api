@@ -45,6 +45,10 @@ class ConversationInfo(BaseModel):
     message_id: str
     summary: Optional[str] = None
     unresolved_points: list[str] = Field(default_factory=list)
+    chat_type: Optional[str] = None
+    chat_scope: Optional[str] = None
+    group_chat: Optional[bool] = None
+    platform: Optional[str] = None
 
 
 class ConversationStateInfo(BaseModel):
@@ -61,6 +65,10 @@ class ConversationStateInfo(BaseModel):
     state_json: dict = Field(default_factory=dict)
     last_message_at: Optional[datetime] = None
     turn_count: int = 0
+    platform: Optional[str] = None
+    chat_type: Optional[str] = None
+    chat_scope: Optional[str] = None
+    group_chat: Optional[bool] = None
 
 
 class CaseInfo(BaseModel):

@@ -20,12 +20,56 @@ class ChatService:
         self.group_chat_resolver = GroupChatTargetResolver()
         self.teams_target_resolver = TeamsTargetResolver()
 
+    def _normalize_chat_context(self, request: ChatRequest) -> dict:
+        metadata = dict(request.metadata or {})
+        platform = metadata.get("platform") or metadata.get("source") or "direct_chat"
+        chat_type = metadata.get("chat_type")
+        chat_scope = metadata.get("chat_scope")
+        group_chat = metadata.get("group_chat")
+        channel_type = metadata.get("channel_type")
+
+        if chat_type is None:
+            if channel_type in {"channel", "group", "mpim"}:
+                chat_type = "group"
+            elif metadata.get("guild_id"):
+                chat_type = "group"
+            elif metadata.get("conversation_type") in {"channel", "group"}:
+                chat_type = "group"
+            elif platform in {"telegram", "direct_chat", "harness_chat"}:
+                chat_type = "private"
+
+        if group_chat is None:
+            if chat_type == "private":
+                group_chat = False
+            elif chat_type in {"group", "supergroup", "channel"}:
+                group_chat = True
+            elif channel_type in {"channel", "group", "mpim"} or metadata.get("guild_id"):
+                group_chat = True
+            elif platform in {"telegram", "direct_chat", "harness_chat"}:
+                group_chat = False
+
+        if chat_scope is None:
+            if group_chat is True or chat_type in {"group", "supergroup", "channel"}:
+                chat_scope = "group"
+            elif group_chat is False or chat_type == "private":
+                chat_scope = "dm"
+
+        if chat_type is None and chat_scope:
+            chat_type = "group" if chat_scope == "group" else "private"
+
+        return {
+            "platform": platform,
+            "chat_type": chat_type,
+            "chat_scope": chat_scope,
+            "group_chat": bool(group_chat) if group_chat is not None else False,
+        }
+
     async def handle_chat(self, request: ChatRequest, auto_send_callback=None) -> ChatResponse:
         import src.api as api_module
 
         request_id = str(uuid.uuid4())
         thread_id = request.thread_id or f"chat-{request.user_id}-{int(time.time())}"
-
+        chat_context = self._normalize_chat_context(request)
         payload = InputPayload(
             request_id=request_id,
             source="direct_chat",
@@ -40,6 +84,10 @@ class ChatService:
             conversation=ConversationInfo(
                 thread_id=thread_id,
                 message_id=f"msg-{request_id}",
+                chat_type=chat_context["chat_type"],
+                chat_scope=chat_context["chat_scope"],
+                group_chat=chat_context["group_chat"],
+                platform=chat_context["platform"],
             ),
             case=CaseInfo(
                 case_id=request.case_id,
@@ -49,7 +97,7 @@ class ChatService:
             message=MessageInfo(text=request.message),
         )
 
-        is_group_chat = bool(request.metadata.get("group_chat", False))
+        is_group_chat = bool(chat_context.get("group_chat", False))
         is_teams_message = request.metadata.get("source") == "ms_teams" or request.metadata.get("platform") == "teams" or any(
             key in request.metadata for key in ("conversation_type", "conversationType", "mention_targets", "mentions", "reply_target", "replyToTarget", "sender_is_bot", "from_bot")
         )
@@ -158,6 +206,9 @@ class ChatService:
                 )
 
             result = await api_module.supervisor.process(payload, memory)
+            conversation_metadata = {**routing_metadata, **chat_context}
+            if conversation_metadata:
+                result.metadata = {**(result.metadata or {}), **conversation_metadata}
             await memory_service.commit(
                 payload,
                 memory_snapshot=memory,
@@ -187,10 +238,6 @@ class ChatService:
             )
             await session.commit()
 
-        group_chat_metadata = routing_metadata if (is_group_chat or is_teams_message) else {}
-        if group_chat_metadata:
-            result.metadata = {**(result.metadata or {}), **group_chat_metadata}
-
         if result.status == "needs_review":
             approval = await approval_service.create_approval(
                 request_id=request_id,
@@ -210,7 +257,7 @@ class ChatService:
                     "risk_level": result.risk_level,
                     "kb_sources": (result.metadata or {}).get("kb_sources", []),
                     "kb_evidence": (result.metadata or {}).get("kb_evidence", []),
-                    **group_chat_metadata,
+                    **conversation_metadata,
                 },
             )
 
@@ -279,6 +326,19 @@ class ChatService:
 
         request_id = str(uuid.uuid4())
         thread_id = request.thread_id or f"chat-harness-{request.user_id}-{int(time.time())}"
+        chat_context = self._normalize_chat_context(
+            ChatRequest(
+                user_id=request.user_id,
+                display_name=request.display_name,
+                message=request.message,
+                thread_id=request.thread_id,
+                case_id=request.case_id,
+                ticket_id=request.ticket_id,
+                ticket_system=request.ticket_system,
+                message_type=request.message_type,
+                metadata={**request.metadata, "platform": request.metadata.get("platform") or "harness_chat"},
+            )
+        )
         payload = InputPayload(
             request_id=request_id,
             source="harness_chat",
@@ -290,7 +350,14 @@ class ChatService:
                 team=request.metadata.get("team"),
                 vip_flag=request.metadata.get("vip_flag", False),
             ),
-            conversation=ConversationInfo(thread_id=thread_id, message_id=f"msg-{request_id}"),
+            conversation=ConversationInfo(
+                thread_id=thread_id,
+                message_id=f"msg-{request_id}",
+                chat_type=chat_context["chat_type"],
+                chat_scope=chat_context["chat_scope"],
+                group_chat=chat_context["group_chat"],
+                platform=chat_context["platform"],
+            ),
             case=CaseInfo(
                 case_id=request.case_id,
                 ticket_id=request.ticket_id,
@@ -308,6 +375,9 @@ class ChatService:
                 result = await harness_bridge.process(payload, memory)
             else:
                 result = await api_module.supervisor.process(payload, memory)
+            conversation_metadata = dict(chat_context)
+            if conversation_metadata:
+                result.metadata = {**(result.metadata or {}), **conversation_metadata}
             await memory_service.commit(
                 payload,
                 memory_snapshot=memory,

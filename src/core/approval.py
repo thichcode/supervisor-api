@@ -21,6 +21,31 @@ APPROVAL_TTL = 86400 * 7  # 7 days
 class ApprovalService:
     def __init__(self):
         self.default_threshold = 0.5  # Approval is required for medium-confidence responses
+
+    def _notification_cooldown_seconds(self) -> int:
+        return max(0, int(getattr(settings, "approval_notification_cooldown_seconds", 0) or 0))
+
+    def _notification_key(self, channel: str) -> str:
+        return f"approval:notification:{channel}"
+
+    async def _notification_allowed(self, channel: str) -> bool:
+        cooldown = self._notification_cooldown_seconds()
+        if cooldown <= 0:
+            return True
+
+        try:
+            return await redis_cache.set_if_absent(
+                self._notification_key(channel),
+                datetime.utcnow().isoformat(),
+                ttl=cooldown,
+            )
+        except Exception as exc:
+            logger.warning(
+                "notification_rate_limit_check_failed",
+                channel=channel,
+                error=str(exc),
+            )
+            return True
     
     async def create_approval(
         self,
@@ -69,6 +94,14 @@ class ApprovalService:
         if not settings.power_automate_webhook_url:
             logger.debug("Power Automate webhook not configured, skipping notification")
             return
+
+        if not await self._notification_allowed("power_automate"):
+            logger.info(
+                "Approval notification rate-limited for Power Automate",
+                approval_id=approval.id,
+                cooldown_seconds=self._notification_cooldown_seconds(),
+            )
+            return
         
         import httpx
         
@@ -110,6 +143,14 @@ class ApprovalService:
         """Send an approval request directly to Telegram with inline buttons."""
         if not settings.telegram_bot_token or not settings.telegram_approval_chat_ids:
             logger.debug("Telegram approval notification not configured, skipping notification")
+            return
+
+        if not await self._notification_allowed("telegram"):
+            logger.info(
+                "Approval notification rate-limited for Telegram",
+                approval_id=approval.id,
+                cooldown_seconds=self._notification_cooldown_seconds(),
+            )
             return
 
         import httpx

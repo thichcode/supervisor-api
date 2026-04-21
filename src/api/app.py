@@ -54,6 +54,19 @@ feedback_worker = FeedbackReplayWorker(session_factory=async_session, supervisor
 feedback_worker_task: Optional[asyncio.Task] = None
 
 
+def _chat_context_from_payload(payload: InputPayload) -> dict:
+    conversation = payload.conversation
+    chat_type = conversation.chat_type or ("group" if conversation.group_chat else "private")
+    chat_scope = conversation.chat_scope or ("group" if conversation.group_chat else "dm")
+    group_chat = conversation.group_chat if conversation.group_chat is not None else chat_type in {"group", "supergroup", "channel"}
+    return {
+        "platform": conversation.platform or payload.source,
+        "chat_type": chat_type,
+        "chat_scope": chat_scope,
+        "group_chat": bool(group_chat),
+    }
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global feedback_worker_task
@@ -186,6 +199,7 @@ async def receive_webhook(
 
         payload.message.text = sanitizer.sanitize(original_text)
         start_time = time.time()
+        chat_context = _chat_context_from_payload(payload)
         request_logger.log_request_received(
             {"user": {"id": payload.user.id}, "conversation": {"thread_id": payload.conversation.thread_id}}
         )
@@ -194,6 +208,7 @@ async def receive_webhook(
             memory_service = MemoryService(session, api_module.redis_cache)
             memory = await memory_service.retrieve(payload)
             result = await api_module.supervisor.process(payload, memory)
+            result.metadata = {**(result.metadata or {}), **chat_context}
             await memory_service.commit(
                 payload,
                 memory_snapshot=memory,
@@ -223,6 +238,7 @@ async def receive_webhook(
                         "thread_id": payload.conversation.thread_id,
                         "approval_required": True,
                         "threshold": 0.5,
+                        **chat_context,
                     },
                 )
                 result.status = "pending_approval"

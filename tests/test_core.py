@@ -33,6 +33,10 @@ def sample_payload():
         conversation=ConversationInfo(
             thread_id="thread-001",
             message_id="msg-001",
+            chat_type="private",
+            chat_scope="dm",
+            group_chat=False,
+            platform="telegram",
         ),
         message=MessageInfo(
             text="How do I reset my password?",
@@ -147,6 +151,10 @@ class TestContextAgent:
         result = agent.build(sample_payload, sample_context)
         assert "current_message" in result
         assert result["current_message"] == sample_payload.message.text
+        assert "chat_context" in result
+        assert result["chat_context"]["chat_type"] == "private"
+        assert result["chat_context"]["chat_scope"] == "dm"
+        assert result["chat_context"]["group_chat"] is False
         assert "user_info" in result
         assert result["user_info"]["name"] == "John Doe"
 
