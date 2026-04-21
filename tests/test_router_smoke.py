@@ -185,14 +185,54 @@ class TestSmokeRequests:
 
     @pytest.mark.asyncio
     async def test_monitoring_dashboard_endpoint(self, client, monkeypatch):
+        async def fake_snapshot(days=7):
+            return {
+                "timestamp": "2026-04-21T10:00:00",
+                "window_days": days,
+                "overview": {"total_interactions": 10, "kb_hits": 6, "auto_sent": 4, "need_manual_review": 3, "skipped": 3, "auto_send_rate": 40.0},
+                "performance": {"total_interactions": 10, "avg_processing_time_ms": 1234.0, "avg_processing_time_sec": 1.23},
+                "ai_quality": {"avg_confidence": 48.0, "high_confidence_count": 1, "low_confidence_count": 7, "auto_send_count": 4, "approval_needed_count": 3, "needs_review_count": 3},
+                "user_satisfaction": {"total_votes": 5, "agree": 3, "change": 1, "skip": 1, "satisfaction_rate": 60.0},
+                "approvals": {"pending": 2, "approved": 4, "rejected": 1, "approve_rate": 80.0, "average_confidence": 55.0},
+                "efficiency": {"kb_hit_rate": 60.0, "approval_required_rate": 30.0, "skip_rate": 30.0, "auto_send_rate": 40.0, "needs_review_rate": 30.0, "clarification_rate": 10.0, "avg_confidence": 48.0, "avg_latency_ms": 1234.0},
+                "top_intents": [{"intent": "faq", "count": 6}],
+                "boss_summary": ["summary one"],
+                "recommendations": ["recommendation one"],
+            }
 
-        approval_service = MagicMock()
-        approval_service.get_all_approvals = AsyncMock(return_value=[])
-        monkeypatch.setattr("src.core.approval.approval_service", approval_service)
+        monkeypatch.setattr("src.api.routers.monitoring._load_dashboard_snapshot", fake_snapshot)
 
-        response = await client.get("/metrics/dashboard")
+        response = await client.get("/metrics/dashboard?days=7")
         assert response.status_code == 200
-        assert "overview" in response.json()
+        body = response.json()
+        assert body["overview"]["kb_hits"] == 6
+        assert body["efficiency"]["kb_hit_rate"] == 60.0
+        assert body["approvals"]["approve_rate"] == 80.0
+
+    @pytest.mark.asyncio
+    async def test_monitoring_dashboard_html_endpoint(self, client, monkeypatch):
+        async def fake_snapshot(days=7):
+            return {
+                "timestamp": "2026-04-21T10:00:00",
+                "window_days": days,
+                "overview": {"total_interactions": 10, "kb_hits": 6, "auto_sent": 4, "need_manual_review": 3, "skipped": 3, "auto_send_rate": 40.0},
+                "performance": {"total_interactions": 10, "avg_processing_time_ms": 1234.0, "avg_processing_time_sec": 1.23},
+                "ai_quality": {"avg_confidence": 48.0, "high_confidence_count": 1, "low_confidence_count": 7, "auto_send_count": 4, "approval_needed_count": 3, "needs_review_count": 3},
+                "user_satisfaction": {"total_votes": 5, "agree": 3, "change": 1, "skip": 1, "satisfaction_rate": 60.0},
+                "approvals": {"pending": 2, "approved": 4, "rejected": 1, "approve_rate": 80.0, "average_confidence": 55.0},
+                "efficiency": {"kb_hit_rate": 60.0, "approval_required_rate": 30.0, "skip_rate": 30.0, "auto_send_rate": 40.0, "needs_review_rate": 30.0, "clarification_rate": 10.0, "avg_confidence": 48.0, "avg_latency_ms": 1234.0},
+                "top_intents": [{"intent": "faq", "count": 6}],
+                "boss_summary": ["summary one"],
+                "recommendations": ["recommendation one"],
+            }
+
+        monkeypatch.setattr("src.api.routers.monitoring._load_dashboard_snapshot", fake_snapshot)
+
+        response = await client.get("/metrics/dashboard/html?days=7")
+        assert response.status_code == 200
+        assert "Executive Summary" in response.text
+        assert "KB Hit Rate" in response.text
+        assert "recommendation one" in response.text
 
     @pytest.mark.asyncio
     async def test_delivery_callback_endpoint(self, client, monkeypatch):

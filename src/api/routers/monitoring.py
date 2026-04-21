@@ -1,100 +1,223 @@
-from datetime import datetime
+from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
-from fastapi.responses import HTMLResponse
+from collections import Counter
+from datetime import datetime, timedelta
+
+from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import HTMLResponse, PlainTextResponse
 from sqlalchemy import select
 
 from src.core.metrics import get_metrics, metrics
 from src.db import async_session
+from src.db.models import ApprovalRequestRecord, Alert, InteractionLog
 
 router = APIRouter(tags=["monitoring"])
 
 
-@router.get("/metrics/dashboard")
-async def dashboard_metrics():
-    from src.core.approval import approval_service
+async def _load_dashboard_snapshot(days: int = 7) -> dict:
+    """Collect efficiency metrics for the dashboard and boss report."""
+    cutoff = datetime.utcnow() - timedelta(days=days)
 
-    stats = {
+    snapshot = {
         "timestamp": datetime.now().isoformat(),
+        "window_days": days,
         "overview": {},
         "performance": {},
         "ai_quality": {},
         "user_satisfaction": {},
         "approvals": {},
+        "efficiency": {},
+        "boss_summary": [],
+        "recommendations": [],
+        "top_intents": [],
     }
 
     try:
-        all_approvals = await approval_service.get_all_approvals()
-        pending_count = sum(1 for a in all_approvals if a.status == "pending")
-        approved_count = sum(1 for a in all_approvals if a.status == "approved")
-        rejected_count = sum(1 for a in all_approvals if a.status == "rejected")
-        confidences = [a.confidence for a in all_approvals if a.confidence]
-        avg_confidence = sum(confidences) / len(confidences) if confidences else 0
-        auto_send = sum(1 for a in all_approvals if a.confidence >= 0.9)
-        need_approval = sum(1 for a in all_approvals if a.confidence < 0.9)
-        votes_agree = sum(1 for a in all_approvals if a.vote == "agree")
-        votes_change = sum(1 for a in all_approvals if a.vote == "change")
-        votes_skip = sum(1 for a in all_approvals if a.vote == "skip")
+        async with async_session() as session:
+            interaction_result = await session.execute(
+                select(InteractionLog).where(InteractionLog.created_at >= cutoff)
+            )
+            approval_result = await session.execute(
+                select(ApprovalRequestRecord).where(ApprovalRequestRecord.created_at >= cutoff)
+            )
+            interactions = interaction_result.scalars().all()
+            approvals = approval_result.scalars().all()
+
+        total_interactions = len(interactions)
+        kb_hit_count = sum(1 for row in interactions if (row.kb_hit_count or 0) > 0)
+        approval_required_count = sum(1 for row in interactions if row.approval_required)
+        needs_review_count = sum(1 for row in interactions if row.outcome_status == "needs_review")
+        skipped_count = sum(1 for row in interactions if row.outcome_status == "skipped")
+        completed_count = sum(1 for row in interactions if row.outcome_status == "completed")
+        clarification_count = sum(1 for row in interactions if row.outcome_status == "needs_clarification")
+        confidences = [row.confidence_score for row in interactions if row.confidence_score is not None]
+        latencies = [row.processing_latency_ms for row in interactions if row.processing_latency_ms is not None]
+        intents = Counter((row.intent or "unknown") for row in interactions)
+        top_intents = intents.most_common(5)
+
+        pending_count = sum(1 for a in approvals if getattr(a, "status", "") == "pending")
+        approved_count = sum(1 for a in approvals if getattr(a, "status", "") == "approved")
+        rejected_count = sum(1 for a in approvals if getattr(a, "status", "") == "rejected")
+        approval_confidences = [a.confidence for a in approvals if getattr(a, "confidence", None) is not None]
+        votes_agree = sum(1 for a in approvals if getattr(a, "vote", None) == "agree")
+        votes_change = sum(1 for a in approvals if getattr(a, "vote", None) == "change")
+        votes_skip = sum(1 for a in approvals if getattr(a, "vote", None) == "skip")
         total_voted = votes_agree + votes_change + votes_skip
 
-        stats["overview"] = {
-            "total_approvals": len(all_approvals),
-            "auto_sent": auto_send,
-            "need_manual_review": need_approval,
-            "auto_send_rate": round(auto_send / len(all_approvals) * 100, 1) if all_approvals else 0,
-        }
-        stats["approvals"] = {
-            "pending": pending_count,
-            "approved": approved_count,
-            "rejected": rejected_count,
-            "approve_rate": round(approved_count / (approved_count + rejected_count) * 100, 1) if (approved_count + rejected_count) > 0 else 0,
-        }
-        stats["ai_quality"] = {
-            "avg_confidence": round(avg_confidence * 100, 1),
-            "high_confidence_count": sum(1 for c in confidences if c >= 0.9),
-            "low_confidence_count": sum(1 for c in confidences if c < 0.9),
-            "auto_send_count": auto_send,
-            "approval_needed_count": need_approval,
-        }
-        stats["user_satisfaction"] = {
-            "total_votes": total_voted,
-            "agree": votes_agree,
-            "change": votes_change,
-            "skip": votes_skip,
-            "satisfaction_rate": round(votes_agree / total_voted * 100, 1) if total_voted > 0 else 0,
-        }
-        stats["performance"] = {
-            "total_approvals": len(all_approvals),
-            "avg_processing_time_sec": "N/A",
-        }
-    except Exception as e:
-        stats["error"] = str(e)
+        avg_confidence = sum(confidences) / len(confidences) if confidences else 0
+        avg_latency_ms = sum(latencies) / len(latencies) if latencies else 0
+        kb_hit_rate = round(kb_hit_count / total_interactions * 100, 1) if total_interactions else 0
+        approval_required_rate = round(approval_required_count / total_interactions * 100, 1) if total_interactions else 0
+        skip_rate = round(skipped_count / total_interactions * 100, 1) if total_interactions else 0
+        auto_send_rate = round(completed_count / total_interactions * 100, 1) if total_interactions else 0
+        review_rate = round(needs_review_count / total_interactions * 100, 1) if total_interactions else 0
+        clarify_rate = round(clarification_count / total_interactions * 100, 1) if total_interactions else 0
+        approve_rate = round(approved_count / (approved_count + rejected_count) * 100, 1) if (approved_count + rejected_count) else 0
+        satisfaction_rate = round(votes_agree / total_voted * 100, 1) if total_voted else 0
+        approval_avg_conf = round(sum(approval_confidences) / len(approval_confidences) * 100, 1) if approval_confidences else 0
 
-    return stats
+        recommendations = []
+        if kb_hit_rate < 40:
+            recommendations.append("KB hit rate thấp: nên bổ sung / chỉnh KB và truy vấn search.")
+        if approval_required_rate > 30:
+            recommendations.append("Approve rate cao: xem lại calibration confidence hoặc chất lượng QA.")
+        if avg_latency_ms and avg_latency_ms > 5000:
+            recommendations.append("Latency cao: cân nhắc tối ưu model hoặc giảm số bước subagent.")
+        if clarification_count:
+            recommendations.append(f"Có {clarification_count} lượt cần làm rõ: nên cải thiện clarification flow.")
+        if not recommendations:
+            recommendations.append("Hiệu quả đang ổn, tiếp tục theo dõi theo tuần.")
+
+        boss_summary = [
+            f"Trong {days} ngày gần nhất có {total_interactions} interaction(s).",
+            f"KB hit rate: {kb_hit_rate}% | Auto-send: {auto_send_rate}% | Skip: {skip_rate}% | Needs review: {review_rate}%.",
+            f"Average confidence: {round(avg_confidence * 100, 1)}% | Average latency: {round(avg_latency_ms, 1)} ms.",
+            f"Approval queue: pending={pending_count}, approved={approved_count}, rejected={rejected_count}, approve_rate={approve_rate}%.",
+        ]
+
+        snapshot.update(
+            {
+                "overview": {
+                    "total_interactions": total_interactions,
+                    "kb_hits": kb_hit_count,
+                    "auto_sent": completed_count,
+                    "need_manual_review": approval_required_count,
+                    "skipped": skipped_count,
+                    "auto_send_rate": auto_send_rate,
+                },
+                "approvals": {
+                    "pending": pending_count,
+                    "approved": approved_count,
+                    "rejected": rejected_count,
+                    "approve_rate": approve_rate,
+                    "average_confidence": approval_avg_conf,
+                },
+                "ai_quality": {
+                    "avg_confidence": round(avg_confidence * 100, 1),
+                    "high_confidence_count": sum(1 for c in confidences if c >= 0.9),
+                    "low_confidence_count": sum(1 for c in confidences if c < 0.5),
+                    "auto_send_count": completed_count,
+                    "approval_needed_count": approval_required_count,
+                    "needs_review_count": needs_review_count,
+                },
+                "user_satisfaction": {
+                    "total_votes": total_voted,
+                    "agree": votes_agree,
+                    "change": votes_change,
+                    "skip": votes_skip,
+                    "satisfaction_rate": satisfaction_rate,
+                },
+                "performance": {
+                    "total_interactions": total_interactions,
+                    "avg_processing_time_ms": round(avg_latency_ms, 1),
+                    "avg_processing_time_sec": round(avg_latency_ms / 1000, 2) if avg_latency_ms else 0,
+                },
+                "efficiency": {
+                    "kb_hit_rate": kb_hit_rate,
+                    "approval_required_rate": approval_required_rate,
+                    "skip_rate": skip_rate,
+                    "auto_send_rate": auto_send_rate,
+                    "needs_review_rate": review_rate,
+                    "clarification_rate": clarify_rate,
+                    "avg_confidence": round(avg_confidence * 100, 1),
+                    "avg_latency_ms": round(avg_latency_ms, 1),
+                },
+                "top_intents": [{"intent": intent, "count": count} for intent, count in top_intents],
+                "boss_summary": boss_summary,
+                "recommendations": recommendations,
+            }
+        )
+    except Exception as e:
+        snapshot["error"] = str(e)
+
+    return snapshot
+
+
+@router.get("/metrics/dashboard")
+async def dashboard_metrics(days: int = Query(default=7, ge=1, le=90)):
+    return await _load_dashboard_snapshot(days=days)
+
+
+@router.get("/metrics/dashboard/boss-report")
+async def boss_report(days: int = Query(default=7, ge=1, le=90)):
+    snapshot = await _load_dashboard_snapshot(days=days)
+    lines = [
+        "Supervisor boss report",
+        f"Window: last {snapshot.get('window_days', days)} day(s)",
+        "",
+    ]
+    lines.extend(snapshot.get("boss_summary", []))
+    lines.append("")
+    lines.append("Key recommendations:")
+    for item in snapshot.get("recommendations", []):
+        lines.append(f"- {item}")
+    lines.append("")
+    lines.append("Top intents:")
+    for item in snapshot.get("top_intents", [])[:5]:
+        lines.append(f"- {item.get('intent')}: {item.get('count')}")
+    if snapshot.get("error"):
+        lines.append("")
+        lines.append(f"Error: {snapshot['error']}")
+    return PlainTextResponse("\n".join(lines), media_type="text/plain; charset=utf-8")
 
 
 @router.get("/metrics/dashboard/html")
-async def dashboard_html():
-    from src.core.approval import approval_service
+async def dashboard_html(days: int = Query(default=7, ge=1, le=90)):
+    snapshot = await _load_dashboard_snapshot(days=days)
+    overview = snapshot.get("overview", {})
+    approvals = snapshot.get("approvals", {})
+    ai_quality = snapshot.get("ai_quality", {})
+    user_satisfaction = snapshot.get("user_satisfaction", {})
+    efficiency = snapshot.get("efficiency", {})
+    boss_summary = snapshot.get("boss_summary", [])
+    recommendations = snapshot.get("recommendations", [])
+    top_intents = snapshot.get("top_intents", [])
 
-    try:
-        all_approvals = await approval_service.get_all_approvals()
-        pending = sum(1 for a in all_approvals if a.status == "pending")
-        approved = sum(1 for a in all_approvals if a.status == "approved")
-        rejected = sum(1 for a in all_approvals if a.status == "rejected")
-        confidences = [a.confidence for a in all_approvals if a.confidence]
-        avg_conf = sum(confidences) / len(confidences) * 100 if confidences else 0
-        auto_send = sum(1 for a in all_approvals if a.confidence >= 0.9)
-        votes_agree = sum(1 for a in all_approvals if a.vote == "agree")
-        votes_change = sum(1 for a in all_approvals if a.vote == "change")
-        votes_skip = sum(1 for a in all_approvals if a.vote == "skip")
-        total_votes = votes_agree + votes_change + votes_skip
-        sat_rate = round(votes_agree / total_votes * 100, 1) if total_votes > 0 else 0
-        approve_rate = round(approved / (approved + rejected) * 100, 1) if (approved + rejected) > 0 else 0
-    except Exception:
-        pending = approved = rejected = 0
-        avg_conf = auto_send = 0
-        votes_agree = votes_change = votes_skip = total_votes = sat_rate = approve_rate = 0
+    pending = approvals.get("pending", 0)
+    approved = approvals.get("approved", 0)
+    rejected = approvals.get("rejected", 0)
+    avg_conf = ai_quality.get("avg_confidence", 0)
+    auto_send = overview.get("auto_sent", 0)
+    total_interactions = overview.get("total_interactions", 0)
+    sat_rate = user_satisfaction.get("satisfaction_rate", 0)
+    total_votes = user_satisfaction.get("total_votes", 0)
+    votes_agree = user_satisfaction.get("agree", 0)
+    votes_change = user_satisfaction.get("change", 0)
+    votes_skip = user_satisfaction.get("skip", 0)
+    approve_rate = approvals.get("approve_rate", 0)
+    kb_hit_rate = efficiency.get("kb_hit_rate", 0)
+    approval_required_rate = efficiency.get("approval_required_rate", 0)
+    skip_rate = efficiency.get("skip_rate", 0)
+    review_rate = efficiency.get("needs_review_rate", 0)
+    avg_latency_ms = efficiency.get("avg_latency_ms", 0)
+
+    intent_rows = "".join(
+        f'<div class="metric-row"><span class="label">{item.get("intent")}</span><span class="val">{item.get("count")}</span></div>'
+        for item in top_intents
+    ) or '<div class="metric-row"><span class="label">N/A</span><span class="val">0</span></div>'
+
+    summary_html = "".join(f"<li>{line}</li>" for line in boss_summary) or "<li>Không có dữ liệu.</li>"
+    recommendation_html = "".join(f"<li>{line}</li>" for line in recommendations) or "<li>Không có khuyến nghị.</li>"
 
     html = f"""
 <!DOCTYPE html>
@@ -108,59 +231,76 @@ async def dashboard_html():
         * {{ margin: 0; padding: 0; box-sizing: border-box; }}
         body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); min-height: 100vh; padding: 20px; }}
         .container {{ max-width: 1400px; margin: 0 auto; }}
-        header {{ text-align: center; margin-bottom: 30px; color: #fff; }}
+        header {{ text-align: center; margin-bottom: 24px; color: #fff; }}
         header h1 {{ font-size: 2.5rem; margin-bottom: 10px; text-shadow: 0 0 20px rgba(0,255,255,0.3); }}
         header p {{ color: #aaa; font-size: 1rem; }}
-        .stats-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; margin-bottom: 30px; }}
-        .stat-card {{ background: rgba(255,255,255,0.1); backdrop-filter: blur(10px); border-radius: 20px; padding: 25px; border: 1px solid rgba(255,255,255,0.1); transition: transform 0.3s, box-shadow 0.3s; }}
+        .summary-panel {{ background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.12); border-radius: 18px; padding: 18px 22px; color: #fff; margin-bottom: 22px; }}
+        .summary-panel h2 {{ font-size: 1.1rem; margin-bottom: 10px; color: #00d4ff; }}
+        .summary-panel ul {{ margin-left: 18px; color: #ddd; line-height: 1.7; }}
+        .stats-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 18px; margin-bottom: 22px; }}
+        .stat-card {{ background: rgba(255,255,255,0.1); backdrop-filter: blur(10px); border-radius: 20px; padding: 22px; border: 1px solid rgba(255,255,255,0.1); transition: transform 0.3s, box-shadow 0.3s; }}
         .stat-card:hover {{ transform: translateY(-5px); box-shadow: 0 20px 40px rgba(0,0,0,0.3); }}
-        .stat-card h3 {{ color: #aaa; font-size: 0.9rem; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 10px; }}
-        .stat-card .value {{ font-size: 2.5rem; font-weight: bold; }}
-        .stat-card .sub {{ color: #888; font-size: 0.85rem; margin-top: 5px; }}
+        .stat-card h3 {{ color: #aaa; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 10px; }}
+        .stat-card .value {{ font-size: 2.2rem; font-weight: bold; }}
+        .stat-card .sub {{ color: #888; font-size: 0.82rem; margin-top: 5px; }}
         .stat-card.green .value {{ color: #00ff88; }}
         .stat-card.yellow .value {{ color: #ffd700; }}
         .stat-card.red .value {{ color: #ff6b6b; }}
         .stat-card.blue .value {{ color: #00d4ff; }}
         .stat-card.purple .value {{ color: #a855f7; }}
-        .charts-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); gap: 25px; }}
-        .chart-card {{ background: rgba(255,255,255,0.05); backdrop-filter: blur(10px); border-radius: 20px; padding: 25px; border: 1px solid rgba(255,255,255,0.1); }}
-        .chart-card h3 {{ color: #fff; font-size: 1.1rem; margin-bottom: 20px; padding-bottom: 10px; border-bottom: 1px solid rgba(255,255,255,0.1); }}
-        .satisfaction-bar {{ display: flex; height: 40px; border-radius: 20px; overflow: hidden; margin: 15px 0; }}
-        .satisfaction-bar .agree {{ background: #00ff88; display: flex; align-items: center; justify-content: center; color: #000; font-weight: bold; }}
-        .satisfaction-bar .change {{ background: #ffd700; display: flex; align-items: center; justify-content: center; color: #000; font-weight: bold; }}
-        .satisfaction-bar .skip {{ background: #666; display: flex; align-items: center; justify-content: center; color: #fff; font-weight: bold; }}
-        .confidence-bar {{ height: 30px; background: rgba(255,255,255,0.1); border-radius: 15px; overflow: hidden; position: relative; margin: 15px 0; }}
-        .confidence-bar .fill {{ height: 100%; background: linear-gradient(90deg, #ff6b6b, #ffd700, #00ff88); border-radius: 15px; transition: width 1s; }}
-        .confidence-bar .marker {{ position: absolute; left: 90%; top: 0; height: 100%; width: 2px; background: #fff; }}
-        .metric-row {{ display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid rgba(255,255,255,0.1); }}
+        .charts-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); gap: 20px; }}
+        .chart-card {{ background: rgba(255,255,255,0.05); backdrop-filter: blur(10px); border-radius: 20px; padding: 22px; border: 1px solid rgba(255,255,255,0.1); }}
+        .chart-card h3 {{ color: #fff; font-size: 1.05rem; margin-bottom: 18px; padding-bottom: 10px; border-bottom: 1px solid rgba(255,255,255,0.1); }}
+        .metric-row {{ display: flex; justify-content: space-between; padding: 9px 0; border-bottom: 1px solid rgba(255,255,255,0.1); }}
         .metric-row:last-child {{ border-bottom: none; }}
         .metric-row .label {{ color: #aaa; }}
         .metric-row .val {{ color: #fff; font-weight: bold; }}
-        @media (max-width: 768px) {{ .charts-grid {{ grid-template-columns: 1fr; }} .stat-card .value {{ font-size: 2rem; }} }}
+        .satisfaction-bar {{ display: flex; height: 38px; border-radius: 18px; overflow: hidden; margin: 14px 0; }}
+        .satisfaction-bar .agree {{ background: #00ff88; display: flex; align-items: center; justify-content: center; color: #000; font-weight: bold; }}
+        .satisfaction-bar .change {{ background: #ffd700; display: flex; align-items: center; justify-content: center; color: #000; font-weight: bold; }}
+        .satisfaction-bar .skip {{ background: #666; display: flex; align-items: center; justify-content: center; color: #fff; font-weight: bold; }}
+        .confidence-bar {{ height: 28px; background: rgba(255,255,255,0.1); border-radius: 14px; overflow: hidden; position: relative; margin: 14px 0; }}
+        .confidence-bar .fill {{ height: 100%; background: linear-gradient(90deg, #ff6b6b, #ffd700, #00ff88); border-radius: 14px; }}
+        .confidence-bar .marker {{ position: absolute; left: 90%; top: 0; height: 100%; width: 2px; background: #fff; }}
+        .tag-list {{ list-style: none; color: #ddd; line-height: 1.7; }}
+        .tag-list li {{ margin-bottom: 6px; }}
+        @media (max-width: 768px) {{ .charts-grid {{ grid-template-columns: 1fr; }} .stat-card .value {{ font-size: 1.9rem; }} }}
     </style>
 </head>
 <body>
     <div class="container">
         <header>
             <h1>📊 Supervisor Analytics Dashboard</h1>
-            <p>Cập nhật: {datetime.now().strftime('%H:%M:%S %d/%m/%Y')}</p>
+            <p>Hiệu quả vận hành | Cập nhật: {datetime.now().strftime('%H:%M:%S %d/%m/%Y')} | Window: {snapshot.get('window_days', days)} ngày</p>
         </header>
-        <div class="stats-grid">
-            <div class="stat-card green"><h3>📨 Tổng Requests</h3><div class="value">{len(all_approvals) if 'all_approvals' in dir() else 0}</div><div class="sub">Tất cả approval requests</div></div>
-            <div class="stat-card blue"><h3>✅ Auto Send</h3><div class="value">{round(auto_send / len(all_approvals) * 100, 1) if 'all_approvals' in dir() and all_approvals else 0}%</div><div class="sub">Gửi tự động (confidence ≥ 90%)</div></div>
-            <div class="stat-card purple"><h3>🤖 AI Confidence</h3><div class="value">{round(avg_conf, 1)}%</div><div class="sub">Trung bình</div></div>
-            <div class="stat-card yellow"><h3>⭐ User Satisfaction</h3><div class="value">{sat_rate}%</div><div class="sub">{total_votes} votes</div></div>
+
+        <div class="summary-panel">
+            <h2>📣 Executive Summary</h2>
+            <ul class="tag-list">
+                {summary_html}
+            </ul>
         </div>
+
+        <div class="stats-grid">
+            <div class="stat-card green"><h3>📨 Total Interactions</h3><div class="value">{total_interactions}</div><div class="sub">Tổng requests trong window</div></div>
+            <div class="stat-card blue"><h3>✅ Auto Send Rate</h3><div class="value">{overview.get('auto_send_rate', 0)}%</div><div class="sub">Đã gửi tự động</div></div>
+            <div class="stat-card purple"><h3>🤖 Avg Confidence</h3><div class="value">{avg_conf}%</div><div class="sub">Confidence trung bình</div></div>
+            <div class="stat-card yellow"><h3>🔎 KB Hit Rate</h3><div class="value">{kb_hit_rate}%</div><div class="sub">Có evidence KB</div></div>
+            <div class="stat-card red"><h3>📝 Approval Rate</h3><div class="value">{approval_required_rate}%</div><div class="sub">Cần duyệt trước khi gửi</div></div>
+            <div class="stat-card blue"><h3>⚡ Avg Latency</h3><div class="value">{avg_latency_ms:.0f}ms</div><div class="sub">Thời gian xử lý trung bình</div></div>
+        </div>
+
         <div class="charts-grid">
             <div class="chart-card"><h3>📋 Approval Status</h3><canvas id="approvalChart"></canvas></div>
             <div class="chart-card">
-                <h3>📈 AI Quality Metrics</h3>
-                <div class="metric-row"><span class="label">High Confidence (≥90%)</span><span class="val" style="color:#00ff88">{sum(1 for c in confidences if c >= 0.9) if 'confidences' in dir() else 0}</span></div>
-                <div class="metric-row"><span class="label">Low Confidence (<90%)</span><span class="val" style="color:#ff6b6b">{sum(1 for c in confidences if c < 0.9) if 'confidences' in dir() else 0}</span></div>
-                <div class="metric-row"><span class="label">Approve Rate</span><span class="val" style="color:#00d4ff">{approve_rate}%</span></div>
-                <div class="metric-row"><span class="label">Reject Rate</span><span class="val" style="color:#ff6b6b">{100 - approve_rate}%</span></div>
+                <h3>📈 Efficiency Metrics</h3>
+                <div class="metric-row"><span class="label">KB Hit Rate</span><span class="val">{kb_hit_rate}%</span></div>
+                <div class="metric-row"><span class="label">Approval Required</span><span class="val">{approval_required_rate}%</span></div>
+                <div class="metric-row"><span class="label">Auto Send</span><span class="val">{overview.get('auto_send_rate', 0)}%</span></div>
+                <div class="metric-row"><span class="label">Skip Rate</span><span class="val">{skip_rate}%</span></div>
+                <div class="metric-row"><span class="label">Needs Review Rate</span><span class="val">{review_rate}%</span></div>
                 <div class="confidence-bar"><div class="fill" style="width: {avg_conf}%"></div><div class="marker"></div></div>
-                <p style="color:#888;font-size:0.8rem">Vertical line = 90% threshold</p>
+                <p style="color:#888;font-size:0.8rem">Marker = 90% threshold</p>
             </div>
             <div class="chart-card">
                 <h3>👤 User Satisfaction</h3>
@@ -173,6 +313,14 @@ async def dashboard_html():
                 <div class="metric-row"><span class="label">Change Requested</span><span class="val">{votes_change}</span></div>
                 <div class="metric-row"><span class="label">Skip</span><span class="val">{votes_skip}</span></div>
                 <div class="metric-row"><span class="label">Satisfaction Rate</span><span class="val" style="color:#00ff88">{sat_rate}%</span></div>
+            </div>
+            <div class="chart-card">
+                <h3>🏷️ Top Intents</h3>
+                {intent_rows}
+            </div>
+            <div class="chart-card">
+                <h3>💼 Boss Recommendations</h3>
+                <ul class="tag-list">{recommendation_html}</ul>
             </div>
         </div>
     </div>
@@ -192,8 +340,6 @@ async def dashboard_html():
 
 @router.post("/alerts")
 async def create_alert(alert_type: str, severity: str, title: str, message: str, metadata: dict = None):
-    from src.db.models import Alert
-
     alert_id = f"alert-{datetime.now().strftime('%Y%m%d%H%M%S')}"
     async with async_session() as session:
         alert = Alert(
@@ -214,8 +360,6 @@ async def create_alert(alert_type: str, severity: str, title: str, message: str,
 
 @router.get("/alerts")
 async def list_alerts(severity: str = None, status: str = None, limit: int = 50):
-    from src.db.models import Alert
-
     async with async_session() as session:
         query = select(Alert).order_by(Alert.created_at.desc()).limit(limit)
         if severity:
@@ -244,8 +388,6 @@ async def list_alerts(severity: str = None, status: str = None, limit: int = 50)
 
 @router.put("/alerts/{alert_id}/acknowledge")
 async def acknowledge_alert(alert_id: str, acknowledged_by: str):
-    from src.db.models import Alert
-
     async with async_session() as session:
         result = await session.execute(select(Alert).where(Alert.alert_id == alert_id))
         alert = result.scalar_one_or_none()
@@ -261,8 +403,6 @@ async def acknowledge_alert(alert_id: str, acknowledged_by: str):
 
 @router.delete("/alerts/{alert_id}")
 async def delete_alert(alert_id: str):
-    from src.db.models import Alert
-
     async with async_session() as session:
         result = await session.execute(select(Alert).where(Alert.alert_id == alert_id))
         alert = result.scalar_one_or_none()
