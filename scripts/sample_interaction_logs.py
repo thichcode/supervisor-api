@@ -188,7 +188,7 @@ async def main_async(args):
 
     engine = create_async_engine(db_url, echo=False)
     Session = async_sessionmaker(engine, expire_on_commit=False)
-    cutoff = datetime.now(timezone.utc) - timedelta(days=args.days)
+    cutoff = datetime.utcnow() - timedelta(days=args.days)
 
     try:
         async with Session() as session:
