@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 
 from src.config import get_settings
 from src.core.approval import approval_service
+from src.core.kb_presentation import format_kb_response
 from src.core.schemas import (
     ApprovalActionRequest,
     ApprovalListResponse,
@@ -307,7 +308,7 @@ class RetryWithKBSearchRequest(BaseModel):
 async def retry_with_kb_search(approval_id: str, request: RetryWithKBSearchRequest):
     """Retry generating response using KB search with given keywords."""
     import src.api as api_module
-    from src.services.knowledge_service import KnowledgeRetrievalService
+    from src.knowledge.service import KnowledgeRetrievalService
     from src.llm import llm_client
 
     approval = await approval_service.get_approval(approval_id)
@@ -324,35 +325,43 @@ async def retry_with_kb_search(approval_id: str, request: RetryWithKBSearchReque
                 limit=5,
             )
 
-            kb_context = ""
-            if search_results and search_results.results:
-                kb_context = "## Knowledge Base Results:\n"
-                for i, result in enumerate(search_results.results[:3], 1):
-                    kb_context += f"\n{i}. {result.title}\n{result.content[:500]}\n"
+            kb_response = format_kb_response(search_results.results if search_results else [], query=request.keywords, max_results=3)
+            kb_context = kb_response["text"]
 
             if llm_client and llm_client.is_initialized:
                 system_prompt = """Bạn là trợ lý IT Support.
-Dựa vào kết quả tìm kiếm Knowledge Base, tạo câu trả lời phù hợp.
-Trả lời ngắn gọn, hữu ích, bằng tiếng Việt."""
+Dựa vào kết quả tìm kiếm Knowledge Base, hãy viết câu trả lời thật dễ hiểu, theo checklist, có thể làm theo ngay.
+BẮT BUỘC:
+- tiếng Việt rõ ràng
+- có phần 'Tóm tắt'
+- có phần 'Làm theo'
+- không bịa thêm thông tin ngoài KB
+- nếu KB chưa đủ thì nói rõ cần bổ sung gì"""
 
                 user_prompt = f"""Câu hỏi gốc: {approval.original_message}
 Từ khóa tìm kiếm: {request.keywords}
+
+KB đã chuẩn hoá:
 {kb_context}
 
-Tạo câu trả lời mới dựa trên thông tin KB."""
+Hãy trả lời lại theo format dễ đọc, ngắn gọn, actionable."""
 
                 response = await llm_client.complete(system_prompt, user_prompt)
-                new_response = response.content
-                confidence = response.confidence if response.confidence else (0.45 if not kb_context else 0.7)
+                polished = (response.content or "").strip()
+                new_response = polished or kb_context
+                confidence = response.confidence if response.confidence else (0.45 if not search_results.results else 0.75)
             else:
-                new_response = kb_context or "Không tìm thấy kết quả phù hợp."
-                confidence = 0.45 if not kb_context else 0.7
+                new_response = kb_context
+                confidence = 0.45 if not search_results.results else 0.75
 
             return {
                 "status": "success",
                 "approval_id": approval_id,
                 "keywords": request.keywords,
                 "new_response": new_response,
+                "kb_summary": kb_response["summary"],
+                "kb_action_items": kb_response["action_items"],
+                "kb_sources": kb_response["sources"],
                 "confidence": round(confidence * 100, 1),
                 "kb_results_count": len(search_results.results) if search_results else 0,
             }

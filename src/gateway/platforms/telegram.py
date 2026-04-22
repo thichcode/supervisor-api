@@ -10,6 +10,7 @@ import structlog
 import httpx
 
 from src.core.conversation_continuity import ConversationContinuityEvaluator
+from src.core.kb_presentation import build_kb_card, format_kb_response
 
 logger = structlog.get_logger()
 
@@ -425,18 +426,37 @@ class TelegramAdapter:
                 if response.status_code == 200:
                     data = response.json()
                     new_response = data.get("new_response", "Không tìm thấy kết quả.")
-                    
-                    message = (
-                        f"🔄 New Response (from KB Search)\n\n"
-                        f"Keywords: {keywords}\n\n"
-                        f"Response:\n{new_response}\n\n"
-                        f"Confidence: {data.get('confidence', 'N/A')}%\n\n"
-                        f"Approval ID: {approval_id}"
-                    )
+                    kb_summary = data.get("kb_summary", "")
+                    kb_action_items = data.get("kb_action_items", []) or []
+                    kb_sources = data.get("kb_sources", []) or []
+                    kb_cards = [build_kb_card(item, query=keywords) for item in kb_sources]
+                    source_lines = []
+                    for idx, card in enumerate(kb_cards[:3], start=1):
+                        source_lines.append(f"{idx}. {card['title']} ({card.get('source_hint', '')})")
+
+                    message_lines = ["🔄 KB Response", ""]
+                    if kb_summary:
+                        message_lines.append(f"Tóm tắt:\n{kb_summary}")
+                        message_lines.append("")
+                    if kb_action_items:
+                        message_lines.append("Làm theo:")
+                        for idx, step in enumerate(kb_action_items[:5], start=1):
+                            message_lines.append(f"{idx}. {step}")
+                        message_lines.append("")
+                    else:
+                        message_lines.append(f"Response:\n{new_response}")
+                        message_lines.append("")
+                    if source_lines:
+                        message_lines.append("Nguồn:")
+                        message_lines.extend(source_lines)
+                        message_lines.append("")
+                    message_lines.append(f"Confidence: {data.get('confidence', 'N/A')}%")
+                    message_lines.append(f"Approval ID: {approval_id}")
+                    message = "\n".join(message_lines).strip()
                     await self._send_message(chat_id, message)
                 else:
                     await self._send_message(
-                        chat_id, 
+                        chat_id,
                         f"Lỗi khi tìm KB: {response.status_code}"
                     )
 
@@ -510,19 +530,19 @@ class TelegramAdapter:
         body_lines = []
         start_index = (page - 1) * session.get("page_size", 5) + 1
         for idx, item in enumerate(results, start=start_index):
-            title = item.get("title") or item.get("id") or "N/A"
-            kind = (item.get("knowledge_type") or "").upper()
-            category = item.get("category") or "N/A"
-            similarity = item.get("similarity")
+            card = build_kb_card(item, query=session.get("query"))
+            kind = (card.get("kind") or "").upper()
+            category = card.get("category") or "N/A"
+            similarity = card.get("similarity")
             similarity_text = f"{similarity:.2f}" if isinstance(similarity, (int, float)) else "N/A"
-            content = (item.get("content") or "").replace("\n", " ").strip()
-            snippet = content[:180]
-            if len(content) > 180:
-                snippet += "..."
-            body_lines.append(f"{idx}. [{kind}] {title}")
-            body_lines.append(f"   ID: {item.get('id', 'N/A')} | Category: {category} | Score: {similarity_text}")
-            if snippet:
-                body_lines.append(f"   {snippet}")
+            body_lines.append(f"{idx}. [{kind}] {card['title']}")
+            body_lines.append(f"   Category: {category} | Score: {similarity_text}")
+            if card.get("summary"):
+                body_lines.append(f"   Tóm tắt: {card['summary']}")
+            steps = card.get("steps") or []
+            if steps:
+                quick_steps = "; ".join(steps[:2])
+                body_lines.append(f"   Làm nhanh: {quick_steps}")
             body_lines.append("")
 
         if not body_lines:
