@@ -58,6 +58,8 @@ async def init_db():
         await conn.run_sync(Base.metadata.create_all)
         await conn.execute(text("ALTER TABLE IF EXISTS knowledge_documents ADD COLUMN IF NOT EXISTS file_url VARCHAR(500)"))
         await conn.execute(text("ALTER TABLE IF EXISTS knowledge_documents ADD COLUMN IF NOT EXISTS extra_metadata JSONB DEFAULT '{}'::jsonb"))
+        await conn.execute(text("ALTER TABLE IF EXISTS interaction_logs ADD COLUMN IF NOT EXISTS traffic_class VARCHAR(32)"))
+        await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_interaction_logs_traffic_class ON interaction_logs(traffic_class)"))
     logger.info("Database initialized successfully")
 
 

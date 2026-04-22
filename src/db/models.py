@@ -150,6 +150,7 @@ class InteractionLog(Base):
     model_name = Column(String(100), nullable=True)
     kb_hit_count = Column(Integer, default=0)
     kb_sources = Column(JSON, default=list)
+    traffic_class = Column(String(32), nullable=True, index=True)
     approval_required = Column(Boolean, default=False)
     approval_status = Column(String(50), nullable=True)
     processing_latency_ms = Column(Integer, nullable=True)

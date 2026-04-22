@@ -8,80 +8,27 @@ from fastapi.responses import HTMLResponse, PlainTextResponse
 from sqlalchemy import select
 
 from src.core.metrics import get_metrics, metrics
+from src.core.traffic_classification import classify_traffic_class
 from src.db import async_session
 from src.db.models import ApprovalRequestRecord, Alert, InteractionLog
 
 router = APIRouter(tags=["monitoring"])
 
-SERVICE_INTENTS = {
-    "faq",
-    "policy",
-    "guide_request",
-    "support_case",
-    "system_query",
-    "analysis",
-    "executive_request",
-}
-
-SERVICE_TEXT_KEYWORDS = (
-    "password",
-    "reset",
-    "vpn",
-    "ticket",
-    "incident",
-    "request",
-    "approval",
-    "policy",
-    "knowledge base",
-    "kb ",
-    " faq",
-    "guide",
-    "support",
-    "help",
-    "issue",
-    "error",
-    "lỗi",
-    "bug",
-    "deploy",
-    "server",
-    "sharepoint",
-    "onedrive",
-    "outlook",
-    "email",
-    "teams",
-    "service",
-    "asset",
-    "monitor",
-    "backup",
-    "compliance",
-    "access",
-    "permission",
-    "privileged",
-    "account",
-    "mfa",
-    "sso",
-    "excel",
-    "csv",
-    "trino",
-    "svn",
-    "gitlab",
-    "devsecops",
-)
-
 
 def _classify_traffic(row) -> tuple[str, str]:
     """Lightweight traffic classifier: service-like vs casual/unknown."""
-    intent = (getattr(row, "intent", None) or "").strip().lower()
-    text = f"{getattr(row, 'input_text', '') or ''} {getattr(row, 'output_text', '') or ''}".lower()
+    extra_metadata = getattr(row, "extra_metadata", None) or {}
+    traffic_class = getattr(row, "traffic_class", None) or extra_metadata.get("traffic_class")
+    if traffic_class in {"service_like", "casual_unknown"}:
+        return traffic_class, "stored_traffic_class"
 
-    if intent in SERVICE_INTENTS:
-        return "service_like", f"intent:{intent}"
-
-    for keyword in SERVICE_TEXT_KEYWORDS:
-        if keyword and keyword in text:
-            return "service_like", f"keyword:{keyword.strip()}"
-
-    return "casual_unknown", "no_service_signal"
+    traffic_class = classify_traffic_class(
+        intent=getattr(row, "intent", None),
+        input_text=getattr(row, "input_text", None),
+        output_text=getattr(row, "output_text", None),
+        extra_metadata=extra_metadata,
+    )
+    return traffic_class, "heuristic_fallback"
 
 
 def _summarize_interactions(interactions: list) -> dict:

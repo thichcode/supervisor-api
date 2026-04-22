@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.schemas import FeedbackCreateRequest, FeedbackType
+from src.core.traffic_classification import classify_traffic_class
 from src.db.models import ApprovalRequestRecord, InteractionLog
 from src.services.feedback_service import FeedbackService
 
@@ -37,7 +38,17 @@ class InteractionService:
         ticket_id: Optional[str] = None,
         ticket_system: Optional[str] = None,
         extra_metadata: Optional[dict] = None,
+        traffic_class: Optional[str] = None,
     ) -> InteractionLog:
+        normalized_traffic_class = traffic_class or classify_traffic_class(
+            intent=intent,
+            input_text=input_text,
+            output_text=output_text,
+            extra_metadata=extra_metadata,
+        )
+        metadata = dict(extra_metadata or {})
+        metadata["traffic_class"] = normalized_traffic_class
+
         result = await self.session.execute(
             select(InteractionLog).where(InteractionLog.request_id == request_id)
         )
@@ -59,11 +70,12 @@ class InteractionService:
         log.model_name = model_name
         log.kb_sources = kb_sources or []
         log.kb_hit_count = len(log.kb_sources or [])
+        log.traffic_class = normalized_traffic_class
         log.approval_required = approval_required
         log.approval_status = approval_status
         log.processing_latency_ms = processing_latency_ms
         log.outcome_status = outcome_status
-        log.extra_metadata = extra_metadata or {}
+        log.extra_metadata = metadata
         await self.session.flush()
         return log
 

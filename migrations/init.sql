@@ -189,6 +189,7 @@ CREATE TABLE IF NOT EXISTS interaction_logs (
     model_name VARCHAR(100),
     kb_hit_count INTEGER DEFAULT 0,
     kb_sources JSONB DEFAULT '[]',
+    traffic_class VARCHAR(32),
     approval_required BOOLEAN DEFAULT FALSE,
     approval_status VARCHAR(50),
     processing_latency_ms INTEGER,
