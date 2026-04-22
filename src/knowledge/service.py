@@ -195,9 +195,10 @@ class KnowledgeRetrievalService:
         )
 
     def _resolve_search_types(self, search_type: Optional[str]) -> List[str]:
-        if search_type:
-            return [search_type]
-        return ["policy", "faq", "guide", "document"]
+        normalized = (search_type or "").strip().lower()
+        if not normalized or normalized == "all":
+            return ["policy", "faq", "guide", "document"]
+        return [normalized]
 
     async def _search_knowledge_base(
         self,
@@ -254,7 +255,7 @@ class KnowledgeRetrievalService:
                 ))
 
         elif kb_type == "document":
-            docs = await self.repo.search_documents(query, None, category, tags, limit)
+            docs = await self.repo.search_documents(query=query, category=category, tags=tags, limit=limit)
             for d in docs:
                 results.append(KnowledgeSearchResult(
                     knowledge_type=KnowledgeType.DOCUMENT,

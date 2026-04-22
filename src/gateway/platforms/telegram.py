@@ -549,7 +549,7 @@ class TelegramAdapter:
             session = {
                 "mode": "search",
                 "query": query,
-                "search_type": "all",
+                "search_type": None,
                 "category": None,
                 "tags": [],
                 "page_size": 5,
@@ -602,7 +602,7 @@ class TelegramAdapter:
         session = {
             "mode": "search",
             "query": query,
-            "search_type": "all",
+            "search_type": None,
             "category": None,
             "tags": [],
             "page_size": 5,

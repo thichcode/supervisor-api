@@ -570,6 +570,29 @@ class TestKnowledgeSearch:
         assert all("\n" not in query for query in captured_queries)
         assert result.total == 0
 
+    @pytest.mark.asyncio
+    async def test_document_search_uses_keyword_arguments(self):
+        service = KnowledgeRetrievalService(session=object())
+        captured = {}
+
+        async def fake_search_documents(*args, **kwargs):
+            captured["args"] = args
+            captured["kwargs"] = kwargs
+            return []
+
+        service.repo.search_documents = fake_search_documents  # type: ignore[method-assign]
+
+        result = await service.search("vpn manual", search_type="document", category="docs", tags=["vpn"], limit=3)
+
+        assert result.total == 0
+        assert captured["args"] == ()
+        assert captured["kwargs"] == {
+            "query": "vpn manual",
+            "category": "docs",
+            "tags": ["vpn"],
+            "limit": 3,
+        }
+
     def test_infer_clarification_for_vague_kb_match(self):
         from src.knowledge.schemas import KnowledgeSearchResult, KnowledgeType
 
