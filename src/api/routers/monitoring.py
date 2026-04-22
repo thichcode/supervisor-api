@@ -13,6 +13,121 @@ from src.db.models import ApprovalRequestRecord, Alert, InteractionLog
 
 router = APIRouter(tags=["monitoring"])
 
+SERVICE_INTENTS = {
+    "faq",
+    "policy",
+    "guide_request",
+    "support_case",
+    "system_query",
+    "analysis",
+    "executive_request",
+}
+
+SERVICE_TEXT_KEYWORDS = (
+    "password",
+    "reset",
+    "vpn",
+    "ticket",
+    "incident",
+    "request",
+    "approval",
+    "policy",
+    "knowledge base",
+    "kb ",
+    " faq",
+    "guide",
+    "support",
+    "help",
+    "issue",
+    "error",
+    "lỗi",
+    "bug",
+    "deploy",
+    "server",
+    "sharepoint",
+    "onedrive",
+    "outlook",
+    "email",
+    "teams",
+    "service",
+    "asset",
+    "monitor",
+    "backup",
+    "compliance",
+    "access",
+    "permission",
+    "privileged",
+    "account",
+    "mfa",
+    "sso",
+    "excel",
+    "csv",
+    "trino",
+    "svn",
+    "gitlab",
+    "devsecops",
+)
+
+
+def _classify_traffic(row) -> tuple[str, str]:
+    """Lightweight traffic classifier: service-like vs casual/unknown."""
+    intent = (getattr(row, "intent", None) or "").strip().lower()
+    text = f"{getattr(row, 'input_text', '') or ''} {getattr(row, 'output_text', '') or ''}".lower()
+
+    if intent in SERVICE_INTENTS:
+        return "service_like", f"intent:{intent}"
+
+    for keyword in SERVICE_TEXT_KEYWORDS:
+        if keyword and keyword in text:
+            return "service_like", f"keyword:{keyword.strip()}"
+
+    return "casual_unknown", "no_service_signal"
+
+
+def _summarize_interactions(interactions: list) -> dict:
+    total_interactions = len(interactions)
+    kb_hit_count = sum(1 for row in interactions if (row.kb_hit_count or 0) > 0)
+    approval_required_count = sum(1 for row in interactions if row.approval_required)
+    needs_review_count = sum(1 for row in interactions if row.outcome_status == "needs_review")
+    skipped_count = sum(1 for row in interactions if row.outcome_status == "skipped")
+    completed_count = sum(1 for row in interactions if row.outcome_status == "completed")
+    clarification_count = sum(1 for row in interactions if row.outcome_status == "needs_clarification")
+    confidences = [row.confidence_score for row in interactions if row.confidence_score is not None]
+    latencies = [row.processing_latency_ms for row in interactions if row.processing_latency_ms is not None]
+    intents = Counter((row.intent or "unknown") for row in interactions)
+    top_intents = intents.most_common(5)
+
+    avg_confidence = sum(confidences) / len(confidences) if confidences else 0
+    avg_latency_ms = sum(latencies) / len(latencies) if latencies else 0
+    kb_hit_rate = round(kb_hit_count / total_interactions * 100, 1) if total_interactions else 0
+    approval_required_rate = round(approval_required_count / total_interactions * 100, 1) if total_interactions else 0
+    skip_rate = round(skipped_count / total_interactions * 100, 1) if total_interactions else 0
+    auto_send_rate = round(completed_count / total_interactions * 100, 1) if total_interactions else 0
+    review_rate = round(needs_review_count / total_interactions * 100, 1) if total_interactions else 0
+    clarify_rate = round(clarification_count / total_interactions * 100, 1) if total_interactions else 0
+
+    return {
+        "total_interactions": total_interactions,
+        "kb_hits": kb_hit_count,
+        "auto_sent": completed_count,
+        "need_manual_review": approval_required_count,
+        "skipped": skipped_count,
+        "needs_review": needs_review_count,
+        "clarifications": clarification_count,
+        "kb_hit_rate": kb_hit_rate,
+        "approval_required_rate": approval_required_rate,
+        "skip_rate": skip_rate,
+        "auto_send_rate": auto_send_rate,
+        "needs_review_rate": review_rate,
+        "clarification_rate": clarify_rate,
+        "avg_confidence": round(avg_confidence * 100, 1),
+        "avg_latency_ms": round(avg_latency_ms, 1),
+        "avg_latency_sec": round(avg_latency_ms / 1000, 2) if avg_latency_ms else 0,
+        "high_confidence_count": sum(1 for c in confidences if c >= 0.9),
+        "low_confidence_count": sum(1 for c in confidences if c < 0.5),
+        "top_intents": [{"intent": intent, "count": count} for intent, count in top_intents],
+    }
+
 
 async def _load_dashboard_snapshot(days: int = 7) -> dict:
     """Collect efficiency metrics for the dashboard and boss report."""
@@ -30,6 +145,9 @@ async def _load_dashboard_snapshot(days: int = 7) -> dict:
         "boss_summary": [],
         "recommendations": [],
         "top_intents": [],
+        "traffic_breakdown": {},
+        "raw_overview": {},
+        "service_overview": {},
     }
 
     try:
@@ -43,17 +161,24 @@ async def _load_dashboard_snapshot(days: int = 7) -> dict:
             interactions = interaction_result.scalars().all()
             approvals = approval_result.scalars().all()
 
-        total_interactions = len(interactions)
-        kb_hit_count = sum(1 for row in interactions if (row.kb_hit_count or 0) > 0)
-        approval_required_count = sum(1 for row in interactions if row.approval_required)
-        needs_review_count = sum(1 for row in interactions if row.outcome_status == "needs_review")
-        skipped_count = sum(1 for row in interactions if row.outcome_status == "skipped")
-        completed_count = sum(1 for row in interactions if row.outcome_status == "completed")
-        clarification_count = sum(1 for row in interactions if row.outcome_status == "needs_clarification")
-        confidences = [row.confidence_score for row in interactions if row.confidence_score is not None]
-        latencies = [row.processing_latency_ms for row in interactions if row.processing_latency_ms is not None]
-        intents = Counter((row.intent or "unknown") for row in interactions)
-        top_intents = intents.most_common(5)
+        raw_overview = _summarize_interactions(interactions)
+        service_interactions = []
+        casual_interactions = []
+        service_signal_reasons = Counter()
+        for row in interactions:
+            traffic_class, traffic_reason = _classify_traffic(row)
+            if traffic_class == "service_like":
+                service_interactions.append(row)
+                service_signal_reasons[traffic_reason] += 1
+            else:
+                casual_interactions.append(row)
+
+        service_overview = _summarize_interactions(service_interactions)
+        service_total = service_overview["total_interactions"]
+        raw_total = raw_overview["total_interactions"]
+        casual_total = len(casual_interactions)
+        service_like_rate = round(service_total / raw_total * 100, 1) if raw_total else 0
+        casual_unknown_rate = round(casual_total / raw_total * 100, 1) if raw_total else 0
 
         pending_count = sum(1 for a in approvals if getattr(a, "status", "") == "pending")
         approved_count = sum(1 for a in approvals if getattr(a, "status", "") == "approved")
@@ -64,46 +189,50 @@ async def _load_dashboard_snapshot(days: int = 7) -> dict:
         votes_skip = sum(1 for a in approvals if getattr(a, "vote", None) == "skip")
         total_voted = votes_agree + votes_change + votes_skip
 
-        avg_confidence = sum(confidences) / len(confidences) if confidences else 0
-        avg_latency_ms = sum(latencies) / len(latencies) if latencies else 0
-        kb_hit_rate = round(kb_hit_count / total_interactions * 100, 1) if total_interactions else 0
-        approval_required_rate = round(approval_required_count / total_interactions * 100, 1) if total_interactions else 0
-        skip_rate = round(skipped_count / total_interactions * 100, 1) if total_interactions else 0
-        auto_send_rate = round(completed_count / total_interactions * 100, 1) if total_interactions else 0
-        review_rate = round(needs_review_count / total_interactions * 100, 1) if total_interactions else 0
-        clarify_rate = round(clarification_count / total_interactions * 100, 1) if total_interactions else 0
         approve_rate = round(approved_count / (approved_count + rejected_count) * 100, 1) if (approved_count + rejected_count) else 0
         satisfaction_rate = round(votes_agree / total_voted * 100, 1) if total_voted else 0
         approval_avg_conf = round(sum(approval_confidences) / len(approval_confidences) * 100, 1) if approval_confidences else 0
 
         recommendations = []
-        if kb_hit_rate < 40:
+        if raw_total and service_total == 0:
+            recommendations.append("Không có service-like traffic trong window: report đang chỉ tính traffic IT service thật.")
+        if service_overview["kb_hit_rate"] < 40 and service_total > 0:
             recommendations.append("KB hit rate thấp: nên bổ sung / chỉnh KB và truy vấn search.")
-        if approval_required_rate > 30:
+        if service_overview["approval_required_rate"] > 30:
             recommendations.append("Approve rate cao: xem lại calibration confidence hoặc chất lượng QA.")
-        if avg_latency_ms and avg_latency_ms > 5000:
+        if service_overview["avg_latency_ms"] and service_overview["avg_latency_ms"] > 5000:
             recommendations.append("Latency cao: cân nhắc tối ưu model hoặc giảm số bước subagent.")
-        if clarification_count:
-            recommendations.append(f"Có {clarification_count} lượt cần làm rõ: nên cải thiện clarification flow.")
+        if service_overview["clarifications"]:
+            recommendations.append(f"Có {service_overview['clarifications']} lượt cần làm rõ: nên cải thiện clarification flow.")
+        if raw_total and casual_total > service_total:
+            recommendations.append(
+                f"Traffic casual/unknown chiếm {casual_unknown_rate}%: cân nhắc lọc chat đời thường khỏi boss report."
+            )
         if not recommendations:
             recommendations.append("Hiệu quả đang ổn, tiếp tục theo dõi theo tuần.")
 
         boss_summary = [
-            f"Trong {days} ngày gần nhất có {total_interactions} interaction(s).",
-            f"KB hit rate: {kb_hit_rate}% | Auto-send: {auto_send_rate}% | Skip: {skip_rate}% | Needs review: {review_rate}%.",
-            f"Average confidence: {round(avg_confidence * 100, 1)}% | Average latency: {round(avg_latency_ms, 1)} ms.",
+            f"Trong {days} ngày gần nhất có {raw_total} interaction(s) raw, trong đó {service_total} service-like và {casual_total} casual/unknown.",
+            f"Service-like rate: {service_like_rate}% | Casual/unknown rate: {casual_unknown_rate}%.",
+            f"KB hit rate (service-like): {service_overview['kb_hit_rate']}% | Auto-send: {service_overview['auto_send_rate']}% | Skip: {service_overview['skip_rate']}% | Needs review: {service_overview['needs_review_rate']}%.",
+            f"Average confidence (service-like): {service_overview['avg_confidence']}% | Average latency: {service_overview['avg_latency_ms']} ms.",
             f"Approval queue: pending={pending_count}, approved={approved_count}, rejected={rejected_count}, approve_rate={approve_rate}%.",
         ]
 
         snapshot.update(
             {
                 "overview": {
-                    "total_interactions": total_interactions,
-                    "kb_hits": kb_hit_count,
-                    "auto_sent": completed_count,
-                    "need_manual_review": approval_required_count,
-                    "skipped": skipped_count,
-                    "auto_send_rate": auto_send_rate,
+                    **service_overview,
+                },
+                "raw_overview": raw_overview,
+                "service_overview": service_overview,
+                "traffic_breakdown": {
+                    "raw_total": raw_total,
+                    "service_like": service_total,
+                    "casual_unknown": casual_total,
+                    "service_like_rate": service_like_rate,
+                    "casual_unknown_rate": casual_unknown_rate,
+                    "service_signal_reasons": dict(service_signal_reasons),
                 },
                 "approvals": {
                     "pending": pending_count,
@@ -113,12 +242,12 @@ async def _load_dashboard_snapshot(days: int = 7) -> dict:
                     "average_confidence": approval_avg_conf,
                 },
                 "ai_quality": {
-                    "avg_confidence": round(avg_confidence * 100, 1),
-                    "high_confidence_count": sum(1 for c in confidences if c >= 0.9),
-                    "low_confidence_count": sum(1 for c in confidences if c < 0.5),
-                    "auto_send_count": completed_count,
-                    "approval_needed_count": approval_required_count,
-                    "needs_review_count": needs_review_count,
+                    "avg_confidence": service_overview["avg_confidence"],
+                    "high_confidence_count": service_overview["high_confidence_count"],
+                    "low_confidence_count": service_overview["low_confidence_count"],
+                    "auto_send_count": service_overview["auto_sent"],
+                    "approval_needed_count": service_overview["need_manual_review"],
+                    "needs_review_count": service_overview["needs_review"],
                 },
                 "user_satisfaction": {
                     "total_votes": total_voted,
@@ -128,21 +257,21 @@ async def _load_dashboard_snapshot(days: int = 7) -> dict:
                     "satisfaction_rate": satisfaction_rate,
                 },
                 "performance": {
-                    "total_interactions": total_interactions,
-                    "avg_processing_time_ms": round(avg_latency_ms, 1),
-                    "avg_processing_time_sec": round(avg_latency_ms / 1000, 2) if avg_latency_ms else 0,
+                    "total_interactions": service_overview["total_interactions"],
+                    "avg_processing_time_ms": service_overview["avg_latency_ms"],
+                    "avg_processing_time_sec": service_overview["avg_latency_sec"],
                 },
                 "efficiency": {
-                    "kb_hit_rate": kb_hit_rate,
-                    "approval_required_rate": approval_required_rate,
-                    "skip_rate": skip_rate,
-                    "auto_send_rate": auto_send_rate,
-                    "needs_review_rate": review_rate,
-                    "clarification_rate": clarify_rate,
-                    "avg_confidence": round(avg_confidence * 100, 1),
-                    "avg_latency_ms": round(avg_latency_ms, 1),
+                    "kb_hit_rate": service_overview["kb_hit_rate"],
+                    "approval_required_rate": service_overview["approval_required_rate"],
+                    "skip_rate": service_overview["skip_rate"],
+                    "auto_send_rate": service_overview["auto_send_rate"],
+                    "needs_review_rate": service_overview["needs_review_rate"],
+                    "clarification_rate": service_overview["clarification_rate"],
+                    "avg_confidence": service_overview["avg_confidence"],
+                    "avg_latency_ms": service_overview["avg_latency_ms"],
                 },
-                "top_intents": [{"intent": intent, "count": count} for intent, count in top_intents],
+                "top_intents": service_overview["top_intents"],
                 "boss_summary": boss_summary,
                 "recommendations": recommendations,
             }
