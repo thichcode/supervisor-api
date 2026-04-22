@@ -41,6 +41,7 @@ from src.api.routers.harness import router as harness_router
 from src.api.routers.knowledge import router as knowledge_router
 from src.api.routers.knowledge_files import router as knowledge_files_router
 from src.api.routers.monitoring import router as monitoring_router
+from src.api.routers.kb_templates import router as kb_templates_router
 from src.api.routers.n8n import router as n8n_router
 from src.api.routers.system import router as system_router
 
@@ -157,6 +158,7 @@ app.include_router(n8n_router)
 app.include_router(knowledge_router)
 app.include_router(knowledge_files_router)
 app.include_router(monitoring_router)
+app.include_router(kb_templates_router)
 app.include_router(harness_router)
 app.include_router(system_router)
 
