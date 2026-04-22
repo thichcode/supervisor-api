@@ -143,6 +143,12 @@ KB_FALLBACKS = Counter(
     ['search_type', 'reason']
 )
 
+KB_TEMPLATES = Counter(
+    'supervisor_kb_templates_total',
+    'Knowledge base template detections',
+    ['template_id', 'search_type', 'outcome']
+)
+
 APPROVAL_ACTIONS = Counter(
     'supervisor_approval_actions_total',
     'Approval lifecycle actions',
@@ -249,6 +255,10 @@ class MetricsCollector:
     @staticmethod
     def record_kb_fallback(search_type: str, reason: str):
         KB_FALLBACKS.labels(search_type=search_type, reason=reason).inc()
+
+    @staticmethod
+    def record_kb_template(template_id: str, search_type: str, outcome: str):
+        KB_TEMPLATES.labels(template_id=template_id, search_type=search_type, outcome=outcome).inc()
 
     @staticmethod
     def record_approval_action(status: str):

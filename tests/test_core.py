@@ -16,7 +16,7 @@ from src.memory import MemoryContext
 from src.agents import ContextAgent, DraftAgent, QAAgent
 from src.llm.provider import MultiProviderLLMClient, LLMProvider
 from src.knowledge.service import KnowledgeRetrievalService
-from src.core.metrics import KB_SEARCHES, KB_RERANKS
+from src.core.metrics import KB_SEARCHES, KB_RERANKS, KB_TEMPLATES
 from src.memory.service import MemoryService
 
 
@@ -819,6 +819,35 @@ class TestKnowledgeMetrics:
 
         after = KB_SEARCHES.labels(search_type="faq", outcome="miss")._value.get()
         assert result.total == 1
+        assert after == before + 1
+
+    @pytest.mark.asyncio
+    async def test_kb_template_detection_records_metric(self):
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        before = KB_TEMPLATES.labels(template_id="outlook_mail", search_type="faq", outcome="detected")._value.get()
+        service = KnowledgeRetrievalService(MagicMock())
+        service.repo.search_faqs = AsyncMock(
+            return_value=[
+                SimpleNamespace(
+                    question_id="faq-mail-1",
+                    question="outlook mail không gửi được",
+                    answer="1. kiểm tra inbox\n2. kiểm tra send/receive",
+                    category="mail",
+                    tags=[],
+                    keywords=[],
+                    usage_count=0,
+                )
+            ]
+        )
+        service.repo.increment_faq_usage = AsyncMock(return_value=None)
+
+        result = await service.search(query="outlook mail không gửi được", search_type="faq", limit=5)
+
+        after = KB_TEMPLATES.labels(template_id="outlook_mail", search_type="faq", outcome="detected")._value.get()
+        assert result.template_id == "outlook_mail"
+        assert result.template_label == "Outlook / Mail"
         assert after == before + 1
 
     @pytest.mark.asyncio

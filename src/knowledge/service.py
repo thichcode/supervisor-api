@@ -43,6 +43,10 @@ class KnowledgeRetrievalService:
         query_variants = self._build_query_variants(normalized_query, template_match)
         primary_search_type = search_type or "all"
         metrics.record_kb_search(primary_search_type, "started")
+        if template_match:
+            metrics.record_kb_template(template_match.template_id, primary_search_type, "detected")
+        else:
+            metrics.record_kb_template("none", primary_search_type, "not_detected")
 
         for kb_type in search_types:
             kb_results = await self._search_knowledge_base(kb_type, normalized_query, category, tags, limit)
@@ -67,6 +71,10 @@ class KnowledgeRetrievalService:
             total=total_results,
             search_type=search_type or "all",
             query=query,
+            template_id=template_match.template_id if template_match else "",
+            template_label=template_match.label if template_match else "",
+            template_score=template_match.score if template_match else 0.0,
+            template_terms=list(template_match.matched_terms) if template_match else [],
         )
 
     def infer_clarification(

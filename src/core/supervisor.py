@@ -522,6 +522,9 @@ class Supervisor:
             "pattern_hit": pattern_hit,
             "agents_used": agents_used,
         }
+        knowledge_template = locals().get("knowledge", {}).get("knowledge_template") if "knowledge" in locals() else None
+        if knowledge_template:
+            extra_metadata["kb_template"] = knowledge_template
         if kb_sources:
             extra_metadata["kb_evidence"] = [
                 {

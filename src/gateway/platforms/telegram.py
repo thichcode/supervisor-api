@@ -528,6 +528,10 @@ class TelegramAdapter:
 
     def _format_kb_results_text(self, session: Dict[str, Any], results: list, page: int, total_pages: int, total: int) -> str:
         header_lines = [self._kb_session_label(session), f"Page: {page}/{total_pages}", f"Total results: {total}"]
+        if session.get("template_label"):
+            header_lines.append(f"Mẫu: {session['template_label']}")
+        if session.get("template_hint"):
+            header_lines.append(f"Gợi ý: {session['template_hint']}")
         if session.get("category"):
             header_lines.append(f"Category: {session['category']}")
         if session.get("query"):
@@ -697,6 +701,11 @@ class TelegramAdapter:
             total = int(data.get("total", len(results)) or 0)
             total_pages = max(1, (total + page_size - 1) // page_size) if total else 1
             current_page = max(1, min(page, total_pages))
+            session["template_label"] = data.get("template_label", "")
+            session["template_hint"] = data.get("template_hint", "")
+            session["template_id"] = data.get("template_id", "")
+            session["template_score"] = data.get("template_score", 0.0)
+            session["template_terms"] = data.get("template_terms", [])
             if current_page != page and total > 0:
                 offset = max(0, (current_page - 1) * page_size)
                 payload["offset"] = offset

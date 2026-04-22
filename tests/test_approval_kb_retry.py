@@ -29,7 +29,11 @@ async def test_retry_with_kb_returns_actionable_kb_response(monkeypatch):
                             "category": "access",
                             "similarity": 0.93,
                         }
-                    ]
+                    ],
+                    template_id="vpn_access",
+                    template_label="VPN / Access",
+                    template_score=0.96,
+                    template_terms=["vpn", "access"],
                 )
             )
 
@@ -53,6 +57,7 @@ async def test_retry_with_kb_returns_actionable_kb_response(monkeypatch):
     assert response.status_code == 200
     body = response.json()
     assert body["kb_results_count"] == 1
+    assert body["kb_template_id"] == "vpn_access"
     assert body["kb_template_label"] == "VPN / Access"
     assert "Mẫu KB: VPN / Access" in body["new_response"]
     assert "Tóm tắt:" in body["new_response"]

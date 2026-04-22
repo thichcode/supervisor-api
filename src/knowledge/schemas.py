@@ -102,6 +102,10 @@ class KnowledgeSearchResponse(BaseModel):
     total: int
     search_type: str
     query: str
+    template_id: str = ""
+    template_label: str = ""
+    template_score: float = 0.0
+    template_terms: List[str] = Field(default_factory=list)
 
 
 class KnowledgeStats(BaseModel):

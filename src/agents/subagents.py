@@ -187,6 +187,7 @@ class KnowledgeAgent:
             knowledge["knowledge_clarification_question"] = search_results.get("clarification", {}).get("clarification_question", "") if isinstance(search_results, dict) else ""
             knowledge["knowledge_missing_fields"] = search_results.get("clarification", {}).get("missing_fields", []) if isinstance(search_results, dict) else []
             knowledge["knowledge_required_fields"] = search_results.get("clarification", {}).get("required_fields", []) if isinstance(search_results, dict) else []
+            knowledge["knowledge_template"] = search_results.get("template", {}) if isinstance(search_results, dict) else {}
             knowledge["confidence"] = 0.85 if knowledge["knowledge_results"] else 0.4
 
         if memory.episodic_memory:
@@ -278,4 +279,10 @@ Trả về JSON format:
             return {
                 "results": formatted_results,
                 "clarification": clarification,
+                "template": {
+                    "template_id": results.template_id,
+                    "template_label": results.template_label,
+                    "template_score": results.template_score,
+                    "template_terms": results.template_terms,
+                },
             }
