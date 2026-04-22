@@ -53,6 +53,8 @@ async def test_retry_with_kb_returns_actionable_kb_response(monkeypatch):
     assert response.status_code == 200
     body = response.json()
     assert body["kb_results_count"] == 1
+    assert body["kb_template_label"] == "VPN / Access"
+    assert "Mẫu KB: VPN / Access" in body["new_response"]
     assert "Tóm tắt:" in body["new_response"]
     assert "Làm theo:" in body["new_response"]
     assert "Reset VPN" in body["new_response"]

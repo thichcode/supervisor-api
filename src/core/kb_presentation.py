@@ -4,6 +4,8 @@ import html
 import re
 from typing import Any, Iterable
 
+from src.core.kb_templates import KBCategoryTemplateMapper
+
 
 _BULLET_RE = re.compile(r"^(?:[-*•]|\d+[.)]|[a-zA-Z][.)])\s+(.+)$")
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
@@ -135,6 +137,7 @@ def build_kb_card(result: Any, query: str | None = None) -> dict[str, Any]:
         steps = [summary]
 
     steps = steps[:5]
+    template_match = KBCategoryTemplateMapper.detect(query)
     if query and summary and query.lower() not in summary.lower():
         relevance = f"Phù hợp với: {query}"
     else:
@@ -156,11 +159,18 @@ def build_kb_card(result: Any, query: str | None = None) -> dict[str, Any]:
         "kind": kb_type,
         "category": category,
         "similarity": similarity,
+        "template_id": template_match.template_id if template_match else "",
+        "template_label": template_match.label if template_match else "",
+        "template_hint": template_match.action_hint if template_match else "",
     }
 
 
 def format_kb_card_text(card: dict[str, Any], *, header: str = "KB phù hợp") -> str:
     lines = [f"{header}: {card.get('title') or 'KB'}"]
+    if card.get("template_label"):
+        lines.append(f"Mẫu KB: {card['template_label']}")
+    if card.get("template_hint"):
+        lines.append(f"Gợi ý: {card['template_hint']}")
     if card.get("relevance"):
         lines.append(f"Mức phù hợp: {card['relevance']}")
     if card.get("summary"):
@@ -185,6 +195,7 @@ def format_kb_response(results: Iterable[Any], query: str | None = None, *, max_
             "sources": [],
         }
 
+    template_match = KBCategoryTemplateMapper.detect(query)
     cards = [build_kb_card(result, query=query) for result in results_list[:max_results]]
     primary = cards[0]
     source_lines = [f"- {card['title']} ({card.get('source_hint', '')})".strip() for card in cards]
@@ -200,4 +211,6 @@ def format_kb_response(results: Iterable[Any], query: str | None = None, *, max_
         "summary": primary.get("summary", ""),
         "action_items": primary.get("steps", []),
         "sources": cards,
+        "template_label": template_match.label if template_match else "",
+        "template_hint": template_match.summary_hint if template_match else "",
     }

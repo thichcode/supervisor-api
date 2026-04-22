@@ -362,6 +362,8 @@ Hãy trả lời lại theo format dễ đọc, ngắn gọn, actionable."""
                 "kb_summary": kb_response["summary"],
                 "kb_action_items": kb_response["action_items"],
                 "kb_sources": kb_response["sources"],
+                "kb_template_label": kb_response.get("template_label", ""),
+                "kb_template_hint": kb_response.get("template_hint", ""),
                 "confidence": round(confidence * 100, 1),
                 "kb_results_count": len(search_results.results) if search_results else 0,
             }

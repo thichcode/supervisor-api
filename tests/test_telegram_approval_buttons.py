@@ -222,6 +222,7 @@ async def test_handle_kb_command_search_shows_paginated_results(monkeypatch):
     assert "KB Search" in payload["text"]
     assert "Tóm tắt:" in payload["text"]
     assert "Làm nhanh:" in payload["text"]
+    assert "Mẫu:" in payload["text"]
     assert payload["reply_markup"]["inline_keyboard"][0][0]["callback_data"].startswith("kb:page:")
 
 

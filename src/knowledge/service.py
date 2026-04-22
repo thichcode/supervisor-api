@@ -3,6 +3,7 @@ import re
 from sqlalchemy.ext.asyncio import AsyncSession
 import structlog
 
+from src.core.kb_templates import KBCategoryTemplateMapper
 from src.knowledge.repository import KnowledgeBaseRepository
 from src.knowledge.schemas import (
     KnowledgeSearchResult,
@@ -20,6 +21,7 @@ class KnowledgeRetrievalService:
         self.session = session
         self.repo = KnowledgeBaseRepository(session)
         self.llm = llm
+        self.template_mapper = KBCategoryTemplateMapper()
 
     async def search(
         self,
@@ -36,8 +38,9 @@ class KnowledgeRetrievalService:
         if len(normalized_query) > 512:
             normalized_query = normalized_query[:512]
 
-        search_types = self._resolve_search_types(search_type)
-        query_variants = self._build_query_variants(normalized_query)
+        template_match = KBCategoryTemplateMapper.detect(normalized_query)
+        search_types = self._resolve_search_types(search_type, normalized_query)
+        query_variants = self._build_query_variants(normalized_query, template_match)
         primary_search_type = search_type or "all"
         metrics.record_kb_search(primary_search_type, "started")
 
@@ -45,14 +48,14 @@ class KnowledgeRetrievalService:
             kb_results = await self._search_knowledge_base(kb_type, normalized_query, category, tags, limit)
             results.extend(kb_results)
 
-        results = self._deduplicate_and_rank(results, normalized_query)
+        results = self._deduplicate_and_rank(results, normalized_query, template_match)
 
         if (not results or results[0].similarity < 0.5) and query_variants:
             for variant in query_variants:
                 for kb_type in search_types:
                     kb_results = await self._search_knowledge_base(kb_type, variant, category, tags, limit)
                     results.extend(kb_results)
-            results = self._deduplicate_and_rank(results, normalized_query)
+            results = self._deduplicate_and_rank(results, normalized_query, template_match)
 
         self._record_search_outcome(primary_search_type, results)
 
@@ -201,53 +204,11 @@ class KnowledgeRetrievalService:
             f"bạn cho mình thêm: {fields_text}."
         )
 
-    def _resolve_search_types(self, search_type: Optional[str]) -> List[str]:
-        normalized = (search_type or "").strip().lower()
-        if not normalized or normalized == "all":
-            return ["policy", "faq", "guide", "document"]
-        return [normalized]
+    def _resolve_search_types(self, search_type: Optional[str], query: str) -> List[str]:
+        return KBCategoryTemplateMapper.search_types_for(query, search_type)
 
-    def _build_query_variants(self, query: str) -> List[str]:
-        normalized = (query or "").strip().lower()
-        if not normalized:
-            return []
-
-        tokens = re.findall(r"[\wÀ-ỹ]+", normalized)
-        variants: List[str] = []
-
-        synonym_map = {
-            "vpn": ["remote access", "mạng vpn", "kết nối vpn"],
-            "password": ["reset password", "đổi mật khẩu", "quên mật khẩu"],
-            "mật khẩu": ["reset password", "quên mật khẩu", "đổi mật khẩu"],
-            "mfa": ["2fa", "otp", "two factor authentication"],
-            "otp": ["mfa", "2fa", "two factor authentication"],
-            "email": ["outlook", "mail", "hộp thư"],
-            "outlook": ["email", "mail", "hộp thư"],
-            "sharepoint": ["onedrive", "tài liệu", "file"],
-            "onedrive": ["sharepoint", "tài liệu", "file"],
-            "ticket": ["incident", "request", "service desk"],
-            "incident": ["ticket", "request", "service desk"],
-            "backup": ["sao lưu", "restore", "khôi phục"],
-            "restore": ["backup", "sao lưu", "khôi phục"],
-            "policy": ["quy định", "chính sách", "rule"],
-            "guide": ["hướng dẫn", "cách làm", "how to"],
-            "trino": ["sql", "query", "dashboard"],
-            "gitlab": ["repo", "pipeline", "ci/cd"],
-            "svn": ["repo", "source control", "version control"],
-            "excel": ["spreadsheet", "csv", "file"],
-        }
-
-        for token in tokens:
-            for synonym in synonym_map.get(token, []):
-                if synonym not in variants and synonym != normalized:
-                    variants.append(synonym)
-
-        if len(tokens) >= 2:
-            joined = " ".join(tokens[:2])
-            if joined != normalized and joined not in variants:
-                variants.append(joined)
-
-        return variants[:6]
+    def _build_query_variants(self, query: str, template_match=None) -> List[str]:
+        return KBCategoryTemplateMapper.build_query_variants(query, template_match)
 
     async def _search_knowledge_base(
         self,
@@ -333,6 +294,7 @@ class KnowledgeRetrievalService:
         self,
         results: List[KnowledgeSearchResult],
         query: str,
+        template_match=None,
     ) -> List[KnowledgeSearchResult]:
         seen_ids = set()
         unique_results = []
@@ -350,6 +312,14 @@ class KnowledgeRetrievalService:
             for keyword in boost_keywords:
                 if keyword.lower() in r.title.lower() or keyword.lower() in r.content.lower():
                     r.similarity = min(1.0, r.similarity + 0.1)
+            r.similarity = KBCategoryTemplateMapper.boost_similarity(
+                template_match,
+                r.title,
+                r.category,
+                r.content,
+                r.similarity,
+                r.knowledge_type.value,
+            )
 
         return sorted(unique_results, key=lambda x: x.similarity, reverse=True)
 

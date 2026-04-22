@@ -429,12 +429,19 @@ class TelegramAdapter:
                     kb_summary = data.get("kb_summary", "")
                     kb_action_items = data.get("kb_action_items", []) or []
                     kb_sources = data.get("kb_sources", []) or []
+                    kb_template_label = data.get("kb_template_label", "")
+                    kb_template_hint = data.get("kb_template_hint", "")
                     kb_cards = [build_kb_card(item, query=keywords) for item in kb_sources]
                     source_lines = []
                     for idx, card in enumerate(kb_cards[:3], start=1):
                         source_lines.append(f"{idx}. {card['title']} ({card.get('source_hint', '')})")
 
                     message_lines = ["🔄 KB Response", ""]
+                    if kb_template_label:
+                        message_lines.append(f"Mẫu KB: {kb_template_label}")
+                        if kb_template_hint:
+                            message_lines.append(f"Gợi ý: {kb_template_hint}")
+                        message_lines.append("")
                     if kb_summary:
                         message_lines.append(f"Tóm tắt:\n{kb_summary}")
                         message_lines.append("")
@@ -537,6 +544,10 @@ class TelegramAdapter:
             similarity_text = f"{similarity:.2f}" if isinstance(similarity, (int, float)) else "N/A"
             body_lines.append(f"{idx}. [{kind}] {card['title']}")
             body_lines.append(f"   Category: {category} | Score: {similarity_text}")
+            if card.get("template_label"):
+                body_lines.append(f"   Mẫu: {card['template_label']}")
+            if card.get("template_hint"):
+                body_lines.append(f"   Gợi ý: {card['template_hint']}")
             if card.get("summary"):
                 body_lines.append(f"   Tóm tắt: {card['summary']}")
             steps = card.get("steps") or []

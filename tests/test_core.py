@@ -573,11 +573,10 @@ class TestKnowledgeSearch:
     @pytest.mark.asyncio
     async def test_document_search_uses_keyword_arguments(self):
         service = KnowledgeRetrievalService(session=object())
-        captured = {}
+        captured = []
 
         async def fake_search_documents(*args, **kwargs):
-            captured["args"] = args
-            captured["kwargs"] = kwargs
+            captured.append(kwargs.copy())
             return []
 
         service.repo.search_documents = fake_search_documents  # type: ignore[method-assign]
@@ -585,13 +584,67 @@ class TestKnowledgeSearch:
         result = await service.search("vpn manual", search_type="document", category="docs", tags=["vpn"], limit=3)
 
         assert result.total == 0
-        assert captured["args"] == ()
-        assert captured["kwargs"] == {
+        assert captured
+        assert captured[0] == {
             "query": "vpn manual",
             "category": "docs",
             "tags": ["vpn"],
             "limit": 3,
         }
+        assert all("query" in entry for entry in captured)
+
+    @pytest.mark.asyncio
+    async def test_template_mapper_prioritizes_vpn_access_search_types(self):
+        service = KnowledgeRetrievalService(session=object())
+        captured_types = []
+
+        async def fake_search_knowledge_base(kb_type, query, category, tags, limit):
+            captured_types.append(kb_type)
+            return []
+
+        service._search_knowledge_base = fake_search_knowledge_base  # type: ignore[method-assign]
+
+        result = await service.search("VPN access issue")
+
+        assert result.total == 0
+        assert captured_types[:2] == ["faq", "guide"]
+
+    def test_kb_template_mapper_detects_vpn_access(self):
+        from src.core.kb_templates import KBCategoryTemplateMapper
+
+        match = KBCategoryTemplateMapper.detect("VPN không vào được, remote access bị lỗi")
+
+        assert match is not None
+        assert match.template_id == "vpn_access"
+        assert match.label == "VPN / Access"
+        assert "vpn" in {term.lower() for term in match.matched_terms}
+
+    def test_kb_response_formatter_includes_template_hint(self):
+        from src.core.kb_presentation import format_kb_response
+        from src.knowledge.schemas import KnowledgeSearchResult, KnowledgeType
+
+        response = format_kb_response(
+            [
+                KnowledgeSearchResult(
+                    knowledge_type=KnowledgeType.FAQ,
+                    id="faq-1",
+                    title="Reset VPN",
+                    content="1. Open the VPN portal\n2. Click Reset Access\n3. Reconnect and verify login",
+                    category="access",
+                    tags=[],
+                    similarity=0.93,
+                    metadata={},
+                )
+            ],
+            query="VPN access issue",
+            max_results=1,
+        )
+
+        assert response["template_label"] == "VPN / Access"
+        assert "Mẫu KB: VPN / Access" in response["text"]
+        assert "Gợi ý:" in response["text"]
+        assert "Làm theo:" in response["text"]
+
 
     def test_infer_clarification_for_vague_kb_match(self):
         from src.knowledge.schemas import KnowledgeSearchResult, KnowledgeType
