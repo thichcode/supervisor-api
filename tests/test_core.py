@@ -619,6 +619,23 @@ class TestKnowledgeSearch:
         assert match.label == "VPN / Access"
         assert "vpn" in {term.lower() for term in match.matched_terms}
 
+    def test_kb_template_mapper_detects_common_business_templates(self):
+        from src.core.kb_templates import KBCategoryTemplateMapper
+
+        cases = {
+            "outlook mail không gửi được": "outlook_mail",
+            "backup restore dữ liệu": "backup_restore",
+            "export excel csv": "excel_csv",
+            "jira confluence access": "jira_confluence",
+            "sharepoint onedrive sync lỗi": "sharepoint_onedrive",
+        }
+
+        for query, template_id in cases.items():
+            match = KBCategoryTemplateMapper.detect(query)
+            assert match is not None
+            assert match.template_id == template_id
+            assert match.label
+
     def test_kb_response_formatter_includes_template_hint(self):
         from src.core.kb_presentation import format_kb_response
         from src.knowledge.schemas import KnowledgeSearchResult, KnowledgeType
