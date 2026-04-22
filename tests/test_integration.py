@@ -296,16 +296,21 @@ class TestWebhookValidation:
 
         approval_service_mock = MagicMock()
         approval_service_mock.create_approval = AsyncMock(return_value=MagicMock(id="approval-123"))
+        interaction_service_mock = MagicMock()
+        interaction_service_mock.log_interaction = AsyncMock()
 
         @asynccontextmanager
         async def fake_async_session():
-            yield MagicMock()
+            session = MagicMock()
+            session.commit = AsyncMock()
+            yield session
 
         with (
             patch("src.api.supervisor.process", return_value=mock_result),
             patch("src.api.app.MemoryService", return_value=mock_memory_service),
             patch("src.api.async_session", fake_async_session),
             patch("src.api.app.approval_service", approval_service_mock),
+            patch("src.api.app.InteractionService", return_value=interaction_service_mock),
             patch("src.api.app.settings.webhook_input_secret", "test-secret"),
         ):
             transport = ASGITransport(app=app)
@@ -321,6 +326,7 @@ class TestWebhookValidation:
         assert body["status"] == "pending_approval"
         assert body["metadata"]["approval_id"] == "approval-123"
         assert approval_service_mock.create_approval.await_count == 1
+        assert interaction_service_mock.log_interaction.await_count == 1
 
     @pytest.mark.asyncio
     async def test_webhook_completed_auto_sends_to_power_automate(self, valid_payload):
@@ -340,16 +346,21 @@ class TestWebhookValidation:
         mock_memory_service.commit = AsyncMock()
 
         auto_send_mock = AsyncMock(return_value=True)
+        interaction_service_mock = MagicMock()
+        interaction_service_mock.log_interaction = AsyncMock()
 
         @asynccontextmanager
         async def fake_async_session():
-            yield MagicMock()
+            session = MagicMock()
+            session.commit = AsyncMock()
+            yield session
 
         with (
             patch("src.api.supervisor.process", return_value=mock_result),
             patch("src.api.app.MemoryService", return_value=mock_memory_service),
             patch("src.api.async_session", fake_async_session),
             patch("src.api.app._auto_send_to_power_automate", auto_send_mock),
+            patch("src.api.app.InteractionService", return_value=interaction_service_mock),
             patch("src.api.app.settings.power_automate_webhook_url", "https://example.com/pa"),
             patch("src.api.app.settings.webhook_input_secret", "test-secret"),
         ):
@@ -364,6 +375,7 @@ class TestWebhookValidation:
         assert response.status_code == 200
         assert response.json()["status"] == "completed"
         assert auto_send_mock.await_count == 1
+        assert interaction_service_mock.log_interaction.await_count == 1
 
     
     @pytest.mark.asyncio

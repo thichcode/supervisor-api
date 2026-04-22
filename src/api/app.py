@@ -28,6 +28,7 @@ from src.harness import HarnessSupervisorBridge
 from src.llm import llm_client
 from src.memory import redis_cache
 from src.memory.service import MemoryService
+from src.services.interaction_service import InteractionService
 from src.services.feedback_learning_worker import FeedbackReplayWorker
 from src.api.routers.admin import router as admin_router
 from src.api.routers.approvals import router as approvals_router
@@ -206,6 +207,7 @@ async def receive_webhook(
 
         async with api_module.async_session() as session:
             memory_service = MemoryService(session, api_module.redis_cache)
+            interaction_service = InteractionService(session)
             memory = await memory_service.retrieve(payload)
             result = await api_module.supervisor.process(payload, memory)
             result.metadata = {**(result.metadata or {}), **chat_context}
@@ -223,6 +225,27 @@ async def receive_webhook(
                 risk_level=result.risk_level,
             )
             request_logger.log_response_sent(result.status, result.confidence, elapsed_ms)
+            await interaction_service.log_interaction(
+                request_id=payload.request_id,
+                thread_id=payload.conversation.thread_id,
+                user_id=payload.user.id,
+                input_text=payload.message.text,
+                output_text=result.answer,
+                intent=result.metadata.get("intent") if result.metadata else None,
+                risk_level=result.risk_level,
+                confidence_score=result.confidence,
+                model_provider=(result.metadata or {}).get("model_provider"),
+                model_name=(result.metadata or {}).get("model_name") or settings.llm_model,
+                kb_sources=(result.metadata or {}).get("kb_sources", []),
+                approval_required=result.status == "needs_review",
+                approval_status="pending" if result.status == "needs_review" else "not_needed",
+                processing_latency_ms=result.metadata.get("processing_time_ms") if result.metadata else None,
+                outcome_status=result.status,
+                ticket_id=payload.case.ticket_id if payload.case else None,
+                ticket_system=payload.case.ticket_system if payload.case else None,
+                extra_metadata=result.metadata or {},
+            )
+            await session.commit()
 
             if result.status == "needs_review":
                 approval = await approval_service.create_approval(
