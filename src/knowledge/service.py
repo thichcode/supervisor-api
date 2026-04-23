@@ -289,6 +289,12 @@ class KnowledgeRetrievalService:
         return results
 
     def _calculate_text_similarity(self, query: str, text: str) -> float:
+        """Compute Jaccard-like similarity between query and text.
+
+        Returns 0.0–1.0. Uses set intersection over union (Jaccard) to avoid
+        inflation when a single query word matches a large document.
+        Also applies length penalty so very short texts need more exact matches.
+        """
         query_words = set(query.lower().split())
         text_words = set(text.lower().split())
 
@@ -296,7 +302,18 @@ class KnowledgeRetrievalService:
             return 0.4
 
         intersection = query_words.intersection(text_words)
-        return min(1.0, len(intersection) / len(query_words))
+        union = query_words.union(text_words)
+
+        if not intersection:
+            return 0.4
+
+        jaccard = len(intersection) / len(union)
+
+        # Length penalty: boost when query is long enough to show intent
+        # Short queries (<= 2 words) are noisier, so be more conservative
+        len_penalty = 0.6 if len(query_words) <= 2 else 1.0
+
+        return round(min(1.0, jaccard * len_penalty), 4)
 
     def _deduplicate_and_rank(
         self,
