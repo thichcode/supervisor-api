@@ -76,7 +76,65 @@ class KBCategoryTemplateMapper:
     """Detect common KB query categories and provide lightweight search/render hints."""
 
     DEFAULT_SEARCH_TYPES = ("policy", "faq", "guide", "document")
+
+    # System-specific keywords that override generic template detection.
+    # Keys sorted longest-first so "gitlab" beats "git".
+    # Values: (template_id, score_boost).
+    SYSTEM_KEYWORDS: tuple[tuple[str, tuple[str, float]], ...] = (
+        ("gitlab", ("git_access", 2.0)),
+        ("github", ("git_access", 2.0)),
+        ("bitbucket", ("git_access", 2.0)),
+        ("svn", ("git_access", 1.8)),
+        ("vpn", ("vpn_access", 1.8)),
+        ("remote access", ("vpn_access", 2.0)),
+        ("outlook", ("outlook_mail", 1.8)),
+        ("sharepoint", ("sharepoint_onedrive", 1.8)),
+        ("onedrive", ("sharepoint_onedrive", 1.8)),
+        ("jira", ("jira_confluence", 1.8)),
+        ("confluence", ("jira_confluence", 1.8)),
+        ("excel", ("excel_csv", 1.5)),
+        ("backup", ("backup_restore", 1.5)),
+        ("restore", ("backup_restore", 1.5)),
+        ("policy", ("policy_request", 1.5)),
+    )
+
     _TEMPLATES: tuple[KBCategoryTemplate, ...] = (
+        KBCategoryTemplate(
+            template_id="git_access",
+            label="Git / GitLab / GitHub",
+            keywords=(
+                "git",
+                "gitlab",
+                "github",
+                "bitbucket",
+                "svn",
+                "source control",
+                "version control",
+                "repo",
+                "repository",
+                "branch",
+                "commit",
+                "merge",
+                "pipeline",
+                "ci/cd",
+                "access git",
+                "quyền git",
+            ),
+            preferred_search_types=("guide", "faq", "document", "policy"),
+            category_hints=("git", "gitlab", "github", "svn", "repo", "access"),
+            query_variants=(
+                "git access",
+                "gitlab login",
+                "github access",
+                "svn access",
+                "git permission",
+                "git không login được",
+                "git access request",
+                "gitlab không vào được",
+            ),
+            summary_hint="Ưu tiên hướng dẫn truy cập, quyền repo, SSH key và login GitLab/GitHub.",
+            action_hint="Kiểm tra VPN, SSO, quyền repo, SSH key và Git credentials trước.",
+        ),
         KBCategoryTemplate(
             template_id="password_reset",
             label="Mật khẩu / Reset",
@@ -86,7 +144,6 @@ class KBCategoryTemplateMapper:
                 "mật khẩu",
                 "quên mật khẩu",
                 "đổi mật khẩu",
-                "login",
                 "đăng nhập",
                 "sign in",
                 "account locked",
@@ -309,7 +366,38 @@ class KBCategoryTemplateMapper:
                     score=round(score, 3),
                 )
 
+        # System-level filter: override if query contains system-specific keywords
+        # This prevents generic templates (e.g. password_reset) from matching
+        # when a specific system (e.g. git, vpn) is mentioned.
+        system_override = cls._system_filter(normalized)
+        if system_override and (best is None or system_override.score > best.score):
+            best = system_override
+        elif best is not None and system_override is not None:
+            # If system keyword found, apply score penalty to the generic template
+            # so the system-specific one wins (it already has higher score)
+            pass  # best remains the system-specific match from above
+
         return best
+
+    @classmethod
+    def _system_filter(cls, normalized_query: str) -> Optional[KBTemplateMatch]:
+        """Override template if query contains system-specific keywords.
+
+        Iterates SYSTEM_KEYWORDS in declaration order (longest-first after sorting).
+        Returns the first matching system-specific template with elevated score.
+        """
+        for keyword, (template_id, score_boost) in cls.SYSTEM_KEYWORDS:
+            if keyword in normalized_query:
+                for template in cls._TEMPLATES:
+                    if template.template_id == template_id:
+                        # Find which keyword(s) matched for this system
+                        matched_terms = [keyword]
+                        return KBTemplateMatch(
+                            template=template,
+                            matched_terms=tuple(matched_terms),
+                            score=round(score_boost, 3),
+                        )
+        return None
 
     @classmethod
     def search_types_for(cls, query: str | None, requested_search_type: str | None = None) -> list[str]:
