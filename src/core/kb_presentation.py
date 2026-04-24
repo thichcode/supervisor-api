@@ -143,14 +143,17 @@ def build_kb_card(result: Any, query: str | None = None) -> dict[str, Any]:
     else:
         relevance = ""
 
+    kb_id = _pick(result, "id", None) or metadata.get("id") or ""
     source_hint = f"{str(kb_type).upper()}"
+    if kb_id:
+        source_hint += f" · ID:{kb_id}"
     if category:
         source_hint += f" · {category}"
     if isinstance(similarity, (int, float)):
         source_hint += f" · score {similarity:.2f}"
 
     return {
-        "id": _pick(result, "id", None) or metadata.get("id") or "",
+        "id": kb_id,
         "title": title,
         "summary": summary,
         "steps": steps,
