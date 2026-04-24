@@ -16,7 +16,14 @@ from src.memory import MemoryContext
 from src.agents import ContextAgent, DraftAgent, QAAgent
 from src.llm.provider import MultiProviderLLMClient, LLMProvider
 from src.knowledge.service import KnowledgeRetrievalService
-from src.core.metrics import KB_SEARCHES, KB_RERANKS, KB_TEMPLATES
+from src.core.metrics import (
+    KB_SEARCHES,
+    KB_RERANKS,
+    KB_TEMPLATES,
+    REASONING_LOOP_FALLBACKS,
+    REASONING_LOOP_OUTCOMES,
+    REASONING_LOOP_ROLLOUT,
+)
 from src.memory.service import MemoryService
 
 
@@ -273,6 +280,38 @@ class TestDecisionEngine:
 
 
 class TestSupervisor:
+    def test_reasoning_loop_rollout_gating_by_percent(self, sample_payload, sample_context, monkeypatch):
+        from src.core.supervisor import Supervisor, get_settings
+
+        settings = get_settings()
+        monkeypatch.setattr(settings, "enable_reasoning_loop", True)
+        monkeypatch.setattr(settings, "reasoning_loop_rollout_team_percent", 0)
+        monkeypatch.setattr(settings, "reasoning_loop_rollout_user_percent", 100)
+        monkeypatch.setattr(settings, "reasoning_loop_rollout_salt", "test-salt")
+
+        supervisor = Supervisor()
+        enabled, metadata = supervisor._should_run_reasoning_loop(sample_payload, settings)
+
+        assert enabled is True
+        assert metadata["enabled"] is True
+        assert metadata["user_enabled"] is True
+        assert metadata["team_enabled"] is False
+
+    def test_reasoning_loop_rollout_gating_disabled(self, sample_payload, monkeypatch):
+        from src.core.supervisor import Supervisor, get_settings
+
+        settings = get_settings()
+        monkeypatch.setattr(settings, "enable_reasoning_loop", True)
+        monkeypatch.setattr(settings, "reasoning_loop_rollout_team_percent", 0)
+        monkeypatch.setattr(settings, "reasoning_loop_rollout_user_percent", 0)
+        monkeypatch.setattr(settings, "reasoning_loop_rollout_salt", "test-salt")
+
+        supervisor = Supervisor()
+        enabled, metadata = supervisor._should_run_reasoning_loop(sample_payload, settings)
+
+        assert enabled is False
+        assert metadata["enabled"] is False
+
     @pytest.mark.asyncio
     async def test_generate_direct_answer_uses_persona_hint(self, sample_payload):
         from src.core.supervisor import Supervisor
@@ -500,6 +539,282 @@ class TestSupervisor:
         assert "thiết bị" in result.answer.lower() or "mã lỗi" in result.answer.lower()
         assert result.metadata["kb_clarification_needed"] is True
         assert result.metadata["kb_missing_fields"] == ["device", "os", "error_code"]
+
+    @pytest.mark.asyncio
+    async def test_reasoning_loop_faq_simple_case(self, sample_payload, sample_context, monkeypatch):
+        from src.core.supervisor import Supervisor, get_settings
+
+        settings = get_settings()
+        monkeypatch.setattr(settings, "enable_reasoning_loop", True)
+
+        supervisor = Supervisor()
+        supervisor._fetch_urls = AsyncMock(return_value="")
+        supervisor._log_audit = AsyncMock(return_value=None)
+        supervisor.decision_engine.should_use_subagents = lambda *args, **kwargs: False
+        supervisor._check_patterns = AsyncMock(return_value=("FAQ pattern answer", 0.9))
+
+        result = await supervisor.process(sample_payload, sample_context)
+
+        assert result.status == "completed"
+        assert result.answer == "FAQ pattern answer"
+        assert result.metadata["reasoning_loop"] is True
+        assert result.metadata["kb_hit"] is True
+        assert "pattern_match" in result.metadata["agents_used"]
+
+    @pytest.mark.asyncio
+    async def test_reasoning_loop_tool_needed_case(self, sample_payload, sample_context, monkeypatch):
+        from src.core.supervisor import Supervisor, get_settings
+
+        settings = get_settings()
+        monkeypatch.setattr(settings, "enable_reasoning_loop", True)
+
+        supervisor = Supervisor()
+        supervisor._fetch_urls = AsyncMock(return_value="")
+        supervisor._log_audit = AsyncMock(return_value=None)
+        supervisor.decision_engine.should_use_subagents = lambda *args, **kwargs: True
+        supervisor.context_agent.build = lambda payload, memory: {}
+        supervisor.policy_agent.extract = AsyncMock(return_value={"guide_requested": False, "guide_id": None})
+        supervisor.knowledge_agent.retrieve = AsyncMock(return_value={
+            "knowledge_results": [],
+            "knowledge_clarification_needed": False,
+            "system_query_requested": True,
+            "query_type": "n8n",
+        })
+        supervisor._handle_system_query = AsyncMock(return_value={"result": "tool-output", "confidence": 0.93})
+        supervisor._format_system_query_response = lambda query_result: f"System query result: {query_result['result']}"
+
+        result = await supervisor.process(sample_payload, sample_context)
+
+        assert result.status == "completed"
+        assert "tool-output" in result.answer
+        assert result.metadata["reasoning_loop"] is True
+        assert "system_query" in result.metadata["agents_used"]
+        assert result.metadata["reasoning_trace"]["max_iterations"] >= 1
+        assert result.metadata["reasoning_trace"]["iterations_used"] >= 1
+        assert any(step["stage"] == "plan" for step in result.metadata["reasoning_trace"]["steps"])
+        assert any(step["stage"] == "observe" for step in result.metadata["reasoning_trace"]["steps"])
+
+    @pytest.mark.asyncio
+    async def test_reasoning_loop_clarification_case(self, sample_payload, sample_context, monkeypatch):
+        from src.core.supervisor import Supervisor, get_settings
+
+        settings = get_settings()
+        monkeypatch.setattr(settings, "enable_reasoning_loop", True)
+
+        sample_payload.message.text = "VPN is not working"
+        supervisor = Supervisor()
+        supervisor._fetch_urls = AsyncMock(return_value="")
+        supervisor.decision_engine.should_use_subagents = lambda *args, **kwargs: True
+        supervisor.context_agent.build = lambda payload, memory: {}
+        supervisor.policy_agent.extract = AsyncMock(return_value={"guide_requested": False, "guide_id": None})
+        supervisor.knowledge_agent.retrieve = AsyncMock(return_value={
+            "knowledge_results": [
+                {
+                    "type": "faq",
+                    "id": "faq-vpn-1",
+                    "title": "VPN access issue",
+                    "content": "Use the VPN portal to reset your VPN profile",
+                    "category": "access",
+                    "similarity": 0.82,
+                    "metadata": {},
+                }
+            ],
+            "knowledge_clarification_needed": True,
+            "knowledge_clarification_question": "Mình tìm thấy KB phù hợp về 'VPN access issue'. Để support đúng theo KB, bạn cho mình thêm: thiết bị đang dùng; hệ điều hành/phiên bản máy; mã lỗi.",
+            "knowledge_missing_fields": ["device", "os", "error_code"],
+            "knowledge_required_fields": ["device", "os", "error_code"],
+            "system_query_requested": False,
+            "query_type": None,
+            "confidence": 0.85,
+        })
+
+        result = await supervisor.process(sample_payload, sample_context)
+
+        assert result.status == "needs_clarification"
+        assert result.metadata["reasoning_loop"] is True
+        assert result.metadata["kb_clarification_needed"] is True
+        assert result.metadata["kb_missing_fields"] == ["device", "os", "error_code"]
+        assert "reasoning_trace" in result.metadata
+
+    @pytest.mark.asyncio
+    async def test_reasoning_loop_tool_retry_then_success(self, sample_payload, sample_context, monkeypatch):
+        from src.core.supervisor import Supervisor, get_settings
+
+        settings = get_settings()
+        monkeypatch.setattr(settings, "enable_reasoning_loop", True)
+        monkeypatch.setattr(settings, "reasoning_loop_max_iterations", 5)
+        monkeypatch.setattr(settings, "reasoning_loop_tool_retry", 2)
+
+        supervisor = Supervisor()
+        supervisor._fetch_urls = AsyncMock(return_value="")
+        supervisor._log_audit = AsyncMock(return_value=None)
+        supervisor.decision_engine.should_use_subagents = lambda *args, **kwargs: True
+        supervisor.context_agent.build = lambda payload, memory: {}
+        supervisor.policy_agent.extract = AsyncMock(return_value={"guide_requested": False, "guide_id": None})
+        supervisor.knowledge_agent.retrieve = AsyncMock(return_value={
+            "knowledge_results": [],
+            "knowledge_clarification_needed": False,
+            "system_query_requested": True,
+            "query_type": "n8n",
+        })
+
+        call_counter = {"count": 0}
+
+        async def flaky_system_query(payload, memory, query_type):
+            call_counter["count"] += 1
+            if call_counter["count"] == 1:
+                raise RuntimeError("temporary failure")
+            return {"result": "tool-after-retry", "confidence": 0.91}
+
+        supervisor._handle_system_query = flaky_system_query
+        supervisor._format_system_query_response = lambda query_result: f"System query result: {query_result['result']}"
+
+        result = await supervisor.process(sample_payload, sample_context)
+
+        assert result.status == "completed"
+        assert "tool-after-retry" in result.answer
+        assert call_counter["count"] == 2
+        steps = result.metadata["reasoning_trace"]["steps"]
+        assert any(step["event"] == "tool_attempt_failed" for step in steps)
+        assert any(step["event"] == "tool_attempt_success" for step in steps)
+
+    @pytest.mark.asyncio
+    async def test_reasoning_loop_budget_exhausted_returns_needs_review(self, sample_payload, sample_context, monkeypatch):
+        from src.core.supervisor import Supervisor, get_settings
+
+        settings = get_settings()
+        monkeypatch.setattr(settings, "enable_reasoning_loop", True)
+        monkeypatch.setattr(settings, "reasoning_loop_max_iterations", 1)
+        monkeypatch.setattr(settings, "reasoning_loop_tool_retry", 2)
+
+        supervisor = Supervisor()
+        supervisor._fetch_urls = AsyncMock(return_value="")
+        supervisor._log_audit = AsyncMock(return_value=None)
+        supervisor.decision_engine.should_use_subagents = lambda *args, **kwargs: True
+        supervisor.context_agent.build = lambda payload, memory: {}
+        supervisor.policy_agent.extract = AsyncMock(return_value={"guide_requested": False, "guide_id": None})
+        supervisor.knowledge_agent.retrieve = AsyncMock(return_value={
+            "knowledge_results": [],
+            "knowledge_clarification_needed": False,
+            "system_query_requested": True,
+            "query_type": "n8n",
+        })
+        supervisor._handle_system_query = AsyncMock(side_effect=RuntimeError("always fail"))
+
+        result = await supervisor.process(sample_payload, sample_context)
+
+        assert result.status == "needs_review"
+        assert result.metadata["reasoning_trace"]["budget_exhausted"] is True
+        assert any(step["event"] == "budget_exhausted" for step in result.metadata["reasoning_trace"]["steps"])
+
+    @pytest.mark.asyncio
+    async def test_reasoning_loop_tool_planner_requests_missing_query_type_clarification(self, sample_payload, sample_context, monkeypatch):
+        from src.core.supervisor import Supervisor, get_settings
+
+        settings = get_settings()
+        monkeypatch.setattr(settings, "enable_reasoning_loop", True)
+
+        supervisor = Supervisor()
+        supervisor._fetch_urls = AsyncMock(return_value="")
+        supervisor.decision_engine.should_use_subagents = lambda *args, **kwargs: True
+        supervisor.context_agent.build = lambda payload, memory: {}
+        supervisor.policy_agent.extract = AsyncMock(return_value={"guide_requested": False, "guide_id": None})
+        supervisor.knowledge_agent.retrieve = AsyncMock(return_value={
+            "knowledge_results": [],
+            "knowledge_clarification_needed": False,
+            "system_query_requested": True,
+            "query_type": None,
+        })
+
+        result = await supervisor.process(sample_payload, sample_context)
+
+        assert result.status == "needs_clarification"
+        assert "loại truy vấn" in result.answer.lower() or "truy vấn" in result.answer.lower()
+        assert "tool_planner" in result.metadata["agents_used"]
+        assert any(step["event"] == "tool_plan" for step in result.metadata["reasoning_trace"]["steps"])
+
+    @pytest.mark.asyncio
+    async def test_reasoning_loop_low_confidence_interrupts_for_clarification(self, sample_payload, sample_context, monkeypatch):
+        from src.core.supervisor import Supervisor, get_settings
+
+        settings = get_settings()
+        monkeypatch.setattr(settings, "enable_reasoning_loop", True)
+
+        supervisor = Supervisor()
+        supervisor._fetch_urls = AsyncMock(return_value="")
+        supervisor.decision_engine.should_use_subagents = lambda *args, **kwargs: False
+        supervisor._check_patterns = AsyncMock(return_value=None)
+        supervisor._generate_direct_answer = AsyncMock(return_value=("Câu trả lời nháp", 0.2))
+
+        result = await supervisor.process(sample_payload, sample_context)
+
+        assert result.status == "needs_clarification"
+        assert result.metadata.get("interrupt_reason") == "low_confidence"
+        assert "clarification" in result.metadata["agents_used"]
+        assert any(step["event"] == "interrupt_clarification" for step in result.metadata["reasoning_trace"]["steps"])
+
+    @pytest.mark.asyncio
+    async def test_reasoning_loop_rollout_disabled_records_fallback_metric(self, sample_payload, sample_context, monkeypatch):
+        from src.core.supervisor import Supervisor, get_settings
+
+        settings = get_settings()
+        monkeypatch.setattr(settings, "enable_reasoning_loop", True)
+        monkeypatch.setattr(settings, "reasoning_loop_rollout_team_percent", 0)
+        monkeypatch.setattr(settings, "reasoning_loop_rollout_user_percent", 0)
+
+        before = REASONING_LOOP_FALLBACKS.labels(reason="rollout_disabled")._value.get()
+
+        supervisor = Supervisor()
+        supervisor._fetch_urls = AsyncMock(return_value="")
+        supervisor._log_audit = AsyncMock(return_value=None)
+        supervisor.decision_engine.should_use_subagents = lambda *args, **kwargs: False
+        supervisor._check_patterns = AsyncMock(return_value=None)
+        supervisor._generate_direct_answer = AsyncMock(return_value=("fallback answer", 0.2))
+
+        result = await supervisor.process(sample_payload, sample_context)
+
+        after = REASONING_LOOP_FALLBACKS.labels(reason="rollout_disabled")._value.get()
+        assert after == before + 1
+        assert result.metadata["reasoning_loop_rollout"]["enabled"] is False
+
+    @pytest.mark.asyncio
+    async def test_reasoning_loop_enabled_records_outcome_and_rollout_metrics(self, sample_payload, sample_context, monkeypatch):
+        from src.core.supervisor import Supervisor, get_settings
+        from src.core import IntentClassification, RiskEvaluation
+
+        settings = get_settings()
+        monkeypatch.setattr(settings, "enable_reasoning_loop", True)
+        monkeypatch.setattr(settings, "reasoning_loop_rollout_team_percent", 0)
+        monkeypatch.setattr(settings, "reasoning_loop_rollout_user_percent", 100)
+
+        before_outcome = REASONING_LOOP_OUTCOMES.labels(status="completed")._value.get()
+        before_rollout = REASONING_LOOP_ROLLOUT.labels(scope="user", outcome="enabled")._value.get()
+
+        supervisor = Supervisor()
+        supervisor._fetch_urls = AsyncMock(return_value="")
+        supervisor._log_audit = AsyncMock(return_value=None)
+        supervisor.reasoning_orchestrator.run = AsyncMock(
+            return_value=supervisor._create_output(
+                payload=sample_payload,
+                answer="reasoning answer",
+                confidence=0.9,
+                intent=IntentClassification(intent=IntentType.FAQ, confidence=0.9),
+                risk=RiskEvaluation(risk_level=RiskLevel.LOW, flags=[]),
+                agents_used=["reasoning"],
+                status="completed",
+                processing_time=1.0,
+                extra_metadata={"reasoning_loop": True},
+            )
+        )
+
+        result = await supervisor.process(sample_payload, sample_context)
+
+        after_outcome = REASONING_LOOP_OUTCOMES.labels(status="completed")._value.get()
+        after_rollout = REASONING_LOOP_ROLLOUT.labels(scope="user", outcome="enabled")._value.get()
+
+        assert after_outcome == before_outcome + 1
+        assert after_rollout == before_rollout + 1
+        assert result.metadata["reasoning_loop_rollout"]["enabled"] is True
 
     @pytest.mark.asyncio
     @pytest.mark.skip(reason="Supervisor v2 has different architecture - test needs update")

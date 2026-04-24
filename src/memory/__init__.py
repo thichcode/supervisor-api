@@ -5,9 +5,12 @@ from .mempalace_adapter import MemPalaceAdapter, MemPalaceContext, MemPalaceSear
 from .providers import ExternalMemoryProvider, ExternalMemoryProviderConfig, NullExternalMemoryProvider, get_external_memory_provider
 from .repository import MemoryRepository
 from .routing import ExternalMemoryRoute, ExternalMemoryRoutingPolicy
+from .fact_store_adapter import AsyncFactStore, get_async_fact_store
 from .service import MemoryService, MemoryContext
 
 __all__ = [
+    "AsyncFactStore",
+    "get_async_fact_store",
     "RedisCache",
     "redis_cache",
     "get_redis",

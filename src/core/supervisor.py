@@ -16,7 +16,10 @@ from src.agents import ContextAgent, PolicyAgent, KnowledgeAgent, DraftAgent, QA
 from src.db import AuditLog, async_session
 from src.llm import MultiProviderLLMClient, LLMResponse
 from src.config import get_settings
+from src.core.reasoning_loop import ReasoningLoopOrchestrator
+from src.core.metrics import metrics
 from typing import Optional, Dict
+from hashlib import sha256
 import time
 import structlog
 
@@ -152,6 +155,7 @@ class Supervisor:
         self.draft_agent = DraftAgent()
         self.qa_agent = QAAgent()
         self.simple_agent = SimpleAgent()
+        self.reasoning_orchestrator = ReasoningLoopOrchestrator(self)
         self._llm: Optional[MultiProviderLLMClient] = None
 
         # NEW v2: Initialize enhanced components (based on config)
@@ -323,6 +327,7 @@ class Supervisor:
         )
 
     async def process(self, payload: InputPayload, memory: MemoryContextModel) -> OutputPayload:
+        settings = get_settings()
         start_time = time.time()
         decision = "direct"
         final_confidence = 0.8
@@ -403,11 +408,38 @@ class Supervisor:
                 answer=itc_answer,
                 confidence=itc_confidence,
                 intent=IntentClassification(intent=IntentType.SUPPORT_CASE, confidence=0.9),
-                risk=risk,
+                risk=RiskEvaluation(risk_level=RiskLevel.LOW, reasons=[]),
                 agents_used=["itc_ticket"],
+                status="completed",
                 processing_time=start_time,
                 extra_metadata=itc_metadata
             )
+
+        should_run_reasoning_loop, rollout_metadata = self._should_run_reasoning_loop(payload, settings)
+        if should_run_reasoning_loop:
+            result = await self.reasoning_orchestrator.run(
+                payload,
+                memory,
+                start_time=start_time,
+                url_context=url_context,
+            )
+            result.metadata = {
+                **(result.metadata or {}),
+                "reasoning_loop_rollout": rollout_metadata,
+            }
+            metrics.record_reasoning_loop_outcome(result.status)
+            metrics.record_reasoning_loop_latency(time.time() - start_time)
+
+            reasoning_trace = (result.metadata or {}).get("reasoning_trace", {})
+            if reasoning_trace.get("budget_exhausted"):
+                metrics.record_reasoning_loop_fallback("budget_exhausted")
+            if (result.metadata or {}).get("tool_failed"):
+                metrics.record_reasoning_loop_fallback("tool_failed")
+            if result.status == "needs_review":
+                metrics.record_reasoning_loop_fallback("needs_review")
+            return result
+        if settings.enable_reasoning_loop:
+            metrics.record_reasoning_loop_fallback("rollout_disabled")
 
         intent = self._classify_intent(payload, memory)
         risk = self._evaluate_risk(payload, memory)
@@ -546,6 +578,8 @@ class Supervisor:
             "pattern_hit": pattern_hit,
             "agents_used": agents_used,
         }
+        if settings.enable_reasoning_loop:
+            extra_metadata["reasoning_loop_rollout"] = rollout_metadata
         knowledge_template = locals().get("knowledge", {}).get("knowledge_template") if "knowledge" in locals() else None
         if knowledge_template:
             extra_metadata["kb_template"] = knowledge_template
@@ -1123,3 +1157,63 @@ Hãy đề xuất giải pháp hoặc các bước tiếp theo."""
                 await session.commit()
         except Exception as e:
             logger.warning("Failed to log audit", error=str(e))
+
+    def _stable_rollout_bucket(self, key: str, salt: str) -> int:
+        """Compute deterministic bucket [0, 99] for rollout decisions."""
+        raw = f"{salt}:{key}".encode("utf-8")
+        digest = sha256(raw).hexdigest()
+        return int(digest[:8], 16) % 100
+
+    def _is_in_rollout(self, identifier: str | None, percent: int, salt: str, scope: str) -> bool:
+        """Return True if identifier is included in rollout percent."""
+        if not identifier:
+            metrics.record_reasoning_loop_rollout(scope=scope, outcome="no_id")
+            return False
+
+        normalized_percent = max(0, min(100, int(percent)))
+        if normalized_percent == 100:
+            metrics.record_reasoning_loop_rollout(scope=scope, outcome="enabled")
+            return True
+        if normalized_percent == 0:
+            metrics.record_reasoning_loop_rollout(scope=scope, outcome="disabled")
+            return False
+
+        bucket = self._stable_rollout_bucket(identifier, salt)
+        enabled = bucket < normalized_percent
+        metrics.record_reasoning_loop_rollout(
+            scope=scope,
+            outcome="enabled" if enabled else "disabled",
+        )
+        return enabled
+
+    def _should_run_reasoning_loop(self, payload: InputPayload, settings) -> tuple[bool, dict]:
+        """Evaluate reasoning loop gate using feature flag + % rollout by team/user."""
+        if not settings.enable_reasoning_loop:
+            return False, {
+                "enabled": False,
+                "reason": "feature_flag_off",
+                "team_percent": int(getattr(settings, "reasoning_loop_rollout_team_percent", 100)),
+                "user_percent": int(getattr(settings, "reasoning_loop_rollout_user_percent", 100)),
+            }
+
+        team_percent = int(getattr(settings, "reasoning_loop_rollout_team_percent", 100))
+        user_percent = int(getattr(settings, "reasoning_loop_rollout_user_percent", 100))
+        salt = str(getattr(settings, "reasoning_loop_rollout_salt", "reasoning-loop-v1"))
+
+        team_id = payload.user.team
+        user_id = payload.user.id
+
+        team_enabled = self._is_in_rollout(team_id, team_percent, f"{salt}:team", "team")
+        user_enabled = self._is_in_rollout(user_id, user_percent, f"{salt}:user", "user")
+        enabled = team_enabled or user_enabled
+
+        return enabled, {
+            "enabled": enabled,
+            "team_enabled": team_enabled,
+            "user_enabled": user_enabled,
+            "team_percent": max(0, min(100, team_percent)),
+            "user_percent": max(0, min(100, user_percent)),
+            "team_id_present": bool(team_id),
+            "user_id_present": bool(user_id),
+            "salt": salt,
+        }

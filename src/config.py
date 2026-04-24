@@ -141,6 +141,12 @@ class Settings(BaseSettings):
     enable_agent_router: bool = True
     enable_url_fetcher: bool = True
     enable_tools: bool = True
+    enable_reasoning_loop: bool = False
+    reasoning_loop_max_iterations: int = 3
+    reasoning_loop_tool_retry: int = 1
+    reasoning_loop_rollout_user_percent: int = 100
+    reasoning_loop_rollout_team_percent: int = 100
+    reasoning_loop_rollout_salt: str = "reasoning-loop-v1"
 
     # Extended Tools (Disabled by default - for future use)
     # Enable via env vars: ENABLE_RAG_PIPELINE=true, etc.
@@ -150,6 +156,8 @@ class Settings(BaseSettings):
     enable_api_client: bool = False       # External API integrations
     enable_audit_logger: bool = False    # Compliance audit logging
     enable_validators: bool = False      # Input validation
+    enable_fact_store: bool = True  # Structured fact memory via sqlite FactStore
+    enable_subagent_delegation: bool = True  # Parallel subagent pool for multi-source tasks
     enable_user_style_learning: bool = True  # Learn user communication style per user_id
     user_style_learning_user_id: str = ""  # Backward-compatible single user_id
     user_style_learning_user_ids: str = ""  # Comma-separated list of user_ids

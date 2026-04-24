@@ -19,6 +19,7 @@ AI agent system with long-term memory for Microsoft Teams integration. Designed 
 | Approval System | ✅ Telegram + Power Automate | v1.2.0 |
 | Circuit Breaker | ✅ Implemented | v1.0.0 |
 | Dead Letter Queue | ✅ Implemented | v1.0.0 |
+| Reasoning Loop | ✅ Plan/Act/Observe + Rollout | v1.2.0+ |
 
 **Production Readiness Score: 9.5/10** ✅
 
@@ -279,6 +280,12 @@ When reviewing an approval, click **🔍 Search KB** to:
 | `OLLAMA_BASE_URL` | No | Ollama server URL |
 | `TELEGRAM_BOT_TOKEN` | No | Telegram bot token |
 | `TELEGRAM_APPROVAL_CHAT_IDS` | No | Comma-separated chat IDs |
+| `ENABLE_REASONING_LOOP` | No | Toggle reasoning loop (`true`/`false`) |
+| `REASONING_LOOP_MAX_ITERATIONS` | No | Iteration budget (default `3`) |
+| `REASONING_LOOP_TOOL_RETRY` | No | Tool retry attempts (default `1`) |
+| `REASONING_LOOP_ROLLOUT_USER_PERCENT` | No | % users included (default `100`) |
+| `REASONING_LOOP_ROLLOUT_TEAM_PERCENT` | No | % teams included (default `100`) |
+| `REASONING_LOOP_ROLLOUT_SALT` | No | Deterministic salt for rollout bucketing |
 
 ---
 

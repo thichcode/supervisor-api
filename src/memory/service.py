@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core import InputPayload, MemoryScopeType
 from src.memory.cache import RedisCache
+from src.memory.fact_store_adapter import AsyncFactStore, get_async_fact_store
 from src.memory.providers import (
     ExternalMemoryProvider,
     ExternalMemoryProviderConfig,
@@ -28,6 +29,7 @@ class MemoryContext:
         episodic_memory: list[dict] = None,
         external_memory: list[dict] = None,
         conversation_state: Optional[dict] = None,
+        facts: Optional[list[dict]] = None,
     ):
         self.conversation_summary = conversation_summary
         self.recent_messages = recent_messages or []
@@ -36,6 +38,7 @@ class MemoryContext:
         self.episodic_memory = episodic_memory or []
         self.external_memory = external_memory or []
         self.conversation_state = conversation_state or {}
+        self.facts = facts or []
 
     def to_dict(self) -> dict:
         return {
@@ -46,6 +49,7 @@ class MemoryContext:
             "episodic_memory": self.episodic_memory,
             "external_memory": self.external_memory,
             "conversation_state": self.conversation_state,
+            "facts": self.facts,
         }
 
     def get_context_text(self) -> str:
@@ -103,6 +107,10 @@ class MemoryContext:
             parts.append("\n=== External Memory ===")
             for item in self.external_memory[:3]:
                 parts.append(f"- {item.get('content', '')}")
+        if self.facts:
+            parts.append("\n=== Known Facts ===")
+            for fact in self.facts[:5]:
+                parts.append(f"- {fact.get('content', '')}")
         return "\n".join(parts)
 
 
@@ -112,6 +120,7 @@ class MemoryService:
         session: AsyncSession,
         cache: RedisCache,
         external_provider: Optional[ExternalMemoryProvider] = None,
+        fact_store: Optional[AsyncFactStore] = None,
     ):
         self.session = session
         self.cache = cache
@@ -121,6 +130,7 @@ class MemoryService:
             file_enabled=settings.file_memory_enabled,
         )
         self.external_provider = external_provider
+        self.fact_store = fact_store or get_async_fact_store()
 
     def _resolve_external_provider(self, payload: InputPayload) -> ExternalMemoryProvider:
         if self.external_provider is not None:
@@ -277,6 +287,31 @@ class MemoryService:
         )
         external_memory = mempalace_context.to_memory_items()
 
+        # Fact store retrieval
+        facts = []
+        if settings.enable_fact_store and self.fact_store:
+            try:
+                fact_hits = await self.fact_store.retrieve_for_context(
+                    text=payload.message.text or "",
+                    user_id=user_id,
+                    thread_id=thread_id,
+                    limit=5,
+                )
+                facts = [
+                    {
+                        "id": f.id,
+                        "content": f.content,
+                        "category": f.category,
+                        "trust": f.trust,
+                        "entities": f.entities,
+                        "tags": f.tags,
+                    }
+                    for f in fact_hits
+                ]
+            except Exception as exc:
+                import structlog
+                structlog.get_logger().warning("fact_store_retrieve_failed", error=str(exc))
+
         context = MemoryContext(
             conversation_summary=summary_text,
             recent_messages=recent_messages,
@@ -285,6 +320,7 @@ class MemoryService:
             episodic_memory=episodic_memory,
             external_memory=external_memory,
             conversation_state=conversation_state,
+            facts=facts,
         )
 
         await self.cache.set_json(
@@ -593,5 +629,19 @@ class MemoryService:
                     team=payload.user.team,
                     room="user-style",
                 )
+
+        # Extract and store facts from user message
+        if settings.enable_fact_store and self.fact_store and payload.message.text:
+            try:
+                await self.fact_store.extract_and_store_facts(
+                    text=payload.message.text,
+                    thread_id=thread_id,
+                    user_id=user_id,
+                    category="general",
+                    payload_entities=(memory_snapshot.conversation_state or {}).get("key_entities", []) if memory_snapshot else None,
+                )
+            except Exception as exc:
+                import structlog
+                structlog.get_logger().warning("fact_store_commit_failed", error=str(exc))
 
         await self.cache.delete(f"memory:{thread_id}")

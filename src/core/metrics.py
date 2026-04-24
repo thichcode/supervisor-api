@@ -167,6 +167,30 @@ EXTERNAL_MEMORY_OPERATIONS = Counter(
     ['provider', 'operation', 'status']
 )
 
+REASONING_LOOP_ROLLOUT = Counter(
+    'supervisor_reasoning_loop_rollout_total',
+    'Reasoning loop rollout decisions',
+    ['scope', 'outcome']
+)
+
+REASONING_LOOP_OUTCOMES = Counter(
+    'supervisor_reasoning_loop_outcomes_total',
+    'Reasoning loop outcomes by status',
+    ['status']
+)
+
+REASONING_LOOP_LATENCY = Histogram(
+    'supervisor_reasoning_loop_latency_seconds',
+    'Reasoning loop latency in seconds',
+    buckets=[0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0]
+)
+
+REASONING_LOOP_FALLBACKS = Counter(
+    'supervisor_reasoning_loop_fallbacks_total',
+    'Reasoning loop fallback events',
+    ['reason']
+)
+
 
 class MetricsCollector:
     @staticmethod
@@ -275,6 +299,22 @@ class MetricsCollector:
             operation=operation,
             status=status,
         ).inc()
+
+    @staticmethod
+    def record_reasoning_loop_rollout(scope: str, outcome: str):
+        REASONING_LOOP_ROLLOUT.labels(scope=scope, outcome=outcome).inc()
+
+    @staticmethod
+    def record_reasoning_loop_outcome(status: str):
+        REASONING_LOOP_OUTCOMES.labels(status=status).inc()
+
+    @staticmethod
+    def record_reasoning_loop_latency(duration_seconds: float):
+        REASONING_LOOP_LATENCY.observe(max(0.0, duration_seconds))
+
+    @staticmethod
+    def record_reasoning_loop_fallback(reason: str):
+        REASONING_LOOP_FALLBACKS.labels(reason=reason).inc()
 
 
 metrics = MetricsCollector()

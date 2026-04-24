@@ -5,6 +5,7 @@ File, Terminal, and Web tools
 
 import subprocess
 import asyncio
+import shlex
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 from dataclasses import dataclass
@@ -228,9 +229,24 @@ def terminal(
         Dict with output, exit_code
     """
     try:
+        if not command or not command.strip():
+            return {
+                "output": "",
+                "error": "Command is empty",
+                "exit_code": -1,
+            }
+
+        command_parts = shlex.split(command, posix=True)
+        if not command_parts:
+            return {
+                "output": "",
+                "error": "Command is empty after parsing",
+                "exit_code": -1,
+            }
+
         result = subprocess.run(
-            command,
-            shell=True,
+            command_parts,
+            shell=False,
             capture_output=True,
             text=True,
             timeout=timeout,

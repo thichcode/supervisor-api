@@ -236,7 +236,7 @@ Nếu không nhìn được các câu này, hệ thống học sẽ thành “t�
 - Không tự động hóa.
 
 ### Giai đoạn 2: Suggest mode
-- AI đề xuất, con người duyệt.
+- AI đề xuất, con ngườii duyệt.
 - Theo dõi hard/soft signals.
 
 ### Giai đoạn 3: Limited automation
@@ -248,7 +248,98 @@ Nếu không nhìn được các câu này, hệ thống học sẽ thành “t�
 
 ---
 
-## 11) Kết luận ngắn
+## 11) Reasoning loop metrics (Prometheus)
+
+Các metrics mới để theo dõi reasoning loop và rollout:
+
+| Metric | Type | Labels | Ý nghĩa |
+|--------|------|--------|---------|
+| `supervisor_reasoning_loop_rollout_total` | Counter | `scope`, `outcome` | Quyết định rollout (user/team, enabled/disabled/no_id) |
+| `supervisor_reasoning_loop_outcomes_total` | Counter | `status` | Kết quả reasoning loop (`completed`, `needs_clarification`, `needs_review`, `skipped`) |
+| `supervisor_reasoning_loop_latency_seconds` | Histogram | — | Latency từng request qua reasoning loop (dùng cho p95/p99) |
+| `supervisor_reasoning_loop_fallbacks_total` | Counter | `reason` | Số lần fallback (`rollout_disabled`, `budget_exhausted`, `tool_failed`, `needs_review`) |
+
+### Query gợi ý cho dashboard
+
+```promql
+# needs_clarification rate
+count(
+  rate(supervisor_reasoning_loop_outcomes_total{status="needs_clarification"}[5m])
+) /
+count(
+  rate(supervisor_reasoning_loop_outcomes_total[5m])
+)
+
+# needs_review rate
+count(
+  rate(supervisor_reasoning_loop_outcomes_total{status="needs_review"}[5m])
+) /
+count(
+  rate(supervisor_reasoning_loop_outcomes_total[5m])
+)
+
+# Latency p95
+histogram_quantile(0.95, rate(supervisor_reasoning_loop_latency_seconds_bucket[5m]))
+
+# Fallback rate (rollout_disabled + budget_exhausted + tool_failed)
+count(
+  rate(supervisor_reasoning_loop_fallbacks_total[5m])
+) /
+count(
+  rate(supervisor_reasoning_loop_outcomes_total[5m])
+)
+```
+
+### Rollout gate
+- Gate = `feature flag` + `% user` + `% team` (OR logic).
+- Bucketing dùng `sha256` deterministic theo `salt` để đảm bảo user cố định.
+- Không cần DB migration; chỉ cần điều chỉnh env var và restart service.
+
+---
+
+## 12) Fact Store metrics (Prometheus)
+
+Các metrics để theo dõi structured fact memory:
+
+| Metric | Type | Labels | Ý nghĩa |
+|--------|------|--------|---------|
+| `supervisor_fact_store_retrievals_total` | Counter | `outcome` | Số lần retrieve facts (`hit`, `miss`, `error`) |
+| `supervisor_fact_store_commits_total` | Counter | `outcome` | Số lần extract & store facts (`success`, `error`) |
+
+### Query gợi ý
+
+```promql
+# Fact store hit rate
+rate(supervisor_fact_store_retrievals_total{outcome="hit"}[5m])
+/
+rate(supervisor_fact_store_retrievals_total[5m])
+```
+
+## 13) Subagent Delegation metrics (Prometheus)
+
+Các metrics để theo dõi parallel subagent execution:
+
+| Metric | Type | Labels | Ý nghĩa |
+|--------|------|--------|---------|
+| `supervisor_subagent_pool_tasks_total` | Counter | `status` | Số tasks dispatched (`success`, `timeout`, `error`) |
+| `supervisor_subagent_pool_latency_seconds` | Histogram | — | Latency từng subagent task |
+| `supervisor_subagent_delegation_triggers_total` | Counter | `outcome` | Số lần trigger delegation (`executed`, `skipped`, `no_tasks`) |
+
+### Query gợi ý
+
+```promql
+# Subagent success rate
+rate(supervisor_subagent_pool_tasks_total{status="success"}[5m])
+/
+rate(supervisor_subagent_pool_tasks_total[5m])
+
+# Average subagent latency
+rate(supervisor_subagent_pool_latency_seconds_sum[5m])
+/
+rate(supervisor_subagent_pool_latency_seconds_count[5m])
+```
+
+## 14) Kết luận ngắn
 
 Insight quan trọng nhất để chạy product theo dõi đa chiều là:
 

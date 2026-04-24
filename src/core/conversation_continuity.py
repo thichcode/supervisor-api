@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from hashlib import sha1
+from hashlib import sha256
 import re
 from typing import Optional
 
@@ -91,7 +91,7 @@ class ConversationContinuityEvaluator:
         return list(dict.fromkeys(entities))[:8]
 
     def _loop_key(self, text: str) -> str:
-        return sha1(self._normalize(text).encode("utf-8")).hexdigest()[:12]
+        return sha256(self._normalize(text).encode("utf-8")).hexdigest()[:12]
 
     def detect_message_mode(self, text: str) -> str:
         normalized = self._normalize(text)
