@@ -35,6 +35,7 @@ class Fact:
 class FactStore:
     """
     Structured memory with entity relationships
+    Thread-safe: open connection per operation (sqlite3 cannot share connections across threads)
     """
     
     def __init__(self, db_path: Optional[Path] = None):
@@ -44,15 +45,14 @@ class FactStore:
             self.db_path = db_path
         
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = None
+        # Do NOT keep connection open - sqlite3 is not thread safe
         self._init_db()
     
     def _init_db(self):
-        """Initialize database"""
-        self._conn = sqlite3.connect(str(self.db_path))
-        self._conn.row_factory = sqlite3.Row
-        
-        cursor = self._conn.cursor()
+        """Initialize database schema"""
+        conn = sqlite3.connect(str(self.db_path))
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
         
         # Facts table
         cursor.execute("""
@@ -78,7 +78,8 @@ class FactStore:
             CREATE INDEX IF NOT EXISTS idx_category ON facts(category)
         """)
         
-        self._conn.commit()
+        conn.commit()
+        conn.close()
     
     def add(
         self,
@@ -92,21 +93,27 @@ class FactStore:
         tags = tags or []
         now = datetime.now(timezone.utc).isoformat()
         
-        cursor = self._conn.cursor()
+        conn = sqlite3.connect(str(self.db_path))
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        
         cursor.execute("""
             INSERT INTO facts (content, category, entities, tags, trust, created_at, updated_at)
             VALUES (?, ?, ?, ?, 0.5, ?, ?)
         """, (content, category, json.dumps(entities), json.dumps(tags), now, now))
         
-        self._conn.commit()
+        last_id = cursor.lastrowid
+        conn.commit()
+        conn.close()
         
-        return cursor.lastrowid
+        return last_id
     
     def search(self, query: str, limit: int = 10, min_trust: float = 0.3) -> List[Fact]:
         """Keyword search"""
-        cursor = self._conn.cursor()
+        conn = sqlite3.connect(str(self.db_path))
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
         
-        # Simple LIKE search
         cursor.execute("""
             SELECT * FROM facts
             WHERE content LIKE ? AND trust >= ?
@@ -114,11 +121,15 @@ class FactStore:
             LIMIT ?
         """, (f"%{query}%", min_trust, limit))
         
-        return [self._row_to_fact(row) for row in cursor.fetchall()]
+        rows = [self._row_to_fact(row) for row in cursor.fetchall()]
+        conn.close()
+        return rows
     
     def probe(self, entity: str, limit: int = 10, min_trust: float = 0.3) -> List[Fact]:
         """Get ALL facts about an entity"""
-        cursor = self._conn.cursor()
+        conn = sqlite3.connect(str(self.db_path))
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
         
         cursor.execute("""
             SELECT * FROM facts
@@ -127,7 +138,9 @@ class FactStore:
             LIMIT ?
         """, (f'%"{entity}"%', min_trust, limit))
         
-        return [self._row_to_fact(row) for row in cursor.fetchall()]
+        rows = [self._row_to_fact(row) for row in cursor.fetchall()]
+        conn.close()
+        return rows
     
     def related(self, entity: str, limit: int = 10) -> List[Fact]:
         """Find facts connected to an entity (share relationships)"""
