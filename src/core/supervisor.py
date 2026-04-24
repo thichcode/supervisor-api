@@ -385,6 +385,21 @@ class Supervisor:
         else:
             url_context = ""
 
+        # Check for ITC ticket request pattern early
+        text_lower = payload.message.text.lower()
+        if "itc" in text_lower and ("support request" in text_lower or "ticket" in text_lower or "woid" in text_lower):
+            itc_answer, itc_confidence = await self._handle_itc_ticket_request(payload)
+            return self._create_output(
+                payload=payload,
+                answer=itc_answer,
+                confidence=itc_confidence,
+                intent=IntentClassification(intent=IntentType.SUPPORT_CASE, confidence=0.9),
+                risk=risk,
+                agents_used=["itc_ticket"],
+                processing_time=start_time,
+                extra_metadata={"itc_ticket": True}
+            )
+
         intent = self._classify_intent(payload, memory)
         risk = self._evaluate_risk(payload, memory)
 
@@ -927,6 +942,119 @@ class Supervisor:
             answer = f"📖 **{guide_title}**\n\nTôi không tìm thấy nội dung chi tiết cho hướng dẫn này. Bạn cần hỗ trợ thêm không?"
         
         return answer
+
+    async def _handle_itc_ticket_request(self, payload: InputPayload) -> tuple[str, float]:
+        """Handle ITC ticket request - extract ticket ID, fetch from n8n, search KB, suggest solution."""
+        import re
+        
+        text = payload.message.text
+        
+        # Pattern 1: "IT Center has received a support request" + ticket link
+        ticket_patterns = [
+            r'woID=(\d+)',  # woID=4711234
+            r'woID=(\d+)',  # WorkOrder ID
+            r'ticket[:\s]+(\d+)',  # ticket: 4711234 or ticket 4711234
+            r'#(\d{7,})',  # 7+ digit number (ITC ticket IDs)
+        ]
+        
+        ticket_id = None
+        for pattern in ticket_patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                ticket_id = match.group(1)
+                break
+        
+        if not ticket_id:
+            return ("Tôi không tìm thấy mã ticket trong tin nhắn. Bạn có thể cung cấp mã ticket không?", 0.3)
+        
+        # Try to get ticket details from n8n/ITC API
+        ticket_content = None
+        ticket_subject = None
+        ticket_description = None
+        
+        try:
+            if hasattr(self, 'n8n_connector') and self.n8n_connector:
+                # Call n8n workflow to fetch ticket
+                ticket_content = await self.n8n_connector.trigger_workflow(
+                    "itc_ticket_fetch",
+                    {"ticket_id": ticket_id}
+                )
+        except Exception as e:
+            logger.warning("Failed to fetch ticket from n8n", ticket_id=ticket_id, error=str(e))
+        
+        # Try direct ITC API if n8n not available
+        if not ticket_content:
+            try:
+                # Try direct IT service API call
+                import httpx
+                settings = get_settings()
+                itc_api_url = getattr(settings, 'itc_api_url', None)
+                if itc_api_url:
+                    async with httpx.AsyncClient(timeout=30) as client:
+                        response = await client.get(
+                            f"{itc_api_url}/WorkOrder.do",
+                            params={"woMode": "viewWO", "woID": ticket_id}
+                        )
+                        if response.status_code == 200:
+                            ticket_content = response.text
+            except Exception as e:
+                logger.warning("Failed to fetch ticket directly", ticket_id=ticket_id, error=str(e))
+        
+        # Extract subject if we got content
+        if ticket_content:
+            subject_match = re.search(r'<subject>([^<]+)</subject>', ticket_content, re.IGNORECASE)
+            if subject_match:
+                ticket_subject = subject_match.group(1).strip()
+            
+            # Try to get description
+            desc_match = re.search(r'<description>([^<]+)</description>', ticket_content, re.IGNORECASE)
+            if desc_match:
+                ticket_description = desc_match.group(1).strip()
+        
+        # Search KB for related solutions
+        kb_suggestions = []
+        search_query = ticket_subject or f"ticket {ticket_id}"
+        
+        try:
+            from src.db import async_session
+            from src.knowledge.service import KnowledgeRetrievalService
+            async with async_session() as session:
+                kb_service = KnowledgeRetrievalService(session, self._llm)
+                kb_results = await kb_service.search(search_query, "faq")
+                for r in kb_results.results[:3]:
+                    kb_suggestions.append({
+                        "title": r.title,
+                        "content": r.content[:300],
+                        "similarity": r.similarity
+                    })
+        except Exception as e:
+            logger.warning("KB search failed", error=str(e))
+        
+        # Format response
+        response_parts = [f"🎫 **Ticket #{ticket_id}**"]
+        
+        if ticket_subject:
+            response_parts.append(f"**Subject:** {ticket_subject}")
+        
+        if kb_suggestions:
+            response_parts.append("\n📚 **Gợi ý từ Knowledge Base:**")
+            for i, sugg in enumerate(kb_suggestions, 1):
+                response_parts.append(f"{i}. **{sugg['title']}**\n   {sugg['content']}")
+        else:
+            response_parts.append("\n🔍 Tôi đang phân tích và tìm giải pháp...")
+            # Use AI to reason if LLM available
+            if self._llm:
+                system_prompt = f"""Bạn là chuyên gia IT support. Dựa vào thông tin ticket #{ticket_id}:
+Subject: {ticket_subject or 'Unknown'}
+Hãy đề xuất giải pháp hoặc các bước tiếp theo."""
+                try:
+                    llm_response = await self._llm.complete(system_prompt, "")
+                    response_parts.append(f"\n💡 **Gợi ý:**\n{llm_response.content}")
+                except Exception as e:
+                    logger.warning("LLM reasoning failed", error=str(e))
+        
+        answer = "\n".join(response_parts)
+        return (answer, 0.85)
 
     async def _handle_system_query(
         self,
