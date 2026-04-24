@@ -71,7 +71,13 @@ async def approve_or_reject(approval_id: str, action: ApprovalActionRequest):
 
     if action.action == "approve":
         await approval_service.approve(approval_id, action.reviewed_by, action.comment)
-
+        
+        # Send final response to user via Telegram
+        from src.api.routers.approvals import send_telegram_message
+        tg_chat_id = settings.telegram_approval_chat_ids.split(",")[0].strip() if settings.telegram_approval_chat_ids else None
+        if tg_chat_id and approval.ai_response:
+            await send_telegram_message(tg_chat_id, approval.ai_response)
+        
         async with api_module.async_session() as session:
             interaction_service = InteractionService(session)
             await interaction_service.update_approval_record(
@@ -509,3 +515,27 @@ async def _edit_message(chat_id: str, message_id: int, text: str):
             })
     except Exception as e:
         logger.warning("Failed to edit message", error=str(e))
+
+
+async def send_telegram_message(chat_id: str, text: str) -> bool:
+    """Send message to Telegram user via bot."""
+    import httpx
+    
+    settings = get_settings()
+    if not settings.telegram_bot_token:
+        logger.warning("Telegram bot token not configured")
+        return False
+    
+    endpoint = f"https://api.telegram.org/bot{settings.telegram_bot_token}/sendMessage"
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(endpoint, json={
+                "chat_id": chat_id,
+                "text": text,
+                "parse_mode": settings.telegram_parse_mode
+            })
+            response.raise_for_status()
+            return True
+    except Exception as e:
+        logger.warning("Failed to send Telegram message", chat_id=chat_id, error=str(e))
+        return False
