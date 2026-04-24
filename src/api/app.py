@@ -339,19 +339,40 @@ async def _auto_send_to_power_automate(payload: OutputPayload) -> bool:
 
     import httpx
     from tenacity import retry, stop_after_attempt, wait_exponential
-
-    # Format payload for Power Automate
+    
+    # Extract metadata for richer payload
+    meta = payload.metadata or {}
+    
+    # Format payload for Power Automate with expanded fields
     pa_payload = {
         "request_id": getattr(payload, 'request_id', ''),
         "message": payload.message.text if payload.message else "",
         "answer": payload.answer,
         "confidence": payload.confidence,
-        "intent": (payload.metadata or {}).get("intent", "unknown"),
+        "intent": meta.get("intent", "unknown"),
         "risk_level": payload.risk_level,
-        "agents_used": (payload.metadata or {}).get("agents_used", []),
+        "agents_used": meta.get("agents_used", []),
         "status": payload.status,
-        "processing_time_ms": (payload.metadata or {}).get("processing_time_ms", 0),
-        "metadata": payload.metadata,
+        "processing_time_ms": meta.get("processing_time_ms", 0),
+        
+        # KB related fields
+        "kb_hit": meta.get("kb_hit", False),
+        "kb_guides": meta.get("kb_guides", []),
+        "kb_sources": meta.get("kb_sources", []),
+        "kb_template": meta.get("kb_template", {}),
+        "knowledge_results": meta.get("knowledge_results", []),
+        
+        # ITC ticket related
+        "itc_ticket": meta.get("itc_ticket", False),
+        "itc_requestid": meta.get("itc_requestid"),
+        "ticket_id": meta.get("ticket_id"),
+        
+        # Approval related
+        "approval_id": meta.get("approval_id"),
+        "approval_required": meta.get("approval_required", False),
+        
+        # Full metadata for reference
+        "metadata": meta,
     }
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=10))
