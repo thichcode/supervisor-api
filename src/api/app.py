@@ -331,12 +331,13 @@ async def _auto_send_to_power_automate(payload: OutputPayload) -> bool:
     pa_payload = {
         "request_id": getattr(payload, 'request_id', ''),
         "message": payload.message.text if payload.message else "",
+        "answer": payload.answer,
         "confidence": payload.confidence,
-        "intent": payload.intent.intent.value if payload.intent else "unknown",
-        "risk_level": payload.risk.risk_level.value if payload.risk else "unknown",
-        "agents_used": payload.agents_used,
+        "intent": (payload.metadata or {}).get("intent", "unknown"),
+        "risk_level": payload.risk_level,
+        "agents_used": (payload.metadata or {}).get("agents_used", []),
         "status": payload.status,
-        "processing_time_ms": payload.processing_time_ms,
+        "processing_time_ms": (payload.metadata or {}).get("processing_time_ms", 0),
         "metadata": payload.metadata,
     }
 
