@@ -73,6 +73,7 @@ async def approve_or_reject(approval_id: str, action: ApprovalActionRequest):
         await approval_service.approve(approval_id, action.reviewed_by, action.comment)
         
         # Send final response to user via Power Automate webhook
+        # Only send if confidence >= 0.9, otherwise Telegram only
         from src.api.app import _auto_send_to_power_automate
         from src.core.schemas import OutputPayload
         
@@ -82,10 +83,13 @@ async def approve_or_reject(approval_id: str, action: ApprovalActionRequest):
             status="approved",
             metadata={**approval.metadata, "approved_by": action.reviewed_by}
         )
-        try:
-            await _auto_send_to_power_automate(output_payload)
-        except Exception as e:
-            logger.warning("Failed to send to Power Automate", error=str(e))
+        
+        # Only auto-send when confidence >= 0.9
+        if approval.confidence >= 0.9:
+            try:
+                await _auto_send_to_power_automate(output_payload)
+            except Exception as e:
+                logger.warning("Failed to send to Power Automate", error=str(e))
         
         async with api_module.async_session() as session:
             interaction_service = InteractionService(session)

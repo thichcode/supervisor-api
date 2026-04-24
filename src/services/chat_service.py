@@ -306,11 +306,13 @@ class ChatService:
                 metadata={**result.metadata, "approval_id": approval.id, "approval_required": True, "threshold": 0.5},
             )
 
+        # Only auto-send to Power Automate when confidence >= 0.9
         if result.status == "completed" and settings.power_automate_webhook_url and auto_send_callback:
-            try:
-                await auto_send_callback(result)
-            except Exception:
-                pass
+            if result.confidence >= 0.9:
+                try:
+                    await auto_send_callback(result)
+                except Exception:
+                    pass
 
         return ChatResponse(
             request_id=request_id,
@@ -473,11 +475,13 @@ class ChatService:
                 metadata={**result.metadata, "approval_id": approval.id, "approval_required": True, "threshold": 0.5, "harness_metrics": harness_metrics, "harness_evaluation": harness_evaluation},
             )
 
+        # Only auto-send to Power Automate when confidence >= 0.9
         if result.status == "completed" and settings.power_automate_webhook_url and auto_send_callback:
-            try:
-                await auto_send_callback(result)
-            except Exception:
-                pass
+            if result.confidence >= 0.9:
+                try:
+                    await auto_send_callback(result)
+                except Exception:
+                    pass
 
         return ChatResponse(
             request_id=request_id,
