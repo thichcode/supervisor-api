@@ -85,6 +85,12 @@ async def execute_tool(tool_name: str, arguments: dict):
 
     try:
         result = await tool_registry.execute(tool_name, arguments)
+        if isinstance(result, dict) and result.get("pending_approval"):
+            return {
+                "status": "pending_approval",
+                "tool": tool_name,
+                "result": result,
+            }
         return {
             "status": "success",
             "tool": tool_name,

@@ -165,7 +165,11 @@ class ApprovalService:
             return
 
         payload_text = build_approval_message_text(approval)
-        reply_markup = build_approval_inline_keyboard(approval.id)
+        reply_markup = build_approval_inline_keyboard(
+            approval.id,
+            compact=bool((approval.metadata or {}).get("group_chat")),
+            group_chat=bool((approval.metadata or {}).get("group_chat")),
+        )
         endpoint = f"https://api.telegram.org/bot{settings.telegram_bot_token}/sendMessage"
 
         try:

@@ -71,26 +71,47 @@ async def approve_or_reject(approval_id: str, action: ApprovalActionRequest):
 
     if action.action == "approve":
         await approval_service.approve(approval_id, action.reviewed_by, action.comment)
-        
+
+        tool_execution_result = None
+        is_tool_approval = bool((approval.metadata or {}).get("tool_name"))
+        if is_tool_approval:
+            from src.harness import get_tool_registry
+
+            tool_registry = get_tool_registry()
+            tool_name = approval.metadata.get("tool_name")
+            tool_arguments = approval.metadata.get("tool_arguments") or {}
+            tool_execution_result = await tool_registry.execute(
+                tool_name,
+                tool_arguments,
+                approved=True,
+                approval_context={
+                    "request_id": approval.request_id,
+                    "user_id": approval.user_id,
+                    "display_name": approval.display_name,
+                    "requested_via": approval.metadata.get("requested_via", "telegram_approval"),
+                    "metadata": approval.metadata,
+                },
+            )
+
         # Send final response to user via Power Automate webhook
         # Only send if confidence >= 0.9, otherwise Telegram only
         from src.api.app import _auto_send_to_power_automate
         from src.core.schemas import OutputPayload
-        
+
         output_payload = OutputPayload(
             answer=approval.ai_response,
             confidence=approval.confidence,
             status="approved",
             metadata={**approval.metadata, "approved_by": action.reviewed_by}
         )
-        
-        # Only auto-send when confidence >= 0.9
-        if approval.confidence >= 0.9:
+
+        # Only auto-send when confidence >= 0.9 and this is not a tool approval
+        if approval.confidence >= 0.9 and not is_tool_approval:
             try:
                 await _auto_send_to_power_automate(output_payload)
             except Exception as e:
                 logger.warning("Failed to send to Power Automate", error=str(e))
-        
+
         async with api_module.async_session() as session:
             interaction_service = InteractionService(session)
             await interaction_service.update_approval_record(
@@ -113,7 +134,7 @@ async def approve_or_reject(approval_id: str, action: ApprovalActionRequest):
                 outcome_status="approved",
                 ticket_id=approval.metadata.get("ticket_id"),
                 ticket_system=approval.metadata.get("ticket_system"),
-                extra_metadata={**(approval.metadata or {}), "approval_id": approval.id, "approved_by": action.reviewed_by},
+                extra_metadata={**(approval.metadata or {}), "approval_id": approval.id, "approved_by": action.reviewed_by, "tool_execution_result": tool_execution_result},
             )
             await record_learning_event(
                 session,
@@ -135,6 +156,7 @@ async def approve_or_reject(approval_id: str, action: ApprovalActionRequest):
                     "model_name": approval.metadata.get("model_name", settings.llm_model),
                     "approval_id": approval.id,
                     "request_id": approval.request_id,
+                    "tool_execution_result": tool_execution_result,
                 },
             )
 
@@ -153,7 +175,7 @@ async def approve_or_reject(approval_id: str, action: ApprovalActionRequest):
 
             await session.commit()
 
-        if settings.power_automate_webhook_url:
+        if settings.power_automate_webhook_url and not is_tool_approval:
             payload = {
                 "request_id": approval.request_id,
                 "approval_id": approval_id,
@@ -181,7 +203,8 @@ async def approve_or_reject(approval_id: str, action: ApprovalActionRequest):
             "approval_id": approval_id,
             "reviewed_by": action.reviewed_by,
             "comment": action.comment,
-            "message": "Action executed successfully",
+            "message": "Action executed successfully" if not is_tool_approval else "Tool approval executed successfully",
+            "tool_execution_result": tool_execution_result,
         }
 
     if action.action == "reject":

@@ -11,18 +11,47 @@ import httpx
 
 from src.core.conversation_continuity import ConversationContinuityEvaluator
 from src.core.kb_presentation import build_kb_card, format_kb_response
-
 logger = structlog.get_logger()
 
 
-def build_approval_message_text(approval) -> str:
+def _truncate_text(text: str, limit: int = 120) -> str:
+    if not text:
+        return ""
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - 1)].rstrip() + "…"
+
+
+
+def build_approval_message_text(approval, compact: Optional[bool] = None) -> str:
     """Build the Telegram approval card text."""
     confidence_pct = round((approval.confidence * 100) if approval.confidence <= 1 else approval.confidence, 1)
     threshold_pct = round((approval.threshold * 100) if approval.threshold <= 1 else approval.threshold, 1)
-    thread_id = approval.metadata.get("thread_id", "") if getattr(approval, "metadata", None) else ""
-    risk_level = approval.metadata.get("risk_level", "") if getattr(approval, "metadata", None) else ""
-    kb_sources = approval.metadata.get("kb_sources", []) if getattr(approval, "metadata", None) else []
-    kb_evidence = approval.metadata.get("kb_evidence", []) if getattr(approval, "metadata", None) else []
+    metadata = getattr(approval, "metadata", None) or {}
+    thread_id = metadata.get("thread_id", "")
+    platform = metadata.get("platform", "")
+    chat_type = metadata.get("chat_type", "")
+    chat_scope = metadata.get("chat_scope", "")
+    group_chat = metadata.get("group_chat")
+    risk_level = metadata.get("risk_level", "")
+    kb_sources = metadata.get("kb_sources", [])
+    kb_evidence = metadata.get("kb_evidence", [])
+    user_id = getattr(approval, "user_id", "") or metadata.get("user_id", "")
+    display_name = getattr(approval, "display_name", "") or metadata.get("display_name", "")
+
+    is_group_chat = group_chat is True
+    is_compact = compact if compact is not None else is_group_chat
+    chat_mode_label = "Group chat" if is_group_chat else "Direct message" if group_chat is False else "Chat"
+    header = "⚠️ Group Chat Approval Required" if is_group_chat else ("⚠️ Direct Message Approval Required" if group_chat is False else "⚠️ Approval Required")
+    scope_note = (
+        "⚠️ This request came from a *group chat*. Verify the requester, thread context, and impact before approving."
+        if is_group_chat
+        else (
+            "This request came from a direct message."
+            if group_chat is False
+            else ""
+        )
+    )
 
     kb_lines = []
     if kb_sources:
@@ -40,38 +69,76 @@ def build_approval_message_text(approval) -> str:
             similarity_text = f" ({similarity:.2f})" if isinstance(similarity, (int, float)) else ""
             kb_lines.append(f"{idx}. {title}{similarity_text}")
 
+    context_lines = [
+        f"Approval ID: {approval.id}",
+        f"Request ID: {approval.request_id}",
+        f"Display Name: {display_name or 'N/A'}",
+        f"User ID: {user_id or 'N/A'}",
+        f"Thread ID: {thread_id or 'N/A'}",
+        f"Chat Mode: {chat_mode_label}",
+    ]
+    if platform:
+        context_lines.append(f"Platform: {platform}")
+    if chat_type:
+        context_lines.append(f"Chat Type: {chat_type}")
+    if chat_scope:
+        context_lines.append(f"Chat Scope: {chat_scope}")
+    if group_chat is not None:
+        context_lines.append(f"Group Chat: {group_chat}")
+
+    if is_compact:
+        summary_original = _truncate_text(approval.original_message, 100)
+        summary_ai = _truncate_text(approval.ai_response, 120)
+        return (
+            f"{header}\n\n"
+            + "\n".join(context_lines)
+            + f"\nRisk: {risk_level or 'N/A'}\n"
+            + f"Confidence: {confidence_pct}% (threshold: {threshold_pct}%)"
+            + (f"\n\n{scope_note}" if scope_note else "")
+            + f"\n\nOriginal (preview):\n{summary_original or 'N/A'}"
+            + f"\n\nAI (preview):\n{summary_ai or 'N/A'}\n\n"
+            + "Tap *View full context* to expand this card."
+        )
+
     kb_section = "\n".join(kb_lines)
     if kb_section:
         kb_section = f"\n\n{kb_section}"
 
+    note_section = f"\n\n{scope_note}" if scope_note else ""
+
     return (
-        "⚠️ Approval Required\n\n"
-        f"Approval ID: {approval.id}\n"
-        f"Request ID: {approval.request_id}\n"
-        f"User: {approval.display_name} ({approval.user_id})\n"
-        f"Thread: {thread_id or 'N/A'}\n"
-        f"Risk: {risk_level or 'N/A'}\n"
-        f"Confidence: {confidence_pct}% (threshold: {threshold_pct}%)\n\n"
-        f"Original:\n{approval.original_message}\n\n"
-        f"AI Response:\n{approval.ai_response}{kb_section}\n\n"
-        "Use the buttons below to approve or reject."
+        f"{header}\n\n"
+        + "\n".join(context_lines)
+        + f"\nRisk: {risk_level or 'N/A'}\n"
+        + f"Confidence: {confidence_pct}% (threshold: {threshold_pct}%)"
+        + note_section
+        + f"\n\nOriginal:\n{approval.original_message}\n\n"
+        + f"AI Response:\n{approval.ai_response}{kb_section}\n\n"
+        + "Use the buttons below to approve or reject."
     )
 
 
-def build_approval_inline_keyboard(approval_id: str) -> Dict[str, Any]:
-    """Build the inline keyboard for approval actions."""
-    return {
-        "inline_keyboard": [
-            [
-                {"text": "✅ Approve", "callback_data": f"approval:approve:{approval_id}"},
-                {"text": "🚫 Reject", "callback_data": f"approval:reject:{approval_id}"},
-            ],
-            [
-                {"text": "🔍 Search KB", "callback_data": f"approval:search_kb:{approval_id}"},
-            ]
-        ]
-    }
 
+def build_approval_inline_keyboard(approval_id: str, compact: bool = False, group_chat: Optional[bool] = None) -> Dict[str, Any]:
+    """Build the inline keyboard for approval actions."""
+    buttons = [
+        [
+            {"text": "✅ Approve", "callback_data": f"approval:approve:{approval_id}"},
+            {"text": "🚫 Reject", "callback_data": f"approval:reject:{approval_id}"},
+        ]
+    ]
+    if group_chat is True and compact:
+        buttons.append([
+            {"text": "🔍 Search KB", "callback_data": f"approval:search_kb:{approval_id}"},
+        ])
+        buttons.append([
+            {"text": "🔎 View full context", "callback_data": f"approval:view_full_context:{approval_id}"},
+        ])
+    else:
+        buttons.append([
+            {"text": "🔍 Search KB", "callback_data": f"approval:search_kb:{approval_id}"},
+        ])
+    return {"inline_keyboard": buttons}
 
 def build_kb_search_prompt(approval_id: str) -> str:
     """Build prompt for KB search."""
@@ -83,6 +150,17 @@ def build_kb_search_prompt(approval_id: str) -> str:
     )
 
 
+
+def build_kb_force_reply_markup(approval_id: str) -> Dict[str, Any]:
+    """Build a ForceReply payload so Telegram shows an inline text box for the KB query."""
+    return {
+        "force_reply": True,
+        "input_field_placeholder": "Nhập từ khóa KB để gợi ý cho user...",
+        "selective": True,
+        "kb_approval_id": approval_id,
+    }
+
+
 def parse_approval_callback_data(data: str) -> Optional[Tuple[str, str]]:
     """Parse Telegram callback data for approval actions."""
     if not data:
@@ -91,7 +169,7 @@ def parse_approval_callback_data(data: str) -> Optional[Tuple[str, str]]:
     if len(parts) != 3 or parts[0] != "approval":
         return None
     action, approval_id = parts[1], parts[2]
-    if action not in {"approve", "reject", "search_kb"} or not approval_id:
+    if action not in {"approve", "reject", "search_kb", "view_full_context"} or not approval_id:
         return None
     return action, approval_id
 
@@ -321,12 +399,38 @@ class TelegramAdapter:
         try:
             if action == "search_kb":
                 await self._answer_callback_query(
-                    callback_query_id, 
-                    "Nhập từ khóa để tìm KB...", 
-                    show_alert=True
+                    callback_query_id,
+                    "Nhập từ khóa để tìm KB...",
+                    show_alert=True,
                 )
                 self._pending_kb_search[chat_id] = approval_id
-                await self._send_message(chat_id, build_kb_search_prompt(approval_id))
+                await self._send_message(
+                    chat_id,
+                    build_kb_search_prompt(approval_id),
+                    reply_markup=build_kb_force_reply_markup(approval_id),
+                    parse_mode=None,
+                )
+                return True
+
+            if action == "view_full_context":
+                from src.core.approval import approval_service as approval_service_local
+
+                approval = await approval_service_local.get_approval(approval_id)
+                if not approval:
+                    await self._answer_callback_query(callback_query_id, "Không tìm thấy approval.", show_alert=True)
+                    return False
+                await self._answer_callback_query(callback_query_id, "Đã mở full context")
+                full_text = build_approval_message_text(approval, compact=False)
+                await self._edit_message_text(
+                    chat_id,
+                    message_id,
+                    full_text,
+                    reply_markup=build_approval_inline_keyboard(
+                        approval_id,
+                        compact=False,
+                        group_chat=bool((getattr(approval, "metadata", None) or {}).get("group_chat")),
+                    ),
+                )
                 return True
 
             result = await self._call_approval_action(approval_id, action, actor)

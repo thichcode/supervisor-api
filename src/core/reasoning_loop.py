@@ -390,16 +390,40 @@ class ReasoningLoopOrchestrator:
                         tool_result = await self.tool_registry.execute(
                             tool_plan.tool_name,
                             tool_plan.arguments,
+                            approval_context={
+                                "request_id": payload.request_id,
+                                "user_id": payload.user.id,
+                                "display_name": payload.user.display_name,
+                                "original_message": payload.message.text,
+                                "requested_via": "reasoning_loop",
+                                "thread_id": payload.conversation.thread_id,
+                                "platform": payload.conversation.platform or payload.source,
+                                "chat_type": payload.conversation.chat_type,
+                                "chat_scope": payload.conversation.chat_scope,
+                                "group_chat": payload.conversation.group_chat,
+                                "metadata": build_trace_metadata(
+                                    {
+                                        "kb_hit": bool(state.kb_sources),
+                                        "kb_sources": state.kb_sources,
+                                        "pattern_hit": state.pattern_hit,
+                                        "agents_used": state.agents_used,
+                                    }
+                                ),
+                            },
                         )
+                        tool_pending_approval = isinstance(tool_result, dict) and bool(tool_result.get("pending_approval"))
+                        tool_success = bool(getattr(tool_result, "success", False)) if hasattr(tool_result, "success") else bool(tool_result.get("success", False) if isinstance(tool_result, dict) else tool_result)
                         add_trace(
                             "act",
-                            "registry_tool_success" if tool_result.success else "registry_tool_failed",
+                            "registry_tool_pending_approval" if tool_pending_approval else ("registry_tool_success" if tool_success else "registry_tool_failed"),
                             tool=tool_plan.tool_name,
                             attempt=attempt,
                         )
                         break
                     except Exception as exc:
                         tool_error = str(exc)
+                        tool_pending_approval = False
+                        tool_success = False
                         add_trace(
                             "act",
                             "registry_tool_failed",
@@ -408,8 +432,33 @@ class ReasoningLoopOrchestrator:
                             error=tool_error,
                         )
 
-                if tool_result and tool_result.success:
-                    state.answer = tool_result.output
+                if isinstance(tool_result, dict) and tool_result.get("pending_approval"):
+                    approval_id = tool_result.get("approval_id")
+                    return self.supervisor._create_output(
+                        payload=payload,
+                        answer=tool_result.get("message") or f"Thao tác '{tool_plan.tool_name}' đang chờ phê duyệt Telegram.",
+                        confidence=0.5,
+                        intent=intent,
+                        risk=risk,
+                        agents_used=state.agents_used + [tool_plan.tool_name],
+                        status="pending_approval",
+                        processing_time=start_time,
+                        extra_metadata=build_trace_metadata(
+                            {
+                                "kb_hit": False,
+                                "kb_sources": state.kb_sources,
+                                "pattern_hit": state.pattern_hit,
+                                "agents_used": state.agents_used + [tool_plan.tool_name],
+                                "tool_pending_approval": True,
+                                "approval_id": approval_id,
+                                "tool_name": tool_plan.tool_name,
+                                "tool_arguments": tool_plan.arguments,
+                            }
+                        ),
+                    )
+
+                if tool_success:
+                    state.answer = tool_result.output if hasattr(tool_result, "output") else (tool_result.get("output") if isinstance(tool_result, dict) else str(tool_result))
                     state.confidence = 0.9
                     state.agents_used.append(tool_plan.tool_name)
                     state.kb_hit = True
@@ -430,7 +479,7 @@ class ReasoningLoopOrchestrator:
                                 "pattern_hit": state.pattern_hit,
                                 "agents_used": state.agents_used + [tool_plan.tool_name],
                                 "tool_failed": True,
-                                "tool_error": tool_error or (tool_result.output if tool_result else None),
+                                "tool_error": tool_error or (tool_result.output if hasattr(tool_result, "output") else (tool_result.get("error") if isinstance(tool_result, dict) else None)),
                             }
                         ),
                     )

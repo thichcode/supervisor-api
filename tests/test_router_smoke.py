@@ -186,6 +186,48 @@ class TestSmokeRequests:
         assert response.json()["harness"]["name"] == "test-harness"
 
     @pytest.mark.asyncio
+    async def test_harness_execute_dangerous_tool_requests_approval(self, client, monkeypatch):
+        from src.api.routers import harness as harness_router
+        from src.harness import tool_registry as tool_registry_module
+        from src.harness.tool_registry import ToolCategory as HarnessToolCategory, ToolRegistry as HarnessToolRegistry
+
+        registry = HarnessToolRegistry()
+        handler_calls = {"count": 0}
+
+        async def dangerous_handler(command: str, timeout: int = 30, workdir=None):
+            handler_calls["count"] += 1
+            return {"output": "should not run"}
+
+        registry.register(
+            name="terminal",
+            description="Execute shell commands in terminal",
+            handler=dangerous_handler,
+            category=HarnessToolCategory.TERMINAL,
+            dangerous=True,
+            parameters={
+                "type": "object",
+                "properties": {"command": {"type": "string"}},
+                "required": ["command"],
+            },
+        )
+
+        async def fake_create_approval(**kwargs):
+            class Approval:
+                id = "apr-1"
+
+            return Approval()
+
+        monkeypatch.setattr(tool_registry_module.approval_service, "create_approval", fake_create_approval)
+        monkeypatch.setattr(harness_router, "get_tool_registry", lambda: registry)
+
+        response = await client.post("/harness/tools/terminal/execute", json={"command": "rm -rf /"})
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "pending_approval"
+        assert data["result"]["pending_approval"] is True
+        assert handler_calls["count"] == 0
+
+    @pytest.mark.asyncio
     async def test_monitoring_traffic_classifier_distinguishes_service_and_casual(self):
         service_row = SimpleNamespace(
             intent="unknown",

@@ -9,13 +9,19 @@ Provides a centralized registry for managing agent tools:
 """
 
 import asyncio
-from typing import Any, Callable, Dict, List, Optional
-from dataclasses import dataclass, field
-from enum import Enum
-from datetime import datetime
-
+import json
 import logging
+import os
+import shlex
+import subprocess
+import uuid
+from dataclasses import dataclass, field
+from datetime import datetime
+from enum import Enum
+from typing import Any, Callable, Dict, List, Optional
+
 from src.config import get_settings
+from src.core.approval import approval_service
 
 settings = get_settings()
 logger = logging.getLogger("harness.tool_registry")
@@ -292,10 +298,15 @@ class ToolRegistry:
         name: str,
         arguments: Dict[str, Any],
         max_retries: int = 3,
+        approved: bool = False,
+        approval_context: Optional[Dict[str, Any]] = None,
     ) -> Any:
-        """Execute a tool with standardized handling"""
+        """Execute a tool with standardized handling.
+
+        Dangerous tools are routed through Telegram approval unless `approved=True`.
+        """
         start_time = datetime.now()
-        
+
         tool = self._tools.get(name)
         if not tool:
             result = ToolExecutionResult(
@@ -307,7 +318,65 @@ class ToolRegistry:
             )
             self._execution_history.append(result)
             raise ValueError(f"Tool not found: {name}")
-        
+
+        if (tool.dangerous or tool.requires_approval) and not approved:
+            approval_context = approval_context or {}
+            request_id = approval_context.get("request_id") or f"tool-{uuid.uuid4().hex[:8]}"
+            user_id = approval_context.get("user_id") or "system"
+            display_name = approval_context.get("display_name") or "Supervisor Agent"
+            original_message = approval_context.get("original_message") or (
+                f"{name}({json.dumps(arguments, ensure_ascii=False, default=str)})"
+            )
+            ai_response = approval_context.get("ai_response") or (
+                f"Tool '{name}' is pending human approval before execution."
+            )
+            confidence = float(approval_context.get("confidence", 0.5))
+            metadata = {
+                "tool_name": name,
+                "tool_arguments": arguments,
+                "tool_category": tool.category.value,
+                "dangerous": tool.dangerous,
+                "requires_approval": tool.requires_approval or tool.dangerous,
+                "requested_via": approval_context.get("requested_via", "harness"),
+                "thread_id": approval_context.get("thread_id", ""),
+                "platform": approval_context.get("platform", ""),
+                "chat_type": approval_context.get("chat_type", ""),
+                "chat_scope": approval_context.get("chat_scope", ""),
+                "group_chat": approval_context.get("group_chat"),
+                **(approval_context.get("metadata") or {}),
+            }
+
+            approval = await approval_service.create_approval(
+                request_id=request_id,
+                user_id=user_id,
+                display_name=display_name,
+                original_message=original_message,
+                ai_response=ai_response,
+                confidence=confidence,
+                action_type=f"tool:{name}",
+                metadata=metadata,
+            )
+            duration_ms = (datetime.now() - start_time).total_seconds() * 1000
+            result = ToolExecutionResult(
+                tool_name=name,
+                success=False,
+                result={
+                    "success": False,
+                    "pending_approval": True,
+                    "approval_id": approval.id,
+                    "request_id": request_id,
+                    "tool_name": name,
+                    "message": f"Tool '{name}' requires Telegram approval before execution.",
+                },
+                error="approval_required",
+                duration_ms=duration_ms,
+            )
+            self._execution_history.append(result)
+            logger.info(
+                f"Tool approval requested: tool={name} approval_id={approval.id} request_id={request_id} dangerous={tool.dangerous}"
+            )
+            return result.result
+
         # Execute with retries
         last_error = None
         for attempt in range(max_retries):
@@ -316,9 +385,9 @@ class ToolRegistry:
                     result_data = await tool.handler(**arguments)
                 else:
                     result_data = tool.handler(**arguments)
-                
+
                 duration_ms = (datetime.now() - start_time).total_seconds() * 1000
-                
+
                 result = ToolExecutionResult(
                     tool_name=name,
                     success=True,
@@ -326,16 +395,16 @@ class ToolRegistry:
                     duration_ms=duration_ms,
                 )
                 self._execution_history.append(result)
-                
+
                 logger.debug(f"Tool executed: {name} ({duration_ms:.2f}ms)")
                 return result_data
-                
+
             except Exception as e:
                 last_error = e
                 logger.warning(f"Tool execution failed (attempt {attempt + 1}/{max_retries}): {name} - {e}")
                 if attempt < max_retries - 1:
                     await asyncio.sleep(0.5 * (attempt + 1))  # Exponential backoff
-        
+
         # All retries failed
         duration_ms = (datetime.now() - start_time).total_seconds() * 1000
         result = ToolExecutionResult(
@@ -346,7 +415,7 @@ class ToolRegistry:
             duration_ms=duration_ms,
         )
         self._execution_history.append(result)
-        
+
         raise last_error or Exception(f"Tool execution failed: {name}")
     
     # Built-in tool handlers
