@@ -892,7 +892,41 @@ class Supervisor:
         return output
 
     async def _handle_guide_request(self, payload: InputPayload, policy: Dict) -> str:
-        return "Guide delivery logic here"
+        """Handle guide delivery request - look up guide content and format nicely."""
+        guide_id = policy.get("guide_id")
+        guide_title = policy.get("guide_title", "Hướng dẫn")
+        
+        # Try to get full guide content from KB
+        guide_content = None
+        if guide_id:
+            try:
+                from src.db import async_session
+                from src.knowledge.repository import KnowledgeBaseRepository
+                async with async_session() as session:
+                    repo = KnowledgeBaseRepository(session)
+                    guide = await repo.get_guide(guide_id)
+                    if guide:
+                        guide_content = guide.content
+            except Exception as e:
+                logger.warning("Failed to get guide from KB", guide_id=guide_id, error=str(e))
+        
+        # Format response nicely
+        if guide_content:
+            # Get first few lines as summary
+            lines = guide_content.strip().split('\n')
+            summary_lines = []
+            for line in lines[:5]:
+                line = line.strip()
+                if line:
+                    summary_lines.append(line)
+            summary = " | ".join(summary_lines) if summary_lines else guide_content[:200]
+            
+            answer = f"📖 **{guide_title}**\n\n{summary}\n\nXem chi tiết đầy đủ bên dưới:\n\n{guide_content}"
+        else:
+            # Fallback if no KB content
+            answer = f"📖 **{guide_title}**\n\nTôi không tìm thấy nội dung chi tiết cho hướng dẫn này. Bạn cần hỗ trợ thêm không?"
+        
+        return answer
 
     async def _handle_system_query(
         self,
