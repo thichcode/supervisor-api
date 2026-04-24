@@ -76,8 +76,8 @@ class ApprovalService:
         
         await self._save_approval(approval)
         
-        # Send notification to Power Automate for Teams approval request
-        await self._notify_approval_request(approval)
+        # Only notify via Teams/Telegram - NOT Power Automate
+        # Power Automate receives auto-sent responses only (confidence >= 0.9 AND kb_hit = true)
         await self._notify_telegram_approval_request(approval)
         
         logger.info(
