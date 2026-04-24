@@ -388,7 +388,16 @@ class Supervisor:
         # Check for ITC ticket request pattern early
         text_lower = payload.message.text.lower()
         if "itc" in text_lower and ("support request" in text_lower or "ticket" in text_lower or "woid" in text_lower):
-            itc_answer, itc_confidence = await self._handle_itc_ticket_request(payload)
+            itc_result = await self._handle_itc_ticket_request(payload)
+            itc_answer = itc_result.get("answer")
+            itc_confidence = itc_result.get("confidence", 0.85)
+            itc_ticket_id = itc_result.get("ticket_id")
+            
+            # Build extra_metadata with ticket_id if available
+            itc_metadata = {"itc_ticket": True}
+            if itc_ticket_id:
+                itc_metadata["itc_requestid"] = itc_ticket_id
+            
             return self._create_output(
                 payload=payload,
                 answer=itc_answer,
@@ -397,7 +406,7 @@ class Supervisor:
                 risk=risk,
                 agents_used=["itc_ticket"],
                 processing_time=start_time,
-                extra_metadata={"itc_ticket": True}
+                extra_metadata=itc_metadata
             )
 
         intent = self._classify_intent(payload, memory)
@@ -965,7 +974,7 @@ class Supervisor:
                 break
         
         if not ticket_id:
-            return ("Tôi không tìm thấy mã ticket trong tin nhắn. Bạn có thể cung cấp mã ticket không?", 0.3)
+            return {"answer": "Tôi không tìm thấy mã ticket trong tin nhắn. Bạn có thể cung cấp mã ticket không?", "confidence": 0.3, "ticket_id": None}
         
         # Try to get ticket details from n8n/ITC API
         ticket_content = None
@@ -1054,7 +1063,7 @@ Hãy đề xuất giải pháp hoặc các bước tiếp theo."""
                     logger.warning("LLM reasoning failed", error=str(e))
         
         answer = "\n".join(response_parts)
-        return (answer, 0.85)
+        return {"answer": answer, "confidence": 0.85, "ticket_id": ticket_id}
 
     async def _handle_system_query(
         self,
