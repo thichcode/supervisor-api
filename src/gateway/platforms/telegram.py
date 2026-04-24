@@ -434,7 +434,8 @@ class TelegramAdapter:
                     kb_cards = [build_kb_card(item, query=keywords) for item in kb_sources]
                     source_lines = []
                     for idx, card in enumerate(kb_cards[:3], start=1):
-                        source_lines.append(f"{idx}. {card['title']} ({card.get('source_hint', '')})")
+                        kb_id_part = f" | ID: {card['id']}" if card.get("id") else ""
+                        source_lines.append(f"{idx}. {card['title']}{kb_id_part} ({card.get('source_hint', '')})")
 
                     message_lines = ["🔄 KB Response", ""]
                     if kb_template_label:
@@ -542,11 +543,14 @@ class TelegramAdapter:
         start_index = (page - 1) * session.get("page_size", 5) + 1
         for idx, item in enumerate(results, start=start_index):
             card = build_kb_card(item, query=session.get("query"))
+            kb_id = card.get("id") or ""
             kind = (card.get("kind") or "").upper()
             category = card.get("category") or "N/A"
             similarity = card.get("similarity")
             similarity_text = f"{similarity:.2f}" if isinstance(similarity, (int, float)) else "N/A"
             body_lines.append(f"{idx}. [{kind}] {card['title']}")
+            if kb_id:
+                body_lines.append(f"   ID: {kb_id}")
             body_lines.append(f"   Category: {category} | Score: {similarity_text}")
             if card.get("template_label"):
                 body_lines.append(f"   Mẫu: {card['template_label']}")

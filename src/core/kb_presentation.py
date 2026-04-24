@@ -167,6 +167,8 @@ def build_kb_card(result: Any, query: str | None = None) -> dict[str, Any]:
 
 def format_kb_card_text(card: dict[str, Any], *, header: str = "KB phù hợp") -> str:
     lines = [f"{header}: {card.get('title') or 'KB'}"]
+    if card.get("id"):
+        lines.append(f"ID: {card['id']}")
     if card.get("template_label"):
         lines.append(f"Mẫu KB: {card['template_label']}")
     if card.get("template_hint"):
