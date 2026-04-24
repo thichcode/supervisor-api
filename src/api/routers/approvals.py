@@ -72,11 +72,20 @@ async def approve_or_reject(approval_id: str, action: ApprovalActionRequest):
     if action.action == "approve":
         await approval_service.approve(approval_id, action.reviewed_by, action.comment)
         
-        # Send final response to user via Telegram
-        from src.api.routers.approvals import send_telegram_message
-        tg_chat_id = settings.telegram_approval_chat_ids.split(",")[0].strip() if settings.telegram_approval_chat_ids else None
-        if tg_chat_id and approval.ai_response:
-            await send_telegram_message(tg_chat_id, approval.ai_response)
+        # Send final response to user via Power Automate webhook
+        from src.api.app import _auto_send_to_power_automate
+        from src.core.schemas import OutputPayload
+        
+        output_payload = OutputPayload(
+            answer=approval.ai_response,
+            confidence=approval.confidence,
+            status="approved",
+            metadata={**approval.metadata, "approved_by": action.reviewed_by}
+        )
+        try:
+            await _auto_send_to_power_automate(output_payload)
+        except Exception as e:
+            logger.warning("Failed to send to Power Automate", error=str(e))
         
         async with api_module.async_session() as session:
             interaction_service = InteractionService(session)
