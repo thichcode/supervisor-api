@@ -78,14 +78,16 @@ DB_PASSWORD=xxx
 REDIS_PASSWORD=xxx
 
 # Webhook
-WEBHOOK_INPUT_SECRET=xxx
+WEBHOOK_INPUT_SECRET=***
+JWT_SECRET=***
+HMAC_SECRET=***
+API_KEYS=***
 POWER_AUTOMATE_WEBHOOK_URL=https://xxx.azure.com/workflows/xxx
 
 # Telegram (for approval)
-TELEGRAM_BOT_TOKEN=xxx
+TELEGRAM_BOT_TOKEN=***
 TELEGRAM_APPROVAL_CHAT_IDS=xxx
 ```
-
 ### 3. Deploy with Docker Compose
 
 ```bash
@@ -207,9 +209,15 @@ alembic upgrade head
 4. Add to `.env`:
 
 ```bash
-TELEGRAM_BOT_TOKEN=123456:ABC-DEF...
+TELEGRAM_BOT_TOKEN=***
 TELEGRAM_APPROVAL_CHAT_IDS=123456789
 ```
+
+**Telegram bot commands:**
+- `/health` - check bot + supervisor health
+- `/verbose on|off|status` - stream Telegram gateway logs to the chat
+
+**Security note:** approval callback signatures use `HMAC_SECRET` so the inline buttons cannot be forged easily.
 
 ### Approval Flow
 
@@ -274,6 +282,9 @@ When reviewing an approval, click **🔍 Search KB** to:
 | `DB_PASSWORD` | Yes | PostgreSQL password |
 | `REDIS_PASSWORD` | Yes | Redis password |
 | `WEBHOOK_INPUT_SECRET` | Yes | Webhook authentication |
+| `JWT_SECRET` | Yes | JWT signing secret |
+| `HMAC_SECRET` | Yes | HMAC signing for Telegram callback data |
+| `API_KEYS` | Yes | Comma-separated API keys |
 | `POWER_AUTOMATE_WEBHOOK_URL` | Yes | Teams callback URL |
 | `LLM_PROVIDER` | Yes | `ollama`, `openai`, `azure` |
 | `LLM_MODEL` | Yes | Model name |
