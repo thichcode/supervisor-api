@@ -275,7 +275,7 @@ Trả về JSON format:
                 }
                 for r in results.results
             ]
-            clarification = kb_service.infer_clarification(query, results.results)
+            clarification = getattr(results, "clarification", {}) or {}
             return {
                 "results": formatted_results,
                 "clarification": clarification,

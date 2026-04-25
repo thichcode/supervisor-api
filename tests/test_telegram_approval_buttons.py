@@ -6,6 +6,10 @@ from src.gateway.platforms.telegram import (
     TelegramAdapter,
     build_approval_inline_keyboard,
     build_approval_message_text,
+    build_kb_candidate_callback_data,
+    build_kb_candidate_force_reply_markup,
+    parse_kb_candidate_callback_data,
+    parse_kb_candidate_text_action,
 )
 
 
@@ -392,6 +396,92 @@ async def test_handle_kb_command_search_shows_paginated_results(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_handle_kb_command_candidates_shows_pending_drafts(monkeypatch):
+    adapter = TelegramAdapter(
+        token="bot-token",
+        session_store=object(),
+        supervisor_url="http://localhost:8000",
+        api_key=None,
+    )
+
+    calls = []
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {
+                "status": "pending",
+                "limit": 5,
+                "offset": 0,
+                "total": 6,
+                "candidates": [
+                    {
+                        "candidate_id": "kb-draft-abc123",
+                        "source_request_id": "daily-kb-draft:abc123",
+                        "title": "VPN reset steps",
+                        "content": "How to reset VPN access for Windows users.",
+                        "category": "faq",
+                        "confidence_score": 0.72,
+                        "status": "pending_review",
+                    },
+                    {
+                        "candidate_id": "kb-draft-def456",
+                        "source_request_id": "daily-kb-draft:def456",
+                        "title": "SharePoint upload issue",
+                        "content": "Check file size and permissions.",
+                        "category": "guide",
+                        "confidence_score": 0.63,
+                        "status": "pending_review",
+                    },
+                ],
+            }
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def get(self, url, params=None, timeout=None):
+            calls.append((url, params, timeout))
+            return FakeResponse()
+
+        async def post(self, url, json=None, headers=None, timeout=None):
+            calls.append((url, json, headers, timeout))
+            return FakeResponse()
+
+    class FakeHttpx:
+        def AsyncClient(self, self_arg=None):
+            return FakeClient()
+
+    monkeypatch.setattr("src.gateway.platforms.telegram.httpx", FakeHttpx())
+    monkeypatch.setattr("src.gateway.platforms.telegram.secrets.token_hex", lambda n: "sess123")
+
+    sent_messages = []
+
+    async def fake_send_message(chat_id, text, reply_markup=None, parse_mode=None):
+        sent_messages.append((chat_id, text, reply_markup, parse_mode))
+
+    monkeypatch.setattr(adapter, "_send_message", fake_send_message)
+
+    await adapter._handle_command("123", "user-1", "/kb candidates pending 1")
+
+    assert calls[0][0].endswith("/knowledge/candidates")
+    assert calls[0][1] == {"status": "pending", "limit": 5, "offset": 0}
+    assert sent_messages
+    payload = sent_messages[0]
+    assert "KB Candidates" in payload[1]
+    assert "kb-draft-abc123" in payload[1]
+    assert "APPROVE kb-draft-abc123" in payload[1]
+    assert payload[2]["inline_keyboard"][0][0]["callback_data"] == "kb_candidate:approve:kb-draft-abc123:sess123:1"
+    assert payload[2]["inline_keyboard"][0][1]["callback_data"] == "kb_candidate:revise:kb-draft-abc123:sess123:1"
+    assert payload[2]["inline_keyboard"][1][0]["callback_data"] == "kb_candidate:approve:kb-draft-def456:sess123:1"
+    assert payload[2]["inline_keyboard"][2][0]["callback_data"].startswith("kb:page:sess123:")
+
+
+@pytest.mark.asyncio
 async def test_handle_kb_callback_pages_results(monkeypatch):
     adapter = TelegramAdapter(
         token="bot-token",
@@ -637,4 +727,142 @@ async def test_handle_callback_query_rejects_with_default_comment(monkeypatch, s
 
     assert result is True
     assert any(call[0] == "answer" for call in calls)
-    assert any("Reject" in str(call[-1]) for call in calls if call[0] == "edit")
+    assert any(call[0] == "edit" for call in calls)
+
+
+@pytest.mark.asyncio
+async def test_handle_kb_candidate_approve_with_list_context_refreshes_list(monkeypatch):
+    adapter = TelegramAdapter(
+        token="bot-token",
+        session_store=object(),
+        supervisor_url="http://localhost:8000",
+        api_key=None,
+    )
+    adapter._kb_sessions = {
+        "sess123": {
+            "session_id": "sess123",
+            "mode": "candidates",
+            "status": "pending",
+            "page_size": 5,
+            "user_id": "99",
+        }
+    }
+
+    recorded = []
+
+    async def fake_review(candidate_id_or_source_id, action, reviewer_id, note=None):
+        recorded.append((candidate_id_or_source_id, action, reviewer_id, note))
+        return {"candidate_id": candidate_id_or_source_id, "title": "VPN reset"}
+
+    async def fake_answer_callback_query(callback_query_id, text=None, show_alert=False):
+        recorded.append(("answer", callback_query_id, text, show_alert))
+
+    async def fake_render_kb_candidates(chat_id, session, page=1, edit_message_id=None):
+        recorded.append(("render", chat_id, session["session_id"], page, edit_message_id))
+
+    async def fake_edit_message_text(chat_id, message_id, text, reply_markup=None, parse_mode="Markdown"):
+        recorded.append(("edit", chat_id, message_id, text, reply_markup, parse_mode))
+
+    monkeypatch.setattr("src.services.kb_draft_service.review_kb_candidate", fake_review)
+    monkeypatch.setattr(adapter, "_answer_callback_query", fake_answer_callback_query)
+    monkeypatch.setattr(adapter, "_render_kb_candidates", fake_render_kb_candidates)
+    monkeypatch.setattr(adapter, "_edit_message_text", fake_edit_message_text)
+
+    approved = await adapter.handle_callback_query(
+        {
+            "id": "cb-approve-list",
+            "data": build_kb_candidate_callback_data("approve", "kb-draft-abc123", "sess123", 1),
+            "message": {"chat": {"id": "-100"}, "message_id": 88},
+            "from": {"id": 99, "first_name": "Thuong"},
+        }
+    )
+
+    assert approved is True
+    assert ("kb-draft-abc123", "approve", "Thuong", None) in recorded
+    assert ("render", "-100", "sess123", 1, 88) in recorded
+    assert not any(item[0] == "edit" for item in recorded)
+
+
+@pytest.mark.asyncio
+async def test_handle_kb_candidate_revise_with_context_refreshes_list_after_note(monkeypatch):
+    adapter = TelegramAdapter(
+        token="bot-token",
+        session_store=object(),
+        supervisor_url="http://localhost:8000",
+        api_key=None,
+    )
+    adapter._kb_sessions = {
+        "sess123": {
+            "session_id": "sess123",
+            "mode": "candidates",
+            "status": "pending",
+            "page_size": 5,
+            "user_id": "99",
+        }
+    }
+
+    recorded = []
+
+    async def fake_review(candidate_id_or_source_id, action, reviewer_id, note=None):
+        recorded.append((candidate_id_or_source_id, action, reviewer_id, note))
+        return {"candidate_id": candidate_id_or_source_id, "title": "VPN reset"}
+
+    async def fake_send_message(chat_id, text, reply_markup=None, parse_mode="Markdown"):
+        recorded.append(("send", chat_id, text, reply_markup, parse_mode))
+
+    async def fake_answer_callback_query(callback_query_id, text=None, show_alert=False):
+        recorded.append(("answer", callback_query_id, text, show_alert))
+
+    async def fake_render_kb_candidates(chat_id, session, page=1, edit_message_id=None):
+        recorded.append(("render", chat_id, session["session_id"], page, edit_message_id))
+
+    monkeypatch.setattr("src.services.kb_draft_service.review_kb_candidate", fake_review)
+    monkeypatch.setattr(adapter, "_send_message", fake_send_message)
+    monkeypatch.setattr(adapter, "_answer_callback_query", fake_answer_callback_query)
+    monkeypatch.setattr(adapter, "_render_kb_candidates", fake_render_kb_candidates)
+
+    revising = await adapter.handle_callback_query(
+        {
+            "id": "cb-revise-list",
+            "data": build_kb_candidate_callback_data("revise", "kb-draft-xyz987", "sess123", 1),
+            "message": {"chat": {"id": "-100"}, "message_id": 89},
+            "from": {"id": 99, "first_name": "Thuong"},
+        }
+    )
+    assert revising is True
+    assert adapter._pending_kb_revision["-100"]["candidate_id"] == "kb-draft-xyz987"
+    assert adapter._pending_kb_revision["-100"]["session_id"] == "sess123"
+
+    recorded.clear()
+    handled = await adapter._handle_update(
+        {
+            "message": {
+                "from": {"id": 99, "first_name": "Thuong"},
+                "chat": {"id": -100, "type": "group"},
+                "text": "Cần bổ sung host path",
+            }
+        }
+    )
+
+    assert handled is None
+    assert ("kb-draft-xyz987", "revise", "99", "Cần bổ sung host path") in recorded
+    assert ("render", "-100", "sess123", 1, 89) in recorded
+
+
+def test_kb_candidate_text_parsers():
+    assert parse_kb_candidate_callback_data("kb_candidate:approve:kb-draft-1") == ("approve", "kb-draft-1", None, None)
+    assert parse_kb_candidate_callback_data("kb_candidate:revise:kb-draft-2") == ("revise", "kb-draft-2", None, None)
+    assert parse_kb_candidate_callback_data("kb_candidate:approve:kb-draft-3:sess123:2") == (
+        "approve",
+        "kb-draft-3",
+        "sess123",
+        2,
+    )
+    assert build_kb_candidate_callback_data("approve", "kb-draft-3", "sess123", 2) == "kb_candidate:approve:kb-draft-3:sess123:2"
+    assert parse_kb_candidate_text_action("APPROVE kb-draft-1") == ("approve", "kb-draft-1", "")
+    assert parse_kb_candidate_text_action("REVISE kb-draft-2: add more context") == (
+        "revise",
+        "kb-draft-2",
+        "add more context",
+    )
+    assert build_kb_candidate_force_reply_markup("kb-draft-1")["kb_candidate_id"] == "kb-draft-1"

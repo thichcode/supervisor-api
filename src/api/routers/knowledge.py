@@ -1,6 +1,6 @@
 
 from fastapi import APIRouter, HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from src.db import async_session
 from src.knowledge.schemas import (
@@ -41,6 +41,54 @@ async def search_knowledge(request: KnowledgeSearchRequest):
             limit=request.limit,
             offset=request.offset,
         )
+
+
+@router.get("/candidates")
+async def list_knowledge_candidates(status: str = "pending", limit: int = 10, offset: int = 0):
+    """List KB candidates for review, newest first."""
+    from src.db.models import KnowledgeCandidate
+
+    async with async_session() as session:
+        status_filter = (status or "pending").strip().lower()
+        query = select(KnowledgeCandidate)
+        if status_filter and status_filter != "all":
+            query = query.where(func.lower(KnowledgeCandidate.status) == status_filter)
+        total_result = await session.execute(
+            select(func.count()).select_from(query.subquery())
+        )
+        total = int(total_result.scalar_one() or 0)
+        rows_result = await session.execute(
+            query.order_by(KnowledgeCandidate.created_at.desc()).limit(max(1, min(limit, 50))).offset(max(0, offset))
+        )
+        rows = rows_result.scalars().all()
+        return {
+            "status": status_filter or "all",
+            "limit": max(1, min(limit, 50)),
+            "offset": max(0, offset),
+            "total": total,
+            "candidates": [
+                {
+                    "id": row.id,
+                    "candidate_id": ("kb-draft-" + (row.source_request_id or "").split(":", 1)[1]) if (row.source_request_id or "").startswith("daily-kb-draft:") else row.source_request_id,
+                    "source_request_id": row.source_request_id,
+                    "source_thread_id": row.source_thread_id,
+                    "ticket_id": row.ticket_id,
+                    "ticket_system": row.ticket_system,
+                    "title": row.extracted_title,
+                    "content": row.extracted_content,
+                    "category": row.category,
+                    "tags": row.tags or [],
+                    "confidence_score": row.confidence_score,
+                    "status": row.status,
+                    "reviewer_id": row.reviewer_id,
+                    "review_note": row.review_note,
+                    "created_at": row.created_at.isoformat() if row.created_at else None,
+                    "reviewed_at": row.reviewed_at.isoformat() if row.reviewed_at else None,
+                    "promoted_at": row.promoted_at.isoformat() if row.promoted_at else None,
+                }
+                for row in rows
+            ],
+        }
 
 
 @router.post("/policies")

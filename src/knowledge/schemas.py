@@ -106,6 +106,7 @@ class KnowledgeSearchResponse(BaseModel):
     template_label: str = ""
     template_score: float = 0.0
     template_terms: List[str] = Field(default_factory=list)
+    clarification: dict = Field(default_factory=dict)
 
 
 class KnowledgeStats(BaseModel):

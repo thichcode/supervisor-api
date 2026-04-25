@@ -499,6 +499,31 @@ class TestSupervisor:
 
 
     @pytest.mark.asyncio
+    async def test_process_returns_image_clarification_when_ocr_missing(self, sample_payload, sample_context):
+        from src.core.supervisor import Supervisor
+
+        sample_payload.message.text = ""
+        sample_payload.message.attachments = [
+            {
+                "type": "image",
+                "name": "screenshot.png",
+                "content_type": "image/png",
+            }
+        ]
+
+        supervisor = Supervisor()
+        supervisor.set_llm(None)
+        supervisor._fetch_urls = AsyncMock(return_value="")
+
+        result = await supervisor.process(sample_payload, sample_context)
+
+        assert result.status == "needs_clarification"
+        assert result.metadata["image_case"] is True
+        assert result.metadata["has_image_attachments"] is True
+        assert result.metadata["image_case_signature"]
+        assert "ảnh đính kèm" in result.answer.lower() or "ảnh" in result.answer.lower()
+
+    @pytest.mark.asyncio
     async def test_process_returns_kb_clarification_when_context_missing(self, sample_payload, sample_context, monkeypatch):
         from src.core.supervisor import Supervisor
 

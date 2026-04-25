@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from src.api.app import _chat_context_from_payload
+from src.api.app import _chat_context_from_payload, _extract_attachment_evidence
 from src.core.conversation_continuity import ConversationContinuityEvaluator
 from src.core.schemas import ConversationInfo, InputPayload, MessageInfo, UserInfo
 from src.memory.service import MemoryContext, MemoryService
@@ -181,6 +181,68 @@ async def test_memory_context_includes_conversation_state_text():
     assert "Conversation Mode: continuation" in text
     assert "Continuity Score: 0.83" in text
     assert "conversation_state" in as_dict
+
+
+@pytest.mark.asyncio
+async def test_extract_attachment_evidence_uses_inline_ocr_text():
+    payload = InputPayload(
+        request_id="req-image-1",
+        source="ms_teams",
+        timestamp="2026-04-25T08:00:00Z",
+        user=UserInfo(id="u1", display_name="Thuong"),
+        conversation=ConversationInfo(thread_id="thread-image-1", message_id="msg-image-1"),
+        message=MessageInfo(
+            text="",
+            attachments=[
+                {
+                    "type": "image",
+                    "name": "error.png",
+                    "content_type": "image/png",
+                    "ocr_text": "Error code 720 - VPN connection failed",
+                }
+            ],
+        ),
+    )
+
+    evidence = await _extract_attachment_evidence(payload)
+
+    assert evidence["attachment_count"] == 1
+    assert evidence["has_images"] is True
+    assert "error.png" in evidence["attachment_summary"]
+    assert "Error code 720" in evidence["attachment_text"]
+    assert evidence["attachments"][0]["ocr_text"].startswith("Error code 720")
+    assert evidence["issue_signature"]
+    assert evidence["needs_clarification"] is False
+
+
+@pytest.mark.asyncio
+async def test_extract_attachment_evidence_flags_missing_image_context():
+    payload = InputPayload(
+        request_id="req-image-2",
+        source="ms_teams",
+        timestamp="2026-04-25T08:10:00Z",
+        user=UserInfo(id="u1", display_name="Thuong"),
+        conversation=ConversationInfo(thread_id="thread-image-2", message_id="msg-image-2"),
+        message=MessageInfo(
+            text="",
+            attachments=[
+                {
+                    "type": "image",
+                    "name": "blank.png",
+                    "content_type": "image/png",
+                }
+            ],
+        ),
+    )
+
+    evidence = await _extract_attachment_evidence(payload)
+
+    assert evidence["attachment_count"] == 1
+    assert evidence["has_images"] is True
+    assert evidence["has_actionable_text"] is False
+    assert evidence["needs_clarification"] is True
+    assert evidence["clarification_hint"]
+    assert evidence["issue_signature"] == "blank png" or evidence["issue_signature"]
 
 
 @pytest.mark.asyncio

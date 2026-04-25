@@ -31,6 +31,10 @@ def _classify_traffic(row) -> tuple[str, str]:
     return traffic_class, "heuristic_fallback"
 
 
+def _rate(count: int, total: int) -> float:
+    return round(count / total * 100, 1) if total else 0
+
+
 def _summarize_interactions(interactions: list) -> dict:
     total_interactions = len(interactions)
     kb_hit_count = sum(1 for row in interactions if (row.kb_hit_count or 0) > 0)
@@ -124,9 +128,10 @@ async def _load_dashboard_snapshot(days: int = 7) -> dict:
         service_total = service_overview["total_interactions"]
         raw_total = raw_overview["total_interactions"]
         casual_total = len(casual_interactions)
-        service_like_rate = round(service_total / raw_total * 100, 1) if raw_total else 0
-        casual_unknown_rate = round(casual_total / raw_total * 100, 1) if raw_total else 0
-
+        service_like_rate = _rate(service_total, raw_total)
+        casual_unknown_rate = _rate(casual_total, raw_total)
+        raw_kb_hit_rate = raw_overview["kb_hit_rate"]
+        service_kb_hit_rate = service_overview["kb_hit_rate"]
         pending_count = sum(1 for a in approvals if getattr(a, "status", "") == "pending")
         approved_count = sum(1 for a in approvals if getattr(a, "status", "") == "approved")
         rejected_count = sum(1 for a in approvals if getattr(a, "status", "") == "rejected")
@@ -161,7 +166,7 @@ async def _load_dashboard_snapshot(days: int = 7) -> dict:
         boss_summary = [
             f"Trong {days} ngày gần nhất có {raw_total} interaction(s) raw, trong đó {service_total} service-like và {casual_total} casual/unknown.",
             f"Service-like rate: {service_like_rate}% | Casual/unknown rate: {casual_unknown_rate}%.",
-            f"KB hit rate (service-like): {service_overview['kb_hit_rate']}% | Auto-send: {service_overview['auto_send_rate']}% | Skip: {service_overview['skip_rate']}% | Needs review: {service_overview['needs_review_rate']}%.",
+            f"KB hit rate (service-like): {service_kb_hit_rate}% | KB hit rate (all traffic): {raw_kb_hit_rate}% | Auto-send: {service_overview['auto_send_rate']}% | Skip: {service_overview['skip_rate']}% | Needs review: {service_overview['needs_review_rate']}%.",
             f"Average confidence (service-like): {service_overview['avg_confidence']}% | Average latency: {service_overview['avg_latency_ms']} ms.",
             f"Approval queue: pending={pending_count}, approved={approved_count}, rejected={rejected_count}, approve_rate={approve_rate}%.",
         ]
@@ -181,6 +186,8 @@ async def _load_dashboard_snapshot(days: int = 7) -> dict:
                     "casual_unknown_rate": casual_unknown_rate,
                     "service_signal_reasons": dict(service_signal_reasons),
                 },
+                "raw_kb_hit_rate": raw_kb_hit_rate,
+                "service_kb_hit_rate": service_kb_hit_rate,
                 "approvals": {
                     "pending": pending_count,
                     "approved": approved_count,
@@ -209,7 +216,9 @@ async def _load_dashboard_snapshot(days: int = 7) -> dict:
                     "avg_processing_time_sec": service_overview["avg_latency_sec"],
                 },
                 "efficiency": {
-                    "kb_hit_rate": service_overview["kb_hit_rate"],
+                    "kb_hit_rate": service_kb_hit_rate,
+                    "kb_hit_rate_service_like": service_kb_hit_rate,
+                    "kb_hit_rate_all_traffic": raw_kb_hit_rate,
                     "approval_required_rate": service_overview["approval_required_rate"],
                     "skip_rate": service_overview["skip_rate"],
                     "auto_send_rate": service_overview["auto_send_rate"],
@@ -274,18 +283,23 @@ async def dashboard_html(days: int = Query(default=7, ge=1, le=90)):
     rejected = approvals.get("rejected", 0)
     avg_conf = ai_quality.get("avg_confidence", 0)
     auto_send = overview.get("auto_sent", 0)
-    total_interactions = overview.get("total_interactions", 0)
+    service_overview = snapshot.get("service_overview", overview)
+    raw_overview = snapshot.get("raw_overview", {})
     sat_rate = user_satisfaction.get("satisfaction_rate", 0)
     total_votes = user_satisfaction.get("total_votes", 0)
     votes_agree = user_satisfaction.get("agree", 0)
     votes_change = user_satisfaction.get("change", 0)
     votes_skip = user_satisfaction.get("skip", 0)
     approve_rate = approvals.get("approve_rate", 0)
-    kb_hit_rate = efficiency.get("kb_hit_rate", 0)
+    kb_hit_rate = efficiency.get("kb_hit_rate_service_like", efficiency.get("kb_hit_rate", 0))
+    raw_kb_hit_rate = efficiency.get("kb_hit_rate_all_traffic", snapshot.get("raw_kb_hit_rate", 0))
     approval_required_rate = efficiency.get("approval_required_rate", 0)
     skip_rate = efficiency.get("skip_rate", 0)
     review_rate = efficiency.get("needs_review_rate", 0)
     avg_latency_ms = efficiency.get("avg_latency_ms", 0)
+    raw_total_interactions = raw_overview.get("total_interactions", 0)
+    service_total_interactions = service_overview.get("total_interactions", 0)
+    total_interactions = raw_total_interactions
 
     intent_rows = "".join(
         f'<div class="metric-row"><span class="label">{item.get("intent")}</span><span class="val">{item.get("count")}</span></div>'
@@ -358,10 +372,10 @@ async def dashboard_html(days: int = Query(default=7, ge=1, le=90)):
         </div>
 
         <div class="stats-grid">
-            <div class="stat-card green"><h3>📨 Total Interactions</h3><div class="value">{total_interactions}</div><div class="sub">Tổng requests trong window</div></div>
+            <div class="stat-card green"><h3>📨 Total Interactions</h3><div class="value">{total_interactions}</div><div class="sub">Raw window total | Service-like: {service_total_interactions}</div></div>
             <div class="stat-card blue"><h3>✅ Auto Send Rate</h3><div class="value">{overview.get('auto_send_rate', 0)}%</div><div class="sub">Đã gửi tự động</div></div>
             <div class="stat-card purple"><h3>🤖 Avg Confidence</h3><div class="value">{avg_conf}%</div><div class="sub">Confidence trung bình</div></div>
-            <div class="stat-card yellow"><h3>🔎 KB Hit Rate</h3><div class="value">{kb_hit_rate}%</div><div class="sub">Có evidence KB</div></div>
+            <div class="stat-card yellow"><h3>🔎 KB Hit Rate</h3><div class="value">{kb_hit_rate}%</div><div class="sub">Service-like only | Raw: {raw_kb_hit_rate}%</div></div>
             <div class="stat-card red"><h3>📝 Approval Rate</h3><div class="value">{approval_required_rate}%</div><div class="sub">Cần duyệt trước khi gửi</div></div>
             <div class="stat-card blue"><h3>⚡ Avg Latency</h3><div class="value">{avg_latency_ms:.0f}ms</div><div class="sub">Thời gian xử lý trung bình</div></div>
         </div>
@@ -370,7 +384,10 @@ async def dashboard_html(days: int = Query(default=7, ge=1, le=90)):
             <div class="chart-card"><h3>📋 Approval Status</h3><canvas id="approvalChart"></canvas></div>
             <div class="chart-card">
                 <h3>📈 Efficiency Metrics</h3>
-                <div class="metric-row"><span class="label">KB Hit Rate</span><span class="val">{kb_hit_rate}%</span></div>
+                <div class="metric-row"><span class="label">KB Hit Rate (service-like)</span><span class="val">{kb_hit_rate}%</span></div>
+                <div class="metric-row"><span class="label">KB Hit Rate (raw)</span><span class="val">{raw_kb_hit_rate}%</span></div>
+                <div class="metric-row"><span class="label">Service-like Interactions</span><span class="val">{service_total_interactions}</span></div>
+                <div class="metric-row"><span class="label">Raw Interactions</span><span class="val">{raw_total_interactions}</span></div>
                 <div class="metric-row"><span class="label">Approval Required</span><span class="val">{approval_required_rate}%</span></div>
                 <div class="metric-row"><span class="label">Auto Send</span><span class="val">{overview.get('auto_send_rate', 0)}%</span></div>
                 <div class="metric-row"><span class="label">Skip Rate</span><span class="val">{skip_rate}%</span></div>

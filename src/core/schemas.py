@@ -80,9 +80,23 @@ class CaseInfo(BaseModel):
     owner: Optional[str] = None
 
 
+class AttachmentInfo(BaseModel):
+    type: str = Field(default="file", description="Attachment type such as image, file, audio, video")
+    name: Optional[str] = None
+    content_type: Optional[str] = None
+    url: Optional[str] = None
+    content_url: Optional[str] = None
+    file_url: Optional[str] = None
+    base64_data: Optional[str] = None
+    ocr_text: Optional[str] = None
+    text: Optional[str] = None
+    metadata: dict = Field(default_factory=dict)
+
+
 class MessageInfo(BaseModel):
     text: str
     timestamp: datetime = Field(default_factory=utc_now)
+    attachments: list[AttachmentInfo] = Field(default_factory=list)
 
 
 class InputPayload(BaseModel):
@@ -166,7 +180,8 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     request_id: str
     status: str
-    message: str
+    customer_reply: str = Field(description="Reply to send to the customer")
+    internal_note: Optional[str] = Field(default="", description="Internal note for support team (not sent to customer)")
     message_type: MessageType
     confidence: float
     attachments: list[dict] = Field(default_factory=list)

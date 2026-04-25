@@ -6,8 +6,13 @@ paths are preserved via compatibility exports in ``src.api`` and ``src/api.py``.
 
 from contextlib import asynccontextmanager
 import asyncio
+import base64
+import os
+import re
+import tempfile
 import time
-from typing import Optional
+from pathlib import Path
+from typing import Optional, Any
 
 import structlog
 from fastapi import FastAPI, HTTPException, Header, Request
@@ -15,6 +20,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
+from sqlalchemy import select
 
 from src.config import get_settings
 from src.core import InputPayload, OutputPayload
@@ -23,7 +29,7 @@ from src.core.logging_config import setup_logging, RequestLogger
 from src.core.metrics import metrics
 from src.core.sanitizer import sanitizer
 from src.core.supervisor import Supervisor
-from src.db import init_db, close_db, async_session
+from src.db import init_db, close_db, async_session, InteractionLog
 from src.harness import HarnessSupervisorBridge
 from src.llm import llm_client
 from src.memory import redis_cache
@@ -69,9 +75,337 @@ def _chat_context_from_payload(payload: InputPayload) -> dict:
     }
 
 
+
+def _attachment_value(attachment: Any, key: str, default: Any = None) -> Any:
+    if hasattr(attachment, key):
+        return getattr(attachment, key, default)
+    if isinstance(attachment, dict):
+        return attachment.get(key, default)
+    return default
+
+
+
+def _attachment_name(attachment: Any, index: int) -> str:
+    name = _attachment_value(attachment, "name") or _attachment_value(attachment, "filename")
+    if name:
+        return str(name)
+    url = _attachment_value(attachment, "url") or _attachment_value(attachment, "content_url") or _attachment_value(attachment, "file_url")
+    if url:
+        try:
+            return Path(str(url)).name or f"attachment-{index}"
+        except Exception:
+            return f"attachment-{index}"
+    return f"attachment-{index}"
+
+
+
+def _attachment_content_type(attachment: Any) -> str:
+    return str(_attachment_value(attachment, "content_type") or _attachment_value(attachment, "mime_type") or "").strip().lower()
+
+
+
+def _attachment_url(attachment: Any) -> str:
+    for key in ("url", "content_url", "file_url"):
+        value = _attachment_value(attachment, key)
+        if value:
+            return str(value).strip()
+    return ""
+
+
+
+def _attachment_is_image(attachment: Any) -> bool:
+    attachment_type = str(_attachment_value(attachment, "type") or "").strip().lower()
+    content_type = _attachment_content_type(attachment)
+    name = _attachment_name(attachment, 0).lower()
+    return (
+        attachment_type in {"image", "photo", "picture"}
+        or content_type.startswith("image/")
+        or name.endswith((".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".tiff", ".tif"))
+    )
+
+
+
+def _guess_suffix_from_attachment(attachment: Any, fallback: str = ".bin") -> str:
+    name = _attachment_name(attachment, 0)
+    suffix = Path(name).suffix.lower()
+    if suffix:
+        return suffix
+    content_type = _attachment_content_type(attachment)
+    mapping = {
+        "image/png": ".png",
+        "image/jpeg": ".jpg",
+        "image/jpg": ".jpg",
+        "image/webp": ".webp",
+        "image/gif": ".gif",
+        "image/bmp": ".bmp",
+        "image/tiff": ".tif",
+        "application/pdf": ".pdf",
+    }
+    return mapping.get(content_type, fallback)
+
+
+_IMAGE_SIGNATURE_STOPWORDS = {
+    "attachment",
+    "attachments",
+    "image",
+    "screenshot",
+    "photo",
+    "picture",
+    "file",
+    "files",
+    "error",
+    "failed",
+    "fail",
+    "issue",
+    "problem",
+    "please",
+    "send",
+    "forwarded",
+    "attachment",
+    "evidence",
+    "ocr",
+    "text",
+    "the",
+    "and",
+    "for",
+    "with",
+    "from",
+    "this",
+    "that",
+    "và",
+    "cho",
+    "mình",
+    "tôi",
+    "của",
+    "đang",
+    "lỗi",
+    "ảnh",
+    "hình",
+}
+
+
+def _normalize_issue_signature(*parts: str) -> str:
+    combined = " ".join(part for part in parts if part)
+    tokens = re.findall(r"[\wÀ-ỹ0-9]+", combined.lower(), flags=re.UNICODE)
+    kept: list[str] = []
+    for token in tokens:
+        token = token.strip()
+        if not token or len(token) == 1:
+            continue
+        if token in _IMAGE_SIGNATURE_STOPWORDS:
+            continue
+        if token not in kept:
+            kept.append(token)
+    return " ".join(kept[:12])
+
+
+async def _extract_attachment_evidence(payload: InputPayload) -> dict[str, Any]:
+    attachments = list(payload.message.attachments or [])
+    if not attachments:
+        return {
+            "attachment_count": 0,
+            "attachments": [],
+            "attachment_summary": "",
+            "attachment_text": "",
+            "has_images": False,
+            "issue_signature": "",
+            "has_actionable_text": False,
+            "needs_clarification": False,
+            "clarification_hint": "",
+            "image_case": False,
+        }
+
+    extracted: list[dict[str, Any]] = []
+    attachment_text_parts: list[str] = []
+    has_images = False
+
+    from src.tools.file_processor import get_file_processor
+
+    processor = get_file_processor()
+
+    for idx, attachment in enumerate(attachments[:5], start=1):
+        attachment_dict = attachment.model_dump() if hasattr(attachment, "model_dump") else dict(attachment)
+        attachment_name = _attachment_name(attachment, idx)
+        attachment_type = str(attachment_dict.get("type") or "file").strip().lower()
+        content_type = _attachment_content_type(attachment)
+        attachment_url = _attachment_url(attachment)
+        inline_text = str(attachment_dict.get("ocr_text") or attachment_dict.get("text") or "").strip()
+        metadata = attachment_dict.get("metadata") or {}
+        item: dict[str, Any] = {
+            "index": idx,
+            "name": attachment_name,
+            "type": attachment_type,
+            "content_type": content_type,
+            "url": attachment_url,
+            "metadata": metadata,
+        }
+
+        local_path: Optional[str] = None
+        temp_path: Optional[Path] = None
+        try:
+            if inline_text:
+                item["text"] = inline_text
+                item["ocr_text"] = inline_text
+                attachment_text_parts.append(f"[{idx}] {attachment_name}: {inline_text[:1200]}")
+
+            if _attachment_is_image(attachment):
+                has_images = True
+
+            # Prefer explicit OCR text when provided by Power Automate/n8n.
+            if inline_text:
+                item["ocr_text"] = inline_text
+            elif _attachment_is_image(attachment):
+                if attachment_url:
+                    import httpx
+
+                    async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+                        response = await client.get(attachment_url)
+                        response.raise_for_status()
+                        fd, tmp_name = tempfile.mkstemp(prefix="supervisor-attachment-", suffix=_guess_suffix_from_attachment(attachment))
+                        os.close(fd)
+                        temp_path = Path(tmp_name)
+                        temp_path.write_bytes(response.content)
+                        local_path = str(temp_path)
+                else:
+                    base64_data = attachment_dict.get("base64_data") or attachment_dict.get("content_base64")
+                    if base64_data:
+                        raw = str(base64_data).split(",", 1)[-1]
+                        decoded = base64.b64decode(raw)
+                        fd, tmp_name = tempfile.mkstemp(prefix="supervisor-attachment-", suffix=_guess_suffix_from_attachment(attachment))
+                        os.close(fd)
+                        temp_path = Path(tmp_name)
+                        temp_path.write_bytes(decoded)
+                        local_path = str(temp_path)
+
+                if local_path:
+                    file_content = processor.process_file(local_path)
+                    extracted_text = (file_content.content or "").strip()
+                    if extracted_text:
+                        item["ocr_text"] = extracted_text
+                        attachment_text_parts.append(f"[{idx}] {attachment_name}: {extracted_text[:1200]}")
+                elif attachment_url:
+                    item["url"] = attachment_url
+
+            if not item.get("ocr_text") and attachment_url:
+                attachment_text_parts.append(f"[{idx}] {attachment_name}: {attachment_url}")
+
+        except Exception as exc:
+            item["error"] = str(exc)
+        finally:
+            if temp_path and temp_path.exists():
+                try:
+                    temp_path.unlink()
+                except Exception:
+                    pass
+
+        extracted.append(item)
+
+    attachment_summary = "; ".join(
+        [
+            f"{item['name']} ({item.get('content_type') or item.get('type') or 'file'})"
+            for item in extracted[:5]
+        ]
+    )
+    attachment_text = "\n".join(attachment_text_parts).strip()
+    issue_signature = _normalize_issue_signature(
+        payload.message.text,
+        attachment_text,
+        attachment_summary,
+        " ".join(item.get("ocr_text", "") for item in extracted),
+    )
+    has_actionable_text = any(item.get("ocr_text") for item in extracted)
+    needs_clarification = bool(has_images and not has_actionable_text and not payload.message.text.strip())
+    clarification_hint = (
+        "Mình thấy ảnh đính kèm nhưng chưa đọc được đủ nội dung. Bạn gửi lại ảnh rõ hơn hoặc chép lại mã lỗi / bước đang bị kẹt nhé."
+        if needs_clarification
+        else ""
+    )
+    return {
+        "attachment_count": len(attachments),
+        "attachments": extracted,
+        "attachment_summary": attachment_summary,
+        "attachment_text": attachment_text,
+        "has_images": has_images,
+        "issue_signature": issue_signature,
+        "has_actionable_text": has_actionable_text,
+        "needs_clarification": needs_clarification,
+        "clarification_hint": clarification_hint,
+        "image_case": bool(has_images),
+    }
+
+
+async def _maybe_draft_image_case_candidate(
+    session,
+    payload: InputPayload,
+    result: OutputPayload,
+    attachment_evidence: dict[str, Any],
+) -> dict[str, Any] | None:
+    issue_signature = (attachment_evidence.get("issue_signature") or "").strip()
+    if not issue_signature or not attachment_evidence.get("has_images"):
+        return None
+    if bool((result.metadata or {}).get("kb_hit")):
+        return None
+
+    signature_terms = issue_signature.split()
+    if len(signature_terms) < 2:
+        return None
+    signature_fragment = " ".join(signature_terms[:4])
+
+    recent_query = (
+        select(InteractionLog)
+        .where(
+            InteractionLog.traffic_class == "service_like",
+            (InteractionLog.kb_hit_count == None) | (InteractionLog.kb_hit_count == 0),
+            InteractionLog.input_text.ilike(f"%{signature_fragment}%"),
+        )
+        .order_by(InteractionLog.created_at.desc())
+        .limit(5)
+    )
+    rows = (await session.execute(recent_query)).scalars().all()
+    if len(rows) < 2:
+        return None
+
+    from src.services.kb_draft_service import KBDraftService, MissPattern, MissSample
+
+    samples = [
+        MissSample(
+            request_id=row.request_id,
+            created_at=row.created_at.isoformat() if row.created_at else None,
+            thread_id=row.thread_id,
+            user_id=row.user_id,
+            intent=row.intent or "unknown",
+            confidence_score=row.confidence_score,
+            kb_hit_count=row.kb_hit_count or 0,
+            input_text=row.input_text[:220],
+            output_text=(row.output_text or "")[:220],
+        )
+        for row in rows[:3]
+    ]
+    miss = MissPattern(
+        pattern=issue_signature,
+        normalized_pattern=_normalize_issue_signature(issue_signature),
+        count=len(rows),
+        samples=samples,
+    )
+    draft_service = KBDraftService(
+        session,
+        telegram_bot_token=settings.telegram_bot_token or "",
+        telegram_chat_ids=settings.telegram_approval_chat_ids or "",
+    )
+    draft = await draft_service.build_draft(miss)
+    if not draft:
+        return None
+    return {
+        "candidate_id": draft.candidate_id,
+        "source_request_id": draft.source_request_id,
+        "title": draft.title,
+        "count": draft.miss_count,
+    }
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global feedback_worker_task
+
     import structlog
 
     logger = structlog.get_logger()
@@ -194,13 +528,31 @@ async def receive_webhook(
             metrics.record_error("auth_failed", "webhook/n8n")
             raise HTTPException(status_code=401, detail="Invalid webhook secret")
 
-        original_text = payload.message.text
+        original_text = payload.message.text or ""
+        attachment_evidence = await _extract_attachment_evidence(payload)
+        has_attachments = attachment_evidence.get("attachment_count", 0) > 0
         is_valid, error_msg = sanitizer.validate_input(original_text)
-        if not is_valid:
-            metrics.record_error("input_validation", "webhook/n8n")
-            raise HTTPException(status_code=400, detail=f"Invalid input: {error_msg}")
+        if not original_text.strip() and not has_attachments:
+            if not is_valid:
+                metrics.record_error("input_validation", "webhook/n8n")
+                raise HTTPException(status_code=400, detail=f"Invalid input: {error_msg}")
+        elif not original_text.strip() and has_attachments:
+            is_valid = True
 
-        payload.message.text = sanitizer.sanitize(original_text)
+        combined_text_parts = []
+        if original_text.strip():
+            combined_text_parts.append(original_text.strip())
+        if attachment_evidence.get("attachment_text"):
+            combined_text_parts.append(f"[Attachment evidence]\n{attachment_evidence['attachment_text']}")
+        elif has_attachments and attachment_evidence.get("attachment_summary"):
+            combined_text_parts.append(f"[Attachments]\n{attachment_evidence['attachment_summary']}")
+        if attachment_evidence.get("issue_signature"):
+            combined_text_parts.append(f"[Image issue signature]\n{attachment_evidence['issue_signature']}")
+        if attachment_evidence.get("clarification_hint"):
+            combined_text_parts.append(f"[Image clarification hint]\n{attachment_evidence['clarification_hint']}")
+        effective_text = "\n\n".join(combined_text_parts).strip() or original_text.strip()
+
+        payload.message.text = sanitizer.sanitize(effective_text or original_text)
         start_time = time.time()
         chat_context = _chat_context_from_payload(payload)
         request_logger.log_request_received(
@@ -212,7 +564,13 @@ async def receive_webhook(
             interaction_service = InteractionService(session)
             memory = await memory_service.retrieve(payload)
             result = await api_module.supervisor.process(payload, memory)
-            result.metadata = {**(result.metadata or {}), **chat_context}
+            result.metadata = {
+                **(result.metadata or {}),
+                **chat_context,
+                "original_text": original_text,
+                "has_attachments": has_attachments,
+                "attachment_evidence": attachment_evidence,
+            }
             await memory_service.commit(
                 payload,
                 memory_snapshot=memory,
@@ -247,6 +605,14 @@ async def receive_webhook(
                 ticket_system=payload.case.ticket_system if payload.case else None,
                 extra_metadata=result.metadata or {},
             )
+            image_candidate = None
+            if attachment_evidence.get("image_case") and not (result.metadata or {}).get("kb_hit"):
+                image_candidate = await _maybe_draft_image_case_candidate(session, payload, result, attachment_evidence)
+                if image_candidate:
+                    result.metadata = {
+                        **(result.metadata or {}),
+                        "image_case_candidate": image_candidate,
+                    }
             await session.commit()
 
             if result.status == "needs_review":

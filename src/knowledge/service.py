@@ -65,6 +65,7 @@ class KnowledgeRetrievalService:
 
         total_results = len(results)
         page_results = results[max(0, offset):max(0, offset) + limit]
+        clarification = self.infer_clarification(query, results)
 
         return KnowledgeSearchResponse(
             results=page_results,
@@ -75,12 +76,14 @@ class KnowledgeRetrievalService:
             template_label=template_match.label if template_match else "",
             template_score=template_match.score if template_match else 0.0,
             template_terms=list(template_match.matched_terms) if template_match else [],
+            clarification=clarification,
         )
 
     def infer_clarification(
         self,
         query: str,
         results: List[KnowledgeSearchResult],
+        record_metrics: bool = True,
     ) -> dict:
         """Infer whether the KB match is too vague and needs more user details."""
         if not results:
@@ -114,7 +117,8 @@ class KnowledgeRetrievalService:
             }
 
         clarification_question = self._build_clarification_question(top, missing_fields)
-        metrics.record_kb_clarification(top.knowledge_type.value, "missing_context")
+        if record_metrics:
+            metrics.record_kb_clarification(top.knowledge_type.value, "missing_context")
         return {
             "needs_clarification": True,
             "missing_fields": missing_fields,
@@ -168,7 +172,7 @@ class KnowledgeRetrievalService:
     def _missing_fields(self, query: str, required_fields: List[str]) -> List[str]:
         normalized = (query or "").lower()
         synonyms = {
-            "error_message": ["lỗi", "error", "message", "thông báo"],
+            "error_message": ["lỗi", "error", "message", "thông báo", "issue", "problem"],
             "error_code": ["code", "mã lỗi", "error code"],
             "system": ["hệ thống", "system", "app", "application", "dịch vụ", "service"],
             "environment": ["prod", "production", "dev", "staging", "môi trường", "env"],

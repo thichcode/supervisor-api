@@ -161,6 +161,97 @@ def build_kb_force_reply_markup(approval_id: str) -> Dict[str, Any]:
     }
 
 
+
+def build_kb_candidate_force_reply_markup(candidate_id: str) -> Dict[str, Any]:
+    """Build a ForceReply payload for KB candidate revision notes."""
+    return {
+        "force_reply": True,
+        "input_field_placeholder": "Nhập lý do revise / bổ sung cho KB candidate...",
+        "selective": True,
+        "kb_candidate_id": candidate_id,
+    }
+
+
+
+def build_kb_candidate_revision_prompt(candidate_id: str) -> str:
+    return (
+        "📝 Revise KB Candidate\n\n"
+        f"Candidate ID: {candidate_id}\n\n"
+        "Nhập nhận xét ngắn để revise KB (thiếu gì, cần sửa gì, hoặc keyword bổ sung)."
+    )
+
+
+
+def build_kb_candidate_callback_data(
+    action: str,
+    candidate_id: str,
+    session_id: Optional[str] = None,
+    page: Optional[int] = None,
+) -> str:
+    """Build callback data for KB candidate actions.
+
+    The optional session/page suffix lets list actions refresh the same page in place
+    after approve/revise, while keeping the legacy 3-part form for notification cards.
+    """
+    action = (action or "").strip().lower()
+    candidate_id = (candidate_id or "").strip()
+    parts = ["kb_candidate", action, candidate_id]
+    if session_id:
+        parts.append(session_id.strip())
+        if page is not None:
+            parts.append(str(max(1, int(page))))
+    return ":".join(parts)
+
+
+def parse_kb_candidate_callback_data(data: str) -> Optional[Tuple[str, str, Optional[str], Optional[int]]]:
+    """Parse callback data for knowledge candidate actions."""
+    if not data:
+        return None
+    parts = data.split(":")
+    if len(parts) not in {3, 4, 5} or parts[0] != "kb_candidate":
+        return None
+    action, candidate_id = parts[1], parts[2]
+    if action not in {"approve", "revise"} or not candidate_id:
+        return None
+    session_id: Optional[str] = None
+    page: Optional[int] = None
+    if len(parts) >= 4:
+        session_id = parts[3] or None
+    if len(parts) == 5:
+        try:
+            page = max(1, int(parts[4]))
+        except ValueError:
+            return None
+    return action, candidate_id, session_id, page
+
+
+
+def parse_kb_candidate_text_action(text: str) -> Optional[Tuple[str, str, str]]:
+    """Parse plain text review commands like APPROVE <id> or REVISE <id>: note."""
+    stripped = (text or "").strip()
+    if not stripped:
+        return None
+    upper = stripped.upper()
+    if upper.startswith("APPROVE "):
+        candidate_id = stripped.split(None, 1)[1].strip()
+        if candidate_id:
+            return "approve", candidate_id, ""
+        return None
+    if upper.startswith("REVISE "):
+        remainder = stripped.split(None, 1)[1].strip()
+        if not remainder:
+            return None
+        if ":" in remainder:
+            candidate_id, note = remainder.split(":", 1)
+        else:
+            candidate_id, note = remainder, ""
+        candidate_id = candidate_id.strip()
+        note = note.strip()
+        if candidate_id:
+            return "revise", candidate_id, note
+    return None
+
+
 def parse_approval_callback_data(data: str) -> Optional[Tuple[str, str]]:
     """Parse Telegram callback data for approval actions."""
     if not data:
@@ -196,6 +287,7 @@ class TelegramAdapter:
         self._offset = 0
         self._task: Optional[asyncio.Task] = None
         self._pending_kb_search: Dict[str, str] = {}
+        self._pending_kb_revision: Dict[str, Dict[str, Any]] = {}
         self._conversation_buffers: Dict[str, Dict[str, Any]] = {}
         self._conversation_flush_tasks: Dict[str, asyncio.Task] = {}
         self._buffer_delay_seconds = 60
@@ -348,11 +440,27 @@ class TelegramAdapter:
         if text.startswith("/"):
             await self._handle_command(chat_id, user_id, text)
             return
-        
+
+        kb_candidate_command = parse_kb_candidate_text_action(text)
+        if kb_candidate_command:
+            action, candidate_id, note = kb_candidate_command
+            if action == "approve":
+                await self._handle_kb_candidate_review(chat_id, user_id, candidate_id, action, note or None)
+            else:
+                await self._handle_kb_candidate_review(chat_id, user_id, candidate_id, action, note or None)
+            return
+
         # Check for pending KB search
         if chat_id in self._pending_kb_search:
             approval_id = self._pending_kb_search.pop(chat_id)
             await self._handle_kb_search(chat_id, user_id, text, approval_id)
+            return
+
+        # Check for pending KB candidate revision notes
+        if chat_id in self._pending_kb_revision:
+            pending_revision = self._pending_kb_revision.pop(chat_id)
+            candidate_id = str(pending_revision.get("candidate_id", ""))
+            await self._handle_kb_candidate_review(chat_id, user_id, candidate_id, "revise", text, refresh_context=pending_revision)
             return
 
         # Buffer regular messages for 60s so multi-line / burst updates are merged before asking Supervisor.
@@ -379,6 +487,9 @@ class TelegramAdapter:
         data = callback_query.get("data", "")
         parsed = parse_approval_callback_data(data)
         if not parsed:
+            parsed_candidate = parse_kb_candidate_callback_data(data)
+            if parsed_candidate:
+                return await self._handle_kb_candidate_callback(callback_query, *parsed_candidate)
             parsed_kb = self._parse_kb_callback_data(data)
             if parsed_kb:
                 return await self._handle_kb_callback(callback_query, *parsed_kb)
@@ -450,7 +561,127 @@ class TelegramAdapter:
             logger.error("Approval callback failed", error=str(e), approval_id=approval_id, action=action)
             await self._answer_callback_query(callback_query_id, "Có lỗi xảy ra khi xử lý approval.", show_alert=True)
             return False
-    
+
+    async def _review_kb_candidate(self, candidate_id: str, action: str, reviewer_id: str, note: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Review a KB candidate via the shared draft service."""
+        try:
+            from src.services.kb_draft_service import review_kb_candidate as review_kb_candidate_local
+
+            return await review_kb_candidate_local(
+                candidate_id_or_source_id=candidate_id,
+                action=action,
+                reviewer_id=reviewer_id,
+                note=note,
+            )
+        except Exception as exc:
+            logger.error("KB candidate review failed", error=str(exc), candidate_id=candidate_id, action=action)
+            return None
+
+    async def _handle_kb_candidate_callback(
+        self,
+        callback_query: Dict[str, Any],
+        action: str,
+        candidate_id: str,
+        session_id: Optional[str] = None,
+        page: Optional[int] = None,
+    ) -> bool:
+        callback_query_id = callback_query.get("id")
+        message = callback_query.get("message") or {}
+        chat = message.get("chat") or {}
+        chat_id = str(chat.get("id", ""))
+        message_id = message.get("message_id")
+        actor = (
+            callback_query.get("from", {}).get("first_name")
+            or callback_query.get("from", {}).get("username")
+            or str(callback_query.get("from", {}).get("id", ""))
+        )
+
+        if action == "revise":
+            self._pending_kb_revision[chat_id] = {
+                "candidate_id": candidate_id,
+                "session_id": session_id,
+                "page": page or 1,
+                "message_id": message_id,
+            }
+            await self._answer_callback_query(callback_query_id, "Nhập ghi chú revise cho KB candidate...", show_alert=True)
+            await self._send_message(
+                chat_id,
+                build_kb_candidate_revision_prompt(candidate_id),
+                reply_markup=build_kb_candidate_force_reply_markup(candidate_id),
+                parse_mode=None,
+            )
+            return True
+
+        try:
+            result = await self._review_kb_candidate(candidate_id, "approve", actor)
+            if not result:
+                await self._answer_callback_query(callback_query_id, "Không tìm thấy KB candidate.", show_alert=True)
+                return False
+            await self._answer_callback_query(callback_query_id, "Đã approve KB candidate")
+            if session_id:
+                session = self._kb_sessions.get(session_id)
+                if session:
+                    await self._render_kb_candidates(chat_id, session, page=page or 1, edit_message_id=message_id)
+                    return True
+            await self._edit_message_text(
+                chat_id,
+                message_id,
+                f"✅ KB candidate approved by {actor}\nCandidate ID: {result.get('candidate_id', candidate_id)}\nTitle: {result.get('title', 'N/A')}",
+                parse_mode=None,
+            )
+            return True
+        except Exception as e:
+            logger.error("KB candidate callback failed", error=str(e), candidate_id=candidate_id, action=action)
+            await self._answer_callback_query(callback_query_id, "Có lỗi xảy ra khi xử lý KB candidate.", show_alert=True)
+            return False
+
+    async def _handle_kb_candidate_review(
+        self,
+        chat_id: str,
+        user_id: str,
+        candidate_id: str,
+        action: str,
+        note: Optional[str] = None,
+        refresh_context: Optional[Dict[str, Any]] = None,
+    ) -> bool:
+        actor = user_id
+        try:
+            result = await self._review_kb_candidate(candidate_id, action, actor, note)
+            if not result:
+                await self._send_message(chat_id, f"Không tìm thấy KB candidate: {candidate_id}", parse_mode=None)
+                return False
+            if action == "approve":
+                message = f"✅ KB candidate approved\nCandidate ID: {result.get('candidate_id', candidate_id)}\nTitle: {result.get('title', 'N/A')}"
+            else:
+                message = (
+                    f"📝 KB candidate marked for revision\nCandidate ID: {result.get('candidate_id', candidate_id)}\nTitle: {result.get('title', 'N/A')}"
+                    + (f"\nNote: {note}" if note else "")
+                )
+            await self._send_message(chat_id, message, parse_mode=None)
+
+            if refresh_context and refresh_context.get("session_id") and refresh_context.get("message_id") is not None:
+                session = self._kb_sessions.get(str(refresh_context.get("session_id")))
+                if session:
+                    try:
+                        await self._render_kb_candidates(
+                            chat_id,
+                            session,
+                            page=int(refresh_context.get("page") or 1),
+                            edit_message_id=refresh_context.get("message_id"),
+                        )
+                    except Exception as refresh_exc:
+                        logger.warning(
+                            "KB candidate list refresh failed",
+                            error=str(refresh_exc),
+                            candidate_id=candidate_id,
+                            action=action,
+                        )
+            return True
+        except Exception as e:
+            logger.error("KB candidate review message failed", error=str(e), candidate_id=candidate_id, action=action)
+            await self._send_message(chat_id, f"Có lỗi xảy ra khi xử lý KB candidate: {str(e)}", parse_mode=None)
+            return False
+
     async def _handle_command(self, chat_id: str, user_id: str, command: str):
         """Handle a command"""
         tokens = command.split()
@@ -461,7 +692,7 @@ class TelegramAdapter:
         elif cmd == "/help":
             await self._send_message(
                 chat_id,
-                "Commands:\n/start - Start\n/help - Help\n/health - Check bot and supervisor health\n/history - View history\n/clear - Clear history\n/kb - Search or browse KB\n/super_analytics - Quick analytics report",
+                "Commands:\n/start - Start\n/help - Help\n/health - Check bot and supervisor health\n/history - View history\n/clear - Clear history\n/kb - Search or browse KB\n/super_analytics - Quick analytics report\n\nKB candidate review:\n- APPROVE <candidate_id>\n- REVISE <candidate_id>: <note>",
             )
         elif cmd == "/history":
             await self._send_message(chat_id, "Use /clear to clear history")
@@ -631,6 +862,31 @@ class TelegramAdapter:
             buttons.append(nav_row)
         return {"inline_keyboard": buttons} if buttons else {}
 
+    def _build_kb_candidates_inline_keyboard(self, session_id: str, page: int, total_pages: int, candidates: list) -> Dict[str, Any]:
+        buttons = []
+        for item in candidates:
+            candidate_id = item.get("candidate_id") or item.get("source_request_id") or item.get("id") or ""
+            if not candidate_id:
+                continue
+            buttons.append([
+                {
+                    "text": "✅ Approve",
+                    "callback_data": build_kb_candidate_callback_data("approve", candidate_id, session_id, page),
+                },
+                {
+                    "text": "📝 Revise",
+                    "callback_data": build_kb_candidate_callback_data("revise", candidate_id, session_id, page),
+                },
+            ])
+        nav_row = []
+        if page > 1:
+            nav_row.append({"text": "⬅️ Prev", "callback_data": f"kb:page:{session_id}:{page - 1}"})
+        if page < total_pages:
+            nav_row.append({"text": "➡️ Next", "callback_data": f"kb:page:{session_id}:{page + 1}"})
+        if nav_row:
+            buttons.append(nav_row)
+        return {"inline_keyboard": buttons} if buttons else {}
+
     def _format_kb_results_text(self, session: Dict[str, Any], results: list, page: int, total_pages: int, total: int) -> str:
         header_lines = [self._kb_session_label(session), f"Page: {page}/{total_pages}", f"Total results: {total}"]
         if session.get("template_label"):
@@ -639,6 +895,9 @@ class TelegramAdapter:
             header_lines.append(f"Gợi ý: {session['template_hint']}")
         if session.get("category"):
             header_lines.append(f"Category: {session['category']}")
+        clarification = session.get("clarification") or {}
+        if clarification.get("needs_clarification") and clarification.get("clarification_question"):
+            header_lines.append(f"Cần thêm: {clarification['clarification_question']}")
         if session.get("query"):
             header_lines.append(f"Query: {session['query']}")
         header_lines.append("")
@@ -673,17 +932,118 @@ class TelegramAdapter:
 
         return "\n".join(header_lines + body_lines).strip()
 
+    def _kb_candidates_session_label(self, session: Dict[str, Any]) -> str:
+        status = (session.get("status") or "pending").strip().lower()
+        label = {
+            "pending": "Pending Review",
+            "approved": "Approved",
+            "needs_revision": "Needs Revision",
+            "all": "All Candidates",
+        }.get(status, status.title())
+        return f"🧪 KB Candidates: {label}"
+
+    def _format_kb_candidates_text(self, session: Dict[str, Any], candidates: list, page: int, total_pages: int, total: int) -> str:
+        header_lines = [self._kb_candidates_session_label(session), f"Page: {page}/{total_pages}", f"Total candidates: {total}"]
+        status = session.get("status") or "pending"
+        header_lines.append(f"Status: {status}")
+        header_lines.append("")
+
+        body_lines = []
+        start_index = (page - 1) * session.get("page_size", 5) + 1
+        for idx, item in enumerate(candidates, start=start_index):
+            candidate_id = item.get("candidate_id") or item.get("source_request_id") or item.get("id") or "N/A"
+            title = item.get("title") or item.get("extracted_title") or "N/A"
+            category = item.get("category") or "N/A"
+            confidence = item.get("confidence_score")
+            confidence_text = f"{confidence:.2f}" if isinstance(confidence, (int, float)) else "N/A"
+            status_text = item.get("status") or "pending"
+            summary = _truncate_text(item.get("content") or item.get("review_note") or "", 180)
+            body_lines.append(f"{idx}. {title}")
+            body_lines.append(f"   ID: {candidate_id}")
+            body_lines.append(f"   Category: {category} | Confidence: {confidence_text} | Status: {status_text}")
+            if item.get("reviewer_id"):
+                body_lines.append(f"   Reviewer: {item['reviewer_id']}")
+            if summary:
+                body_lines.append(f"   Preview: {summary}")
+            body_lines.append(f"   Commands: APPROVE {candidate_id} | REVISE {candidate_id}: note")
+            body_lines.append("")
+
+        if not body_lines:
+            body_lines.append("Không có KB candidate phù hợp.")
+            body_lines.append("Hãy đợi job 20:00 chạy hoặc xem lại status khác bằng /kb candidates approved")
+
+        body_lines.append("Reply hoặc bấm nút để duyệt/revise từng candidate.")
+        return "\n".join(header_lines + body_lines).strip()
+
+    async def _render_kb_candidates(self, chat_id: str, session: Dict[str, Any], page: int = 1, edit_message_id: Any = None) -> None:
+        session_id = session.get("session_id")
+        if not session_id:
+            session_id = secrets.token_hex(3)
+            session = {**session, "session_id": session_id}
+            self._kb_sessions[session_id] = session
+        else:
+            self._kb_sessions[session_id] = session
+
+        page_size = session.get("page_size", 5)
+        offset = max(0, (page - 1) * page_size)
+
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    f"{self.supervisor_url}/knowledge/candidates",
+                    params={
+                        "status": session.get("status", "pending"),
+                        "limit": page_size,
+                        "offset": offset,
+                    },
+                    timeout=30.0,
+                )
+            if response.status_code != 200:
+                await self._send_message(chat_id, f"Lỗi khi lấy KB candidates: {response.status_code}", parse_mode=None)
+                return
+
+            data = response.json()
+            candidates = data.get("candidates", []) or []
+            total = int(data.get("total", len(candidates)) or 0)
+            total_pages = max(1, (total + page_size - 1) // page_size)
+            text = self._format_kb_candidates_text(session, candidates, page, total_pages, total)
+            keyboard = self._build_kb_candidates_inline_keyboard(session_id, page, total_pages, candidates)
+            if edit_message_id is not None:
+                await self._edit_message_text(chat_id, edit_message_id, text, reply_markup=keyboard or None, parse_mode=None)
+            else:
+                await self._send_message(chat_id, text, reply_markup=keyboard or None, parse_mode=None)
+        except Exception as e:
+            logger.error("KB candidates render failed", error=str(e), session=session)
+            await self._send_message(chat_id, f"Có lỗi xảy ra khi lấy KB candidates: {str(e)}", parse_mode=None)
+
     async def _handle_kb_command(self, chat_id: str, user_id: str, command: str):
         tokens = command.split()
         if len(tokens) < 2:
             await self._send_message(
                 chat_id,
-                "Dùng:\n/kb search <từ khoá>\n/kb list <policy|faq|guide|document|all> [page]\nVí dụ:\n/kb search vpn\n/kb list faq 2",
+                "Dùng:\n/kb search <từ khoá>\n/kb list <policy|faq|guide|document|all> [page]\n/kb candidates [pending|approved|needs_revision|all] [page]\nVí dụ:\n/kb search vpn\n/kb list faq 2\n/kb candidates pending 1",
                 parse_mode=None,
             )
             return
 
         action = tokens[1].lower()
+        if action in {"candidates", "candidate", "pending"}:
+            status = tokens[2].lower() if len(tokens) > 2 else "pending"
+            page = 1
+            if len(tokens) > 3:
+                try:
+                    page = max(1, int(tokens[3]))
+                except ValueError:
+                    page = 1
+            session = {
+                "mode": "candidates",
+                "status": status,
+                "page_size": 5,
+                "user_id": user_id,
+            }
+            await self._render_kb_candidates(chat_id, session, page=page)
+            return
+
         if action in {"search", "find"}:
             query = command.split(maxsplit=2)[2].strip() if len(tokens) > 2 else ""
             if not query:
@@ -814,6 +1174,7 @@ class TelegramAdapter:
             session["template_id"] = data.get("template_id", "")
             session["template_score"] = data.get("template_score", 0.0)
             session["template_terms"] = data.get("template_terms", [])
+            session["clarification"] = data.get("clarification", {}) or {}
             if current_page != page and total > 0:
                 offset = max(0, (current_page - 1) * page_size)
                 payload["offset"] = offset
@@ -1092,4 +1453,14 @@ class TelegramAdapter:
             )
 
 
-__all__ = ["TelegramAdapter", "build_approval_message_text", "build_approval_inline_keyboard", "parse_approval_callback_data"]
+__all__ = [
+    "TelegramAdapter",
+    "build_approval_message_text",
+    "build_approval_inline_keyboard",
+    "parse_approval_callback_data",
+    "build_kb_candidate_callback_data",
+    "parse_kb_candidate_callback_data",
+    "parse_kb_candidate_text_action",
+    "build_kb_candidate_force_reply_markup",
+    "build_kb_candidate_revision_prompt",
+]

@@ -18,8 +18,9 @@ from src.llm import MultiProviderLLMClient, LLMResponse
 from src.config import get_settings
 from src.core.reasoning_loop import ReasoningLoopOrchestrator
 from src.core.metrics import metrics
-from typing import Optional, Dict
+from typing import Optional, Dict, Any
 from hashlib import sha256
+import re
 import time
 import structlog
 
@@ -390,6 +391,29 @@ class Supervisor:
         else:
             url_context = ""
 
+        image_case_context = self._build_image_case_context(payload)
+        if image_case_context.get("needs_clarification"):
+            return self._create_output(
+                payload=payload,
+                answer=self._build_image_case_clarification(image_case_context),
+                confidence=0.45,
+                intent=IntentClassification(intent=IntentType.SUPPORT_CASE, confidence=0.6),
+                risk=RiskEvaluation(risk_level=RiskLevel.LOW, reasons=[]),
+                agents_used=["image_case_clarification"],
+                status="needs_clarification",
+                processing_time=start_time,
+                extra_metadata={
+                    "image_case": True,
+                    "has_image_attachments": True,
+                    "image_case_context": image_case_context,
+                    "kb_hit": False,
+                    "kb_sources": [],
+                    "draft_reply_hint": image_case_context.get("draft_reply_hint", ""),
+                    "internal_note": image_case_context.get("internal_note", ""),
+                    "image_case_signature": image_case_context.get("issue_signature", ""),
+                },
+            )
+
         # Check for ITC ticket request pattern early
         text_lower = payload.message.text.lower()
         if "itc" in text_lower and ("support request" in text_lower or "ticket" in text_lower or "woid" in text_lower):
@@ -426,6 +450,12 @@ class Supervisor:
             result.metadata = {
                 **(result.metadata or {}),
                 "reasoning_loop_rollout": rollout_metadata,
+                "image_case": bool(image_case_context.get("image_case")),
+                "has_image_attachments": bool(image_case_context.get("has_image_attachments")),
+                "image_case_context": image_case_context,
+                "image_case_signature": image_case_context.get("issue_signature", ""),
+                "draft_reply_hint": image_case_context.get("draft_reply_hint", ""),
+                "internal_note": image_case_context.get("internal_note", ""),
             }
             metrics.record_reasoning_loop_outcome(result.status)
             metrics.record_reasoning_loop_latency(time.time() - start_time)
@@ -452,6 +482,7 @@ class Supervisor:
 
             # Context + Policy + Knowledge flow
             context = self.context_agent.build(payload, memory)
+            context["image_case_context"] = image_case_context
             policy = await self.policy_agent.extract(payload, memory, self._llm)
             knowledge = await self.knowledge_agent.retrieve(payload, memory, self._llm)
             kb_sources = knowledge.get("knowledge_results", [])
@@ -537,7 +568,11 @@ class Supervisor:
                 agents_used = ["pattern_match"]
             else:
                 agents_used = ["draft"]
-                answer, final_confidence = await self._generate_direct_answer(payload, memory)
+                answer, final_confidence = await self._generate_direct_answer(
+                    payload,
+                    memory,
+                    support_context={"image_case_context": image_case_context},
+                )
 
         final_confidence = self._normalize_final_confidence(
             final_confidence,
@@ -577,6 +612,12 @@ class Supervisor:
             "kb_sources": kb_sources,
             "pattern_hit": pattern_hit,
             "agents_used": agents_used,
+            "image_case": bool(image_case_context.get("image_case")),
+            "has_image_attachments": bool(image_case_context.get("has_image_attachments")),
+            "image_case_context": image_case_context,
+            "image_case_signature": image_case_context.get("issue_signature", ""),
+            "draft_reply_hint": image_case_context.get("draft_reply_hint", ""),
+            "internal_note": image_case_context.get("internal_note", ""),
         }
         if settings.enable_reasoning_loop:
             extra_metadata["reasoning_loop_rollout"] = rollout_metadata
@@ -1132,6 +1173,155 @@ Hãy đề xuất giải pháp hoặc các bước tiếp theo."""
         title = kb_source.get("title") or kb_source.get("id") or "KB"
         return f"Mình tìm thấy KB phù hợp về '{title}'. Để support đúng theo KB, bạn cho mình thêm: {fields_text}."
 
+    def _attachment_value(self, attachment: Any, key: str, default: Any = None) -> Any:
+        if hasattr(attachment, key):
+            return getattr(attachment, key, default)
+        if isinstance(attachment, dict):
+            return attachment.get(key, default)
+        return default
+
+    def _is_image_attachment(self, attachment: Any) -> bool:
+        attachment_type = str(self._attachment_value(attachment, "type") or "").strip().lower()
+        content_type = str(self._attachment_value(attachment, "content_type") or self._attachment_value(attachment, "mime_type") or "").strip().lower()
+        name = str(self._attachment_value(attachment, "name") or self._attachment_value(attachment, "filename") or "").lower()
+        return (
+            attachment_type in {"image", "photo", "picture"}
+            or content_type.startswith("image/")
+            or name.endswith((".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".tiff", ".tif"))
+        )
+
+    def _normalize_issue_signature(self, *parts: str) -> str:
+        combined = " ".join(part for part in parts if part)
+        tokens = re.findall(r"[\wÀ-ỹ0-9]+", combined.lower(), flags=re.UNICODE)
+        stopwords = {
+            "attachment",
+            "attachments",
+            "image",
+            "screenshot",
+            "photo",
+            "picture",
+            "file",
+            "files",
+            "please",
+            "send",
+            "forwarded",
+            "evidence",
+            "ocr",
+            "text",
+            "the",
+            "and",
+            "for",
+            "with",
+            "from",
+            "this",
+            "that",
+            "và",
+            "cho",
+            "mình",
+            "tôi",
+            "của",
+            "đang",
+            "lỗi",
+            "ảnh",
+            "hình",
+        }
+        kept: list[str] = []
+        for token in tokens:
+            token = token.strip()
+            if not token or len(token) == 1:
+                continue
+            if token in stopwords:
+                continue
+            if token not in kept:
+                kept.append(token)
+        return " ".join(kept[:12])
+
+    def _build_image_case_context(self, payload: InputPayload) -> dict[str, Any]:
+        attachments = list(payload.message.attachments or [])
+        image_attachments = [attachment for attachment in attachments if self._is_image_attachment(attachment)]
+        if not image_attachments:
+            return {
+                "has_image_attachments": False,
+                "image_case": False,
+                "needs_clarification": False,
+                "issue_signature": "",
+                "clarification_question": "",
+                "internal_note": "",
+                "draft_reply_hint": "",
+                "candidate_hint": False,
+            }
+
+        attachment_texts: list[str] = []
+        attachment_names: list[str] = []
+        for attachment in image_attachments[:5]:
+            name = str(self._attachment_value(attachment, "name") or self._attachment_value(attachment, "filename") or "image").strip()
+            attachment_names.append(name)
+            ocr_text = str(self._attachment_value(attachment, "ocr_text") or self._attachment_value(attachment, "text") or "").strip()
+            if ocr_text:
+                attachment_texts.append(ocr_text)
+
+        payload_text = payload.message.text or ""
+        issue_signature = self._normalize_issue_signature(payload_text, " ".join(attachment_texts), " ".join(attachment_names))
+        has_original_text = bool(payload_text.strip() and not payload_text.strip().startswith("[Attachment"))
+        has_ocr_text = bool(attachment_texts)
+        needs_clarification = not has_original_text and not has_ocr_text
+        clarification_question = (
+            "Mình thấy ảnh đính kèm nhưng chưa đọc được đủ nội dung. Bạn gửi lại ảnh rõ hơn hoặc chép lại mã lỗi / bước đang bị kẹt nhé."
+            if needs_clarification
+            else ""
+        )
+        issue_summary = issue_signature or " / ".join(attachment_names[:2])
+        internal_note = ""
+        if issue_summary:
+            internal_note = f"Image case summary: {issue_summary}"
+            if has_ocr_text:
+                internal_note += f" | OCR: {self._normalize_issue_signature(' '.join(attachment_texts))}"
+        draft_reply_hint = issue_signature or clarification_question
+        return {
+            "has_image_attachments": True,
+            "image_case": True,
+            "needs_clarification": needs_clarification,
+            "issue_signature": issue_signature,
+            "issue_summary": issue_summary,
+            "attachment_names": attachment_names,
+            "attachment_texts": attachment_texts,
+            "clarification_question": clarification_question,
+            "internal_note": internal_note,
+            "draft_reply_hint": draft_reply_hint,
+            "candidate_hint": bool(issue_signature),
+        }
+
+    def _build_image_case_clarification(self, image_case_context: dict[str, Any], fallback_question: str = "") -> str:
+        question = image_case_context.get("clarification_question") or fallback_question
+        if question:
+            return question
+        return "Mình thấy ảnh đính kèm nhưng chưa đọc được đủ nội dung. Bạn gửi lại ảnh rõ hơn hoặc chép lại mã lỗi / bước đang bị kẹt nhé."
+
+    async def _record_image_case_learning(self, payload: InputPayload, image_case_context: dict[str, Any], result: Dict[str, Any]) -> None:
+        try:
+            from src.services.learning_events import record_learning_event
+
+            async with async_session() as session:
+                await record_learning_event(
+                    session,
+                    request_id=payload.request_id,
+                    event_type="image_case_observed",
+                    event_payload={
+                        "issue_signature": image_case_context.get("issue_signature", ""),
+                        "issue_summary": image_case_context.get("issue_summary", ""),
+                        "has_image_attachments": image_case_context.get("has_image_attachments", False),
+                        "kb_hit": bool(result.get("kb_hit")),
+                        "status": result.get("status"),
+                    },
+                    user_id=payload.user.id,
+                    thread_id=payload.conversation.thread_id,
+                    ticket_id=payload.case.ticket_id if payload.case else None,
+                    ticket_system=payload.case.ticket_system if payload.case else None,
+                )
+                await session.commit()
+        except Exception as exc:
+            logger.warning("image_case_learning_record_failed", error=str(exc), request_id=payload.request_id)
+
     async def _log_audit(
         self,
         request_id: str,
@@ -1157,6 +1347,103 @@ Hãy đề xuất giải pháp hoặc các bước tiếp theo."""
                 await session.commit()
         except Exception as e:
             logger.warning("Failed to log audit", error=str(e))
+
+    async def _generate_direct_answer(
+        self,
+        payload: InputPayload,
+        memory: MemoryContextModel,
+        support_context: Optional[dict[str, Any]] = None,
+    ) -> tuple[str, float]:
+        user_name = payload.user.display_name
+        message = payload.message.text
+        support_context = support_context or {}
+        image_case_context = support_context.get("image_case_context") or {}
+
+        user_profile = memory.user_profile or {}
+        preferences = user_profile.get("preferences", {}) if isinstance(user_profile, dict) else {}
+        style_profile = (
+            preferences.get("style_profile", {}) if isinstance(preferences, dict) else {}
+        )
+        response_persona_hint = (
+            preferences.get("response_persona_hint")
+            or (
+                style_profile.get("response_persona_hint")
+                if isinstance(style_profile, dict)
+                else None
+            )
+            or user_profile.get("response_persona_hint")
+        )
+        communication_style = user_profile.get("communication_style") or "balanced"
+
+        persona_lines = []
+        if communication_style:
+            persona_lines.append(f"Phong cách người dùng: {communication_style}")
+        if response_persona_hint:
+            persona_lines.append(f"Persona học được: {response_persona_hint}")
+        if image_case_context.get("image_case"):
+            persona_lines.append(f"Image case signature: {image_case_context.get('issue_signature') or image_case_context.get('issue_summary')}")
+
+        state_lines = []
+        conversation_state = memory.conversation_state or {}
+        chat_type = payload.conversation.chat_type or conversation_state.get("chat_type")
+        chat_scope = payload.conversation.chat_scope or conversation_state.get("chat_scope")
+        group_chat = (
+            payload.conversation.group_chat
+            if payload.conversation.group_chat is not None
+            else conversation_state.get("group_chat")
+        )
+        platform = payload.conversation.platform or payload.source
+        if platform:
+            state_lines.append(f"Kênh: {platform}")
+        if chat_type:
+            state_lines.append(f"Loại chat: {chat_type}")
+        if chat_scope:
+            state_lines.append(f"Chat scope: {chat_scope}")
+        if group_chat is not None:
+            state_lines.append(f"Group chat: {group_chat}")
+        if conversation_state.get("active_topic_title"):
+            state_lines.append(f"Chủ đề hiện tại: {conversation_state['active_topic_title']}")
+        if conversation_state.get("conversation_mode"):
+            state_lines.append(f"Trạng thái hội thoại: {conversation_state['conversation_mode']}")
+        if conversation_state.get("last_user_message_mode"):
+            state_lines.append(f"Người dùng đang: {conversation_state['last_user_message_mode']}")
+        if conversation_state.get("continuity_score") is not None:
+            state_lines.append(f"Điểm liên tục: {conversation_state['continuity_score']}")
+        if conversation_state.get("open_loops"):
+            state_lines.append(f"Open loops: {conversation_state.get('open_loops', [])[:3]}")
+        if conversation_state.get("key_entities"):
+            state_lines.append(f"Entities: {conversation_state.get('key_entities', [])[:5]}")
+        if image_case_context.get("internal_note"):
+            state_lines.append(f"Image case note: {image_case_context['internal_note']}")
+
+        persona_block = "\n".join(persona_lines)
+        state_block = "\n".join(state_lines)
+
+        if self._llm:
+            system_prompt = (
+                "Bạn là một trợ lý AI hữu ích. Trả lời ngắn gọn, chính xác bằng tiếng Việt."
+            )
+            if persona_block:
+                system_prompt = f"{system_prompt}\n{persona_block}"
+            if state_block:
+                system_prompt = f"{system_prompt}\n{state_block}"
+            merged_context = memory.to_dict()
+            if support_context:
+                merged_context["support_context"] = support_context
+            response: LLMResponse = await self._llm.complete(
+                system_prompt=system_prompt,
+                user_message=f"Người dùng {user_name} hỏi: {message}",
+                context=merged_context,
+            )
+            return response.content, response.confidence
+
+        if image_case_context.get("clarification_question"):
+            return image_case_context["clarification_question"], 0.45
+
+        return (
+            f'Xin chào {user_name}, về câu hỏi của bạn "{message[:100]}...", tôi có thể giúp bạn. Bạn cần thêm thông tin gì không?',
+            0.4,
+        )
 
     def _stable_rollout_bucket(self, key: str, salt: str) -> int:
         """Compute deterministic bucket [0, 99] for rollout decisions."""

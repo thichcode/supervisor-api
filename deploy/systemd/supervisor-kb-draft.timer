@@ -1,0 +1,12 @@
+[Unit]
+Description=Run Supervisor KB Draft Worker Daily at 20:00
+Requires=supervisor-kb-draft.service
+
+[Timer]
+OnCalendar=*-*-* 20:00:00
+Persistent=true
+RandomizedDelaySec=15m
+Unit=supervisor-kb-draft.service
+
+[Install]
+WantedBy=timers.target

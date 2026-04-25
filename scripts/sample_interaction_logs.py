@@ -96,9 +96,25 @@ async def fetch_counts(session, cutoff, limit: int):
         InteractionLog.created_at >= cutoff,
         InteractionLog.outcome_status == "needs_review",
     )
+    service_total_q = select(func.count()).select_from(InteractionLog).where(
+        InteractionLog.created_at >= cutoff,
+        InteractionLog.traffic_class == "service_like",
+    )
+    casual_total_q = select(func.count()).select_from(InteractionLog).where(
+        InteractionLog.created_at >= cutoff,
+        InteractionLog.traffic_class == "casual_unknown",
+    )
+    service_kb_q = select(func.count()).select_from(InteractionLog).where(
+        InteractionLog.created_at >= cutoff,
+        InteractionLog.traffic_class == "service_like",
+        InteractionLog.kb_hit_count > 0,
+    )
     intent_q = (
         select(InteractionLog.intent, func.count().label("count"))
-        .where(InteractionLog.created_at >= cutoff)
+        .where(
+            InteractionLog.created_at >= cutoff,
+            InteractionLog.traffic_class == "service_like",
+        )
         .group_by(InteractionLog.intent)
         .order_by(func.count().desc())
         .limit(10)
@@ -121,6 +137,9 @@ async def fetch_counts(session, cutoff, limit: int):
     skipped = (await session.execute(skip_q)).scalar_one()
     completed = (await session.execute(completed_q)).scalar_one()
     needs_review = (await session.execute(review_q)).scalar_one()
+    service_total = (await session.execute(service_total_q)).scalar_one()
+    casual_total = (await session.execute(casual_total_q)).scalar_one()
+    service_kb_hits = (await session.execute(service_kb_q)).scalar_one()
     top_intents = (await session.execute(intent_q)).all()
     approvals_row = (await session.execute(approvals_q)).one()
     samples = (await session.execute(sample_q)).scalars().all()
@@ -133,10 +152,16 @@ async def fetch_counts(session, cutoff, limit: int):
         "counts": {
             "total": total,
             "kb_hits": kb_hits,
+            "service_like_total": service_total,
+            "casual_unknown_total": casual_total,
+            "service_like_rate": round((service_total / total * 100), 1) if total else 0.0,
+            "casual_unknown_rate": round((casual_total / total * 100), 1) if total else 0.0,
+            "kb_hits_service_like": service_kb_hits,
+            "kb_hit_rate_service_like": round((service_kb_hits / service_total * 100), 1) if service_total else 0.0,
+            "kb_hit_rate_all_traffic": round((kb_hits / total * 100), 1) if total else 0.0,
             "skipped": skipped,
             "completed": completed,
             "needs_review": needs_review,
-            "kb_hit_rate": round((kb_hits / total * 100), 1) if total else 0.0,
             "skip_rate": round((skipped / total * 100), 1) if total else 0.0,
             "auto_send_rate": round((completed / total * 100), 1) if total else 0.0,
             "avg_confidence_sample": round((sum(confidences) / len(confidences) * 100), 1) if confidences else 0.0,
@@ -148,6 +173,7 @@ async def fetch_counts(session, cutoff, limit: int):
             "rejected": int(approvals_row[2] or 0),
         },
         "top_intents": [{"intent": intent or "unknown", "count": int(count)} for intent, count in top_intents],
+        "top_intents_raw": [{"intent": intent or "unknown", "count": int(count)} for intent, count in intent_counter.most_common(10)],
         "samples": [
             {
                 "request_id": row.request_id,
@@ -212,7 +238,10 @@ def format_text(report: dict[str, Any]) -> str:
     counts = report["counts"]
     approvals = report["approvals"]
     lines.append(f"Total interactions: {counts['total']}")
-    lines.append(f"KB hit rate: {counts['kb_hit_rate']}%")
+    lines.append(f"Service-like interactions: {counts['service_like_total']} ({counts['service_like_rate']}%)")
+    lines.append(f"Casual/unknown interactions: {counts['casual_unknown_total']} ({counts['casual_unknown_rate']}%)")
+    lines.append(f"KB hit rate (service-like): {counts['kb_hit_rate_service_like']}%")
+    lines.append(f"KB hit rate (all traffic): {counts['kb_hit_rate_all_traffic']}%")
     lines.append(f"Skip rate: {counts['skip_rate']}%")
     lines.append(f"Auto-send rate: {counts['auto_send_rate']}%")
     lines.append(f"Avg confidence (sample): {counts['avg_confidence_sample']}%")

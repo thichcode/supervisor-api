@@ -267,18 +267,17 @@ class TestSmokeRequests:
                 "timestamp": "2026-04-21T10:00:00",
                 "window_days": days,
                 "overview": {"total_interactions": 3, "kb_hits": 1, "auto_sent": 1, "need_manual_review": 0, "skipped": 1, "auto_send_rate": 33.3, "kb_hit_rate": 33.3, "approval_required_rate": 0.0, "skip_rate": 33.3, "needs_review_rate": 0.0, "clarification_rate": 0.0, "avg_confidence": 45.0, "avg_latency_ms": 100.0, "avg_latency_sec": 0.1, "top_intents": [{"intent": "faq", "count": 1}]},
-                "raw_overview": {"total_interactions": 3},
+                "raw_overview": {"total_interactions": 3, "kb_hits": 1, "auto_sent": 1, "need_manual_review": 0, "skipped": 1, "needs_review": 0, "clarifications": 0, "kb_hit_rate": 33.3, "approval_required_rate": 0.0, "skip_rate": 33.3, "auto_send_rate": 33.3, "needs_review_rate": 0.0, "clarification_rate": 0.0, "avg_confidence": 45.0, "avg_latency_ms": 100.0, "avg_latency_sec": 0.1, "high_confidence_count": 0, "low_confidence_count": 3, "top_intents": [{"intent": "unknown", "count": 3}]},
                 "service_overview": {"total_interactions": 1, "kb_hits": 1, "auto_sent": 1, "need_manual_review": 0, "skipped": 0, "needs_review": 0, "clarifications": 0, "kb_hit_rate": 100.0, "approval_required_rate": 0.0, "skip_rate": 0.0, "auto_send_rate": 100.0, "needs_review_rate": 0.0, "clarification_rate": 0.0, "avg_confidence": 55.0, "avg_latency_ms": 100.0, "avg_latency_sec": 0.1, "high_confidence_count": 0, "low_confidence_count": 1, "top_intents": [{"intent": "faq", "count": 1}]},
-                "traffic_breakdown": {"raw_total": 3, "service_like": 1, "casual_unknown": 2, "service_like_rate": 33.3, "casual_unknown_rate": 66.7, "service_signal_reasons": {"keyword:ticket": 1}},
-                "performance": {"total_interactions": 1, "avg_processing_time_ms": 100.0, "avg_processing_time_sec": 0.1},
-                "ai_quality": {"avg_confidence": 55.0, "high_confidence_count": 0, "low_confidence_count": 1, "auto_send_count": 1, "approval_needed_count": 0, "needs_review_count": 0},
-                "user_satisfaction": {"total_votes": 0, "agree": 0, "change": 0, "skip": 0, "satisfaction_rate": 0.0},
+                "raw_kb_hit_rate": 33.3,
+                "service_kb_hit_rate": 100.0,
                 "approvals": {"pending": 0, "approved": 0, "rejected": 0, "approve_rate": 0.0, "average_confidence": 0.0},
                 "efficiency": {"kb_hit_rate": 100.0, "approval_required_rate": 0.0, "skip_rate": 0.0, "auto_send_rate": 100.0, "needs_review_rate": 0.0, "clarification_rate": 0.0, "avg_confidence": 55.0, "avg_latency_ms": 100.0},
                 "top_intents": [{"intent": "faq", "count": 1}],
                 "boss_summary": [
                     "Trong 1 ngày gần nhất có 3 interaction(s) raw, trong đó 1 service-like và 2 casual/unknown.",
                     "Service-like rate: 33.3% | Casual/unknown rate: 66.7%.",
+                    "KB hit rate (service-like): 100.0% | KB hit rate (all traffic): 33.3% | Auto-send: 100.0% | Skip: 0.0% | Needs review: 0.0%.",
                 ],
                 "recommendations": ["Traffic casual/unknown chiếm 66.7%: cân nhắc lọc chat đời thường khỏi boss report."],
             }
@@ -289,6 +288,7 @@ class TestSmokeRequests:
         assert response.status_code == 200
         assert "service-like" in response.text
         assert "casual/unknown" in response.text
+        assert "KB hit rate (all traffic)" in response.text
         assert "Traffic casual/unknown chiếm 66.7%" in response.text
 
     @pytest.mark.asyncio

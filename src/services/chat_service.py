@@ -94,7 +94,7 @@ class ChatService:
                 ticket_id=request.ticket_id,
                 ticket_system=request.ticket_system,
             ) if (request.case_id or request.ticket_id) else None,
-            message=MessageInfo(text=request.message),
+            customer_reply=MessageInfo(text=request.message),
         )
 
         is_group_chat = bool(chat_context.get("group_chat", False))
@@ -129,7 +129,7 @@ class ChatService:
                     return ChatResponse(
                         request_id=request_id,
                         status="skipped",
-                        message="",
+                        customer_reply="",
                         message_type=request.message_type,
                         confidence=teams_decision.confidence,
                         metadata={**routing_metadata, "teams_message": True, "skipped": True},
@@ -140,7 +140,7 @@ class ChatService:
                     return ChatResponse(
                         request_id=request_id,
                         status="needs_clarification",
-                        message="Chưa rõ message này đang nhắm tới Thuong hay workflow bot. Bạn xác nhận giúp mình?",
+                        customer_reply="Chưa rõ message này đang nhắm tới Thuong hay workflow bot. Bạn xác nhận giúp mình?",
                         message_type=request.message_type,
                         confidence=teams_decision.confidence,
                         metadata={**routing_metadata, "teams_message": True, "needs_clarification": True},
@@ -168,7 +168,7 @@ class ChatService:
                     return ChatResponse(
                         request_id=request_id,
                         status="skipped",
-                        message="",
+                        customer_reply="",
                         message_type=request.message_type,
                         confidence=target_decision.confidence,
                         metadata={**routing_metadata, "skipped": True},
@@ -179,7 +179,7 @@ class ChatService:
                     return ChatResponse(
                         request_id=request_id,
                         status="needs_clarification",
-                        message="Chưa rõ message này đang nhắm tới Thuong hay workflow bot. Bạn xác nhận giúp mình?",
+                        customer_reply="Chưa rõ message này đang nhắm tới Thuong hay workflow bot. Bạn xác nhận giúp mình?",
                         message_type=request.message_type,
                         confidence=target_decision.confidence,
                         metadata={**routing_metadata, "needs_clarification": True},
@@ -194,7 +194,7 @@ class ChatService:
                 return ChatResponse(
                     request_id=request_id,
                     status="skipped",
-                    message="",
+                    customer_reply="",
                     message_type=request.message_type,
                     confidence=0.0,
                     metadata={
@@ -243,7 +243,7 @@ class ChatService:
                 request_id=request_id,
                 user_id=request.user_id,
                 display_name=request.display_name,
-                original_message=request.message,
+                original_customer_reply=request.message,
                 ai_response=result.answer,
                 confidence=result.confidence,
                 action_type="send_message",
@@ -300,7 +300,7 @@ class ChatService:
             return ChatResponse(
                 request_id=request_id,
                 status="pending_approval",
-                message=f"⚠️ Phản hồi AI (confidence: {result.confidence:.0%}) cần được duyệt trước khi gửi cho user.",
+                customer_reply=f"⚠️ Phản hồi AI (confidence: {result.confidence:.0%}) cần được duyệt trước khi gửi cho user.",
                 message_type=request.message_type,
                 confidence=result.confidence,
                 metadata={**result.metadata, "approval_id": approval.id, "approval_required": True, "threshold": 0.5},
@@ -314,13 +314,18 @@ class ChatService:
                 except Exception:
                     pass
 
+        # Extract internal_note from metadata if present
+        internal_note = result.metadata.get("internal_note", "") if result.metadata else ""
+        metadata_without_internal = {k: v for k, v in result.metadata.items() if k != "internal_note"} if result.metadata else {}
+
         return ChatResponse(
             request_id=request_id,
             status=result.status,
-            message=result.answer,
+            customer_reply=result.answer,
+            internal_note=internal_note,
             message_type=request.message_type,
             confidence=result.confidence,
-            metadata=result.metadata,
+            metadata=metadata_without_internal,
         )
 
     async def handle_harness_chat(self, request: ChatRequest, auto_send_callback=None, bridge_getter=None) -> ChatResponse:
@@ -332,7 +337,7 @@ class ChatService:
             ChatRequest(
                 user_id=request.user_id,
                 display_name=request.display_name,
-                message=request.message,
+                customer_reply=request.message,
                 thread_id=request.thread_id,
                 case_id=request.case_id,
                 ticket_id=request.ticket_id,
@@ -365,7 +370,7 @@ class ChatService:
                 ticket_id=request.ticket_id,
                 ticket_system=request.ticket_system,
             ) if (request.case_id or request.ticket_id) else None,
-            message=MessageInfo(text=request.message),
+            customer_reply=MessageInfo(text=request.message),
         )
 
         async with api_module.async_session() as session:
@@ -416,7 +421,7 @@ class ChatService:
                 request_id=request_id,
                 user_id=request.user_id,
                 display_name=request.display_name,
-                original_message=request.message,
+                original_customer_reply=request.message,
                 ai_response=result.answer,
                 confidence=result.confidence,
                 action_type="send_message",
@@ -469,7 +474,7 @@ class ChatService:
             return ChatResponse(
                 request_id=request_id,
                 status="pending_approval",
-                message=f"⚠️ Phản hồi AI (confidence: {result.confidence:.0%}) cần được duyệt trước khi gửi cho user.\n\nHarness: {harness_metrics.get('execution_id', 'N/A') if harness_metrics else 'N/A'}",
+                customer_reply=f"⚠️ Phản hồi AI (confidence: {result.confidence:.0%}) cần được duyệt trước khi gửi cho user.\n\nHarness: {harness_metrics.get('execution_id', 'N/A') if harness_metrics else 'N/A'}",
                 message_type=request.message_type,
                 confidence=result.confidence,
                 metadata={**result.metadata, "approval_id": approval.id, "approval_required": True, "threshold": 0.5, "harness_metrics": harness_metrics, "harness_evaluation": harness_evaluation},
@@ -483,11 +488,16 @@ class ChatService:
                 except Exception:
                     pass
 
+        # Extract internal_note from metadata if present
+        internal_note = result.metadata.get("internal_note", "") if result.metadata else ""
+        metadata_without_internal = {k: v for k, v in result.metadata.items() if k != "internal_note"} if result.metadata else {}
+
         return ChatResponse(
             request_id=request_id,
             status=result.status,
-            message=result.answer,
+            customer_reply=result.answer,
+            internal_note=internal_note,
             message_type=request.message_type,
             confidence=result.confidence,
-            metadata={**result.metadata, "harness_metrics": harness_metrics, "harness_evaluation": harness_evaluation},
+            metadata={**metadata_without_internal, "harness_metrics": harness_metrics, "harness_evaluation": harness_evaluation},
         )

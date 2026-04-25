@@ -1,0 +1,11 @@
+[Unit]
+Description=Supervisor KB Draft Worker
+Wants=network-online.target
+After=network-online.target postgresql.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/supervisor-api
+EnvironmentFile=-/etc/supervisor-api/supervisor.env
+ExecStart=/usr/bin/env python3 /opt/supervisor-api/scripts/daily_kb_draft_worker.py --days 30 --top-n 5 --min-count 2 --max-rows 4000 --send-telegram
+Nice=10
