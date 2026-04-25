@@ -147,6 +147,7 @@ class Settings(BaseSettings):
     enable_reasoning_loop: bool = False
     reasoning_loop_max_iterations: int = 3
     reasoning_loop_tool_retry: int = 1
+    enable_llm_tool_planning: bool = False  # Hermes-style: LLM picks & calls tools directly
     reasoning_loop_rollout_user_percent: int = 100
     reasoning_loop_rollout_team_percent: int = 100
     reasoning_loop_rollout_salt: str = "reasoning-loop-v1"

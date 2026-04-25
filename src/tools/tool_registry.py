@@ -1,235 +1,236 @@
-"""Lightweight async tool registry for Hermes-style reasoning loop.
+"""
+Backward-compatibility shim for src/tools/tool_registry.
 
-Provides discoverable, sandboxed tools that the reasoning orchestrator
-can dispatch dynamically based on a ToolPlan.
+All functionality moved to src/harness/tool_registry.py.
+This file exists to avoid breaking imports in reasoning_loop.py
+and any other code that imports from src.tools.tool_registry.
+
+Imported by: src/core/reasoning_loop.py
 """
 
 from __future__ import annotations
 
 import asyncio
-import os
-import shlex
-import subprocess
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 
-import structlog
+# Re-export everything from the canonical harness registry
+from src.harness.tool_registry import (
+    ToolRegistry,
+    get_tool_registry,
+    ToolCategory,
+    ToolDefinition,
+    ToolExecutionResult,
+)
 
-logger = structlog.get_logger()
-
-
+# Backward-compat: lightweight ToolResult wrapper that exposes .output
+# reasoning_loop.py accesses .output on tool results
 @dataclass
 class ToolResult:
-    """Result of a single tool execution."""
-
+    """Result of a single tool execution (backward-compat wrapper)."""
     tool_name: str
     success: bool
-    output: str
+    output: str  # exposed as .output for reasoning_loop compatibility
     metadata: dict[str, Any] = field(default_factory=dict)
 
+    @classmethod
+    def from_execution_result(cls, er: ToolExecutionResult) -> "ToolResult":
+        """Convert harness ToolExecutionResult → lightweight ToolResult."""
+        output = er.result if isinstance(er.result, str) else str(er.result or "")
+        return cls(
+            tool_name=er.tool_name,
+            success=er.success,
+            output=output,
+            metadata={"duration_ms": er.duration_ms, **(er.error and {"error": er.error} or {})},
+        )
 
+
+# Backward-compat ToolSpec for build_default_registry()
 @dataclass
 class ToolSpec:
-    """Specification for a registered tool."""
-
+    """Specification for a registered tool (backward-compat)."""
     name: str
     description: str
     parameters: dict[str, str]
     handler: Callable[..., Awaitable[ToolResult]]
 
 
-class ToolRegistry:
-    """Async tool registry with safe dispatch."""
+# Wrapped registry that normalizes result to ToolResult for .output access
+class ToolRegistryCompat(ToolRegistry):
+    """
+    Drop-in replacement for the lightweight ToolRegistry.
 
-    def __init__(self) -> None:
-        self._tools: dict[str, ToolSpec] = {}
+    Uses the harness ToolRegistry as backend, but:
+    - execute() returns ToolResult (with .output) instead of ToolExecutionResult
+    - register() accepts either ToolSpec (backward-compat) or individual params
+    - Compatible with reasoning_loop.py's expectations
+    """
 
-    def register(self, spec: ToolSpec) -> None:
-        self._tools[spec.name] = spec
-
-    def list_tools(self) -> list[dict[str, Any]]:
-        return [
-            {
-                "name": t.name,
-                "description": t.description,
-                "parameters": t.parameters,
-            }
-            for t in self._tools.values()
-        ]
+    def register(
+        self,
+        spec_or_name: "ToolSpec | str",
+        description: str = "",
+        handler: Callable | None = None,
+        category: ToolCategory = ToolCategory.CUSTOM,
+        parameters: dict | None = None,
+        requires_approval: bool = False,
+        dangerous: bool = False,
+        metadata: dict | None = None,
+    ) -> None:
+        """Register: accepts ToolSpec (backward-compat) or individual params."""
+        if isinstance(spec_or_name, ToolSpec):
+            spec = spec_or_name
+            super().register(
+                name=spec.name,
+                description=spec.description,
+                handler=spec.handler,
+                category=category,
+                parameters={p: {"type": t} for p, t in (spec.parameters or {}).items()},
+                requires_approval=requires_approval,
+                dangerous=dangerous,
+                metadata=metadata,
+            )
+        else:
+            super().register(
+                name=spec_or_name,
+                description=description,
+                handler=handler,
+                category=category,
+                parameters=parameters or {},
+                requires_approval=requires_approval,
+                dangerous=dangerous,
+                metadata=metadata or {},
+            )
 
     async def execute(self, tool_name: str, arguments: dict[str, Any]) -> ToolResult:
+        """Execute: run handler directly, return ToolResult with .output field."""
         tool = self._tools.get(tool_name)
         if not tool:
-            return ToolResult(
-                tool_name=tool_name,
-                success=False,
-                output=f"Tool '{tool_name}' not found.",
-            )
+            return ToolResult(tool_name=tool_name, success=False,
+                              output=f"Tool '{tool_name}' not found.")
         try:
-            return await tool.handler(**arguments)
+            if asyncio.iscoroutinefunction(tool.handler):
+                result = await tool.handler(**arguments)
+            else:
+                result = tool.handler(**arguments)
+            # Result may be ToolResult already (from our handlers) or dict
+            if isinstance(result, ToolResult):
+                return result
+            return ToolResult(tool_name=tool_name, success=True,
+                              output=str(result)[:4000])
         except Exception as exc:
-            logger.warning("tool_execution_failed", tool=tool_name, error=str(exc))
-            return ToolResult(
-                tool_name=tool_name,
-                success=False,
-                output=f"Execution error: {exc}",
-                metadata={"error_type": type(exc).__name__},
-            )
+            return ToolResult(tool_name=tool_name, success=False,
+                              output=f"Error: {exc}")
 
 
-# ===== Built-in tool handlers =====
+def build_default_registry() -> "ToolRegistryCompat":
+    """
+    Create a compatible tool registry for reasoning_loop.
 
-async def _read_file_tool(path: str, limit: int = 500) -> ToolResult:
-    """Read text file with line limit."""
-    if not path or ".." in path:
-        return ToolResult("read_file", False, "Invalid path.")
-    try:
-        with open(path, "r", encoding="utf-8", errors="replace") as f:
-            lines = []
-            for i, line in enumerate(f):
-                if i >= limit:
-                    break
-                lines.append(line.rstrip("\n"))
-        content = "\n".join(lines)
-        truncated = len(lines) >= limit
-        return ToolResult(
-            tool_name="read_file",
-            success=True,
-            output=content,
-            metadata={"path": path, "lines_read": len(lines), "truncated": truncated},
-        )
-    except Exception as exc:
-        return ToolResult("read_file", False, str(exc))
+    Initializes inline (no async needed) and wraps results so
+    reasoning_loop.py can use .output on tool results.
+    Matches the tools from src/harness/tool_registry.py but
+    registers them via ToolSpec (backward-compat with lightweight registry).
+    """
+    registry = ToolRegistryCompat()
 
+    # Tool 1: terminal
+    async def _terminal_handler(command: str, timeout: int = 30, workdir: str = None):
+        from src.cli_tools import terminal as cli_terminal
+        result = cli_terminal(command, timeout=timeout, workdir=workdir)
+        ok = result.get("exit_code", 1) == 0
+        return ToolResult(tool_name="terminal", success=ok,
+                          output=str(result.get("output", ""))[:4000],
+                          metadata=result)
 
-async def _write_file_tool(path: str, content: str) -> ToolResult:
-    """Write text file (restricted to allowed directories)."""
-    if not path or ".." in path:
-        return ToolResult("write_file", False, "Invalid path.")
-    try:
-        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(content)
-        return ToolResult(
-            tool_name="write_file",
-            success=True,
-            output=f"File written: {path}",
-            metadata={"path": path, "bytes": len(content.encode("utf-8"))},
-        )
-    except Exception as exc:
-        return ToolResult("write_file", False, str(exc))
+    registry.register(ToolSpec(
+        name="terminal",
+        description="Execute shell commands in terminal",
+        parameters={"command": "Shell command", "timeout": "Timeout seconds", "workdir": "Working directory"},
+        handler=_terminal_handler,
+    ))
 
+    # Tool 2: read_file
+    async def _read_handler(path: str, limit: int = 500):
+        from src.cli_tools import read_file as cli_read
+        from src.cli_tools import FileReadResult
+        result = cli_read(path, offset=1, limit=limit)
+        if isinstance(result, FileReadResult):
+            return ToolResult(tool_name="read_file", success=True, output=result.content,
+                              metadata={"path": result.file_path,
+                                        "lines_read": result.total_lines,
+                                        "truncated": len(result.content.splitlines()) >= limit})
+        # Fallback for dict
+        return ToolResult(tool_name="read_file", success=True, output=str(result.get("content", "")),
+                          metadata={"path": result.get("file_path", path)})
 
-async def _web_search_tool(query: str, top_k: int = 3) -> ToolResult:
-    """Stub web search — delegates to URLFetcher if available, else returns stub."""
-    try:
-        from src.tools.url_fetcher import URLFetcher
+    registry.register(ToolSpec(
+        name="read_file",
+        description="Read content from a file",
+        parameters={"path": "File path", "limit": "Max lines (default 500)"},
+        handler=_read_handler,
+    ))
 
-        fetcher = URLFetcher(timeout=10, max_urls=top_k)
-        urls = fetcher.detect_urls(query)
-        if urls:
-            infos = await fetcher.fetch_all(query)
-            context = fetcher.build_context(infos)
-            return ToolResult(
-                tool_name="web_search",
-                success=True,
-                output=context or "No results.",
-                metadata={"urls": urls, "results": len(infos)},
-            )
-    except Exception as exc:
-        logger.debug("web_search_fetcher_fallback", error=str(exc))
+    # Tool 3: write_file
+    async def _write_handler(path: str, content: str):
+        from src.cli_tools import write_file as cli_write
+        result = cli_write(path, content)
+        ok = result.get("success", False)
+        output = f"File written: {path}" if ok else str(result)
+        return ToolResult(tool_name="write_file", success=ok,
+                          output=output,
+                          metadata={"path": path, "bytes": len(content.encode("utf-8"))})
 
-    return ToolResult(
-        tool_name="web_search",
-        success=True,
-        output=f"Web search stub for: {query}",
-        metadata={"query": query, "top_k": top_k, "stub": True},
-    )
+    registry.register(ToolSpec(
+        name="write_file",
+        description="Write content to a file",
+        parameters={"path": "File path", "content": "Text content"},
+        handler=_write_handler,
+    ))
 
+    # Tool 4: search_files
+    async def _search_handler(pattern: str, path: str = ".", file_glob: str = None, limit: int = 50):
+        from src.cli_tools import search_files as cli_search
+        result = cli_search(pattern, path=path, file_glob=file_glob, limit=limit)
+        matches = result.get("matches", [])
+        output = "\n".join(str(m) for m in matches[:100])[:4000]
+        return ToolResult(tool_name="search_files", success=True, output=output, metadata=result)
 
-async def _execute_code_tool(code: str, timeout: int = 10) -> ToolResult:
-    """Execute Python code in a restricted subprocess (no shell, no network)."""
-    if not code.strip():
-        return ToolResult("execute_code", False, "Empty code.")
+    registry.register(ToolSpec(
+        name="search_files",
+        description="Search for patterns in files",
+        parameters={"pattern": "Regex pattern", "path": "Directory", "file_glob": "Glob pattern", "limit": "Max results"},
+        handler=_search_handler,
+    ))
 
-    # Restrictions
-    banned = {"import os", "import sys", "open(", "subprocess", "__import__", "eval(", "exec(", "compile("}
-    lower_code = code.lower()
-    for token in banned:
-        if token in lower_code:
-            return ToolResult(
-                "execute_code",
-                False,
-                f"Code contains banned token: {token}",
-            )
+    # Tool 5: web_search
+    async def _web_handler(query: str, top_k: int = 3):
+        from src.cli_tools import web_search as cli_web
+        result = cli_web(query, limit=top_k)
+        output = str(result.get("results", result))[:4000]
+        return ToolResult(tool_name="web_search", success=True, output=output, metadata=result)
 
-    script = f"""
-import math, json, random, statistics, datetime, itertools, collections, fractions, decimal
-result = None
-try:
-{chr(10).join("    " + line for line in code.splitlines())}
-    print(json.dumps({{"result": result if result is not None else "(no result)", "ok": True}}))
-except Exception as e:
-    print(json.dumps({{"error": str(e), "ok": False}}))
-"""
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            "python", "-c", script,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-        output = stdout.decode("utf-8", errors="replace").strip()
-        err = stderr.decode("utf-8", errors="replace").strip()
-        return ToolResult(
-            tool_name="execute_code",
-            success=proc.returncode == 0 and not err,
-            output=output or err or "(no output)",
-            metadata={
-                "returncode": proc.returncode,
-                "stderr": err[:500] if err else None,
-                "timeout": timeout,
-            },
-        )
-    except asyncio.TimeoutError:
-        return ToolResult("execute_code", False, f"Timeout after {timeout}s")
-    except Exception as exc:
-        return ToolResult("execute_code", False, str(exc))
+    registry.register(ToolSpec(
+        name="web_search",
+        description="Search the web for information",
+        parameters={"query": "Search query", "top_k": "Number of results"},
+        handler=_web_handler,
+    ))
 
+    # Tool 6: execute_code
+    async def _code_handler(code: str, timeout: int = 10):
+        from src.cli_tools import execute_code as cli_code
+        result = cli_code(code)
+        ok = result.get("ok", False)
+        return ToolResult(tool_name="execute_code", success=ok,
+                          output=str(result),
+                          metadata=result)
 
-def build_default_registry() -> ToolRegistry:
-    """Create registry with built-in Hermes-style tools."""
-    registry = ToolRegistry()
-    registry.register(
-        ToolSpec(
-            name="read_file",
-            description="Read a text file from disk.",
-            parameters={"path": "file path", "limit": "max lines (default 500)"},
-            handler=_read_file_tool,
-        )
-    )
-    registry.register(
-        ToolSpec(
-            name="write_file",
-            description="Write a text file to disk.",
-            parameters={"path": "file path", "content": "text content"},
-            handler=_write_file_tool,
-        )
-    )
-    registry.register(
-        ToolSpec(
-            name="web_search",
-            description="Search the web or fetch URL context.",
-            parameters={"query": "search query", "top_k": "number of results"},
-            handler=_web_search_tool,
-        )
-    )
-    registry.register(
-        ToolSpec(
-            name="execute_code",
-            description="Execute a safe Python code snippet.",
-            parameters={"code": "Python code string", "timeout": "seconds"},
-            handler=_execute_code_tool,
-        )
-    )
+    registry.register(ToolSpec(
+        name="execute_code",
+        description="Execute a safe Python code snippet",
+        parameters={"code": "Python code string", "timeout": "Seconds"},
+        handler=_code_handler,
+    ))
+
     return registry

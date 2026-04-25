@@ -6,7 +6,11 @@ ENABLE_REASONING_LOOP and delegated from Supervisor.process.
 
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
+import json
+import logging
 import time
+
+logger = logging.getLogger("reasoning_loop")
 
 from src.core import InputPayload, OutputPayload
 from src.config import get_settings
@@ -151,6 +155,149 @@ class ReasoningLoopOrchestrator:
             return ToolPlan(tool_name="execute_code", arguments={"code": text}, valid=True, reason="registry_tool_planned")
 
         return ToolPlan(tool_name=None, reason="no_tool_requested")
+
+    def _should_use_llm_tool_planning(self) -> bool:
+        """Gate: enable LLM-driven tool planning via config flag."""
+        return bool(getattr(get_settings(), "enable_llm_tool_planning", False))
+
+    async def plan_with_tools(
+        self,
+        payload: InputPayload,
+        memory: MemoryContextModel,
+    ) -> tuple[str, float, list[str]]:
+        """
+        LLM-driven tool planning (Hermes-style).
+
+        Sends the user's message + tool schemas to the LLM, which decides
+        whether to call a tool or answer directly.
+
+        Returns (answer, confidence, agents_used).
+        Falls back to ""/0.5/[] if disabled or on error.
+        """
+        if not self._should_use_llm_tool_planning():
+            return "", 0.5, []
+
+        try:
+            # Get tool schemas (OpenAI format) from the registry
+            schemas = self.tool_registry.get_schemas()
+            if not schemas:
+                return "", 0.5, []
+
+            # Build a focused system prompt for tool planning
+            system_prompt = (
+                "Bạn là trợ lý IT Support. "
+                "Bạn có quyền gọi các công cụ (tools) để hoàn thành tác vụ. "
+                "Nếu câu hỏi cần thao tác file, đọc file, chạy lệnh, hoặc tìm kiếm web — "
+                "hãy gọi tool phù hợp. "
+                "Nếu chỉ cần trả lời bằng kiến thức thì trả lời trực tiếp (không gọi tool). "
+                "Trả lời bằng tiếng Việt."
+            )
+
+            user_message = payload.message.text or ""
+
+            # Build conversation with tool results for multi-turn
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_message},
+            ]
+
+            max_turns = int(getattr(get_settings(), "llm_tool_max_turns", 3))
+            agents_used: list[str] = []
+            current_turn = 0
+
+            while current_turn < max_turns:
+                current_turn += 1
+
+                response = await self.supervisor._llm.complete(
+                    system_prompt=system_prompt,
+                    user_message="",  # messages already has the full conversation
+                    tools=schemas,
+                    temperature=0.3,
+                )
+
+                if not response.tool_calls:
+                    # LLM answered directly without tool calls
+                    answer = response.content or ""
+                    confidence = min(0.95, response.confidence + 0.05)
+                    return answer, confidence, agents_used
+
+                # Execute each tool call and append results to messages
+                for tc in response.tool_calls:
+                    tool_name = tc.name
+                    tool_args = tc.arguments
+                    agents_used.append(tool_name)
+
+                    # Execute via registry
+                    try:
+                        result = await self.tool_registry.execute(
+                            tool_name,
+                            tool_args,
+                            approval_context={
+                                "request_id": payload.request_id,
+                                "user_id": payload.user.id,
+                                "display_name": payload.user.display_name,
+                                "original_message": user_message,
+                                "requested_via": "llm_tool_planning",
+                                "thread_id": payload.conversation.thread_id,
+                                "platform": payload.conversation.platform or payload.source,
+                                "chat_type": payload.conversation.chat_type,
+                                "chat_scope": payload.conversation.chat_scope,
+                                "group_chat": payload.conversation.group_chat,
+                            },
+                        )
+                        # Handle pending approval
+                        if isinstance(result, dict) and result.get("pending_approval"):
+                            tool_output = f"[Chờ phê duyệt Telegram: {result.get('approval_id')}]"
+                            confidence = 0.5
+                        else:
+                            tool_output = result.output if hasattr(result, "output") else str(result)
+                            confidence = 0.9
+                    except Exception as exc:
+                        tool_output = f"[Lỗi tool: {exc}]"
+                        confidence = 0.55
+
+                    # Append tool result as assistant message (simulating tool result)
+                    messages.append({
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [{
+                            "id": tc.id,
+                            "type": "function",
+                            "function": {"name": tc.name, "arguments": json.dumps(tc.arguments)},
+                        }],
+                    })
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc.id,
+                        "content": tool_output,
+                    })
+
+            # Max turns reached without direct answer
+            return "Mình đã thực hiện nhiều thao tác nhưng chưa có kết quả cuối cùng. Chuyển sang review.", 0.5, agents_used
+
+        except Exception as exc:
+            logger.warning("llm_tool_planning_failed", error=str(exc))
+            return "", 0.5, []
+
+    def _build_output_from_state(
+        self,
+        payload: InputPayload,
+        state: ReasoningState,
+        start_time: float,
+        extra_trace: dict | None = None,
+    ) -> OutputPayload:
+        """Build OutputPayload from ReasoningState after LLM tool planning."""
+        return self.supervisor._create_output(
+            payload=payload,
+            answer=state.answer,
+            confidence=state.confidence,
+            intent=None,  # may be None when coming from plan_with_tools
+            risk=None,
+            agents_used=state.agents_used,
+            status="completed",
+            processing_time=start_time,
+            extra_metadata=extra_trace or {},
+        )
 
     def _build_interrupt_clarification_question(
         self,
@@ -299,6 +446,31 @@ class ReasoningLoopOrchestrator:
             policy = await self.supervisor.policy_agent.extract(payload, memory, self.supervisor._llm)
             knowledge = await self.supervisor.knowledge_agent.retrieve(payload, memory, self.supervisor._llm)
             state.kb_sources = knowledge.get("knowledge_results", [])
+
+            # ── LLM-driven tool planning (Hermes-style) ──────────────────────
+            if self._should_use_llm_tool_planning():
+                add_trace("plan", "llm_tool_planning_start")
+                llm_answer, llm_conf, llm_agents = await self.plan_with_tools(
+                    payload, memory,
+                )
+                if llm_answer:
+                    state.answer = llm_answer
+                    state.confidence = llm_conf
+                    state.agents_used = state.agents_used + llm_agents
+                    state.kb_hit = True
+                    add_trace("plan", "llm_tool_planning_done", agents=llm_agents, confidence=llm_conf)
+                    # Skip rest of the pipeline, go directly to observe
+                    return self._build_output_from_state(
+                        payload=payload, state=state,
+                        start_time=start_time,
+                        extra_trace=build_trace_metadata({
+                            "llm_tool_planning": True,
+                            "llm_agents": llm_agents,
+                        }),
+                    )
+                else:
+                    add_trace("plan", "llm_tool_planning_fallback", reason="no_answer")
+            # ──────────────────────────────────────────────────────────────────
 
             tool_plan = self._plan_tool(knowledge, payload)
             add_trace(

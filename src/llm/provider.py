@@ -10,8 +10,8 @@ from tenacity import (
     wait_exponential,
     retry_if_exception_type,
 )
-from typing import Optional, TypeVar, Type
-from dataclasses import dataclass
+from typing import Optional, TypeVar, Type, List, Any
+from dataclasses import dataclass, field
 from enum import Enum
 import structlog
 import json
@@ -36,14 +36,26 @@ class LLMProvider(Enum):
 
 
 @dataclass
+class ToolCall:
+    """A single tool call returned by the LLM."""
+    id: str
+    name: str
+    arguments: dict[str, Any]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"id": self.id, "name": self.name, "arguments": self.arguments}
+
+
+@dataclass
 class LLMResponse:
-    """Standardized LLM response"""
+    """Standardized LLM response."""
     content: str
     confidence: float
     usage: dict
     model: str
     provider: str
     finish_reason: str
+    tool_calls: list[ToolCall] = field(default_factory=list)
 
 
 @dataclass
@@ -456,58 +468,72 @@ class MultiProviderLLMClient:
         model: Optional[str] = None,
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
+        tools: Optional[List[Dict]] = None,
     ) -> LLMResponse:
         """
-        Generate completion with automatic provider detection
+        Generate completion with automatic provider detection.
+
+        If `tools` is provided, the LLM is instructed to use function-calling.
+        Tool calls (if any) are returned in LLMResponse.tool_calls.
         """
-        # Use specified model or active model
         target_model = model or self._active_model
         target_provider = self.get_provider(target_model)
-
-        # Get client
         client = self._get_client(target_provider)
 
-        # Build messages
-        messages = [{"role": "system", "content": system_prompt}]
-
+        messages: List[Dict] = [{"role": "system", "content": system_prompt}]
         if context:
             context_str = self._format_context(context)
             messages.append({"role": "system", "content": f"Context:\n{context_str}"})
 
         messages.append({"role": "user", "content": user_message})
 
-        # Check circuit breaker
         if not await self._circuit_breaker.can_execute():
             raise CircuitBreakerError("multi_llm", "Circuit breaker is open")
 
         try:
-            # Azure OpenAI uses deployment_name instead of model
+            kwargs: Dict[str, Any] = {"messages": messages}
             if target_provider == LLMProvider.AZURE:
-                kwargs = {
-                    "messages": messages,
-                    "deployment_id": settings.azure_deployment_name or target_model,
-                }
+                kwargs["deployment_id"] = settings.azure_deployment_name or target_model
             else:
-                kwargs = {
-                    "model": target_model,
-                    "messages": messages,
-                }
+                kwargs["model"] = target_model
 
-            response = await client.chat.completions.create(
+            if tools:
+                kwargs["tools"] = tools
+                kwargs["tool_choice"] = "auto"
+
+            create_kwargs = {
                 **kwargs,
-                temperature=temperature or self._temperature,
-                max_tokens=max_tokens or self._max_tokens,
-            )
+                "temperature": temperature or self._temperature,
+                "max_tokens": max_tokens or self._max_tokens,
+            }
 
-            # Record success
+            response = await client.chat.completions.create(**create_kwargs)
+
             await self._circuit_breaker.record_success()
 
-            content = response.choices[0].message.content or ""
+            message = response.choices[0].message
+            content = message.content or ""
             usage = response.usage
             usage_dict = self._extract_usage(usage)
-            finish_reason = response.choices[0].finish_reason
+            finish_reason = str(response.choices[0].finish_reason)
 
-            # Track cost
+            # Parse tool calls
+            tool_calls: List[ToolCall] = []
+            if hasattr(message, "tool_calls") and message.tool_calls:
+                for tc in message.tool_calls:
+                    try:
+                        args_str = tc.function.arguments
+                        args = json.loads(args_str) if isinstance(args_str, str) else args_str
+                    except (json.JSONDecodeError, TypeError):
+                        args = {"raw": str(tc.function.arguments)}
+                    tool_calls.append(
+                        ToolCall(
+                            id=str(tc.index or "") + "_" + str(hash(args_str if isinstance(args_str, str) else "")),
+                            name=tc.function.name,
+                            arguments=args,
+                        )
+                    )
+
             cost = self._calculate_cost(target_model, usage)
             self._total_cost += cost
             self._total_tokens += usage_dict.get("total_tokens", 0)
@@ -517,7 +543,8 @@ class MultiProviderLLMClient:
                 provider=target_provider.value,
                 model=target_model,
                 tokens=usage_dict.get("total_tokens", 0),
-                cost_usd=round(cost, 6)
+                cost_usd=round(cost, 6),
+                tool_calls=len(tool_calls),
             )
 
             return LLMResponse(
@@ -526,7 +553,8 @@ class MultiProviderLLMClient:
                 usage=usage_dict,
                 model=target_model,
                 provider=target_provider.value,
-                finish_reason=finish_reason
+                finish_reason=finish_reason,
+                tool_calls=tool_calls,
             )
 
         except Exception as e:
@@ -535,7 +563,7 @@ class MultiProviderLLMClient:
                 "LLM completion failed",
                 provider=target_provider.value,
                 model=target_model,
-                error=str(e)
+                error=str(e),
             )
             raise LLMError(f"Completion failed: {e}")
 
