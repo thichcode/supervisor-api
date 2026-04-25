@@ -94,7 +94,7 @@ class ChatService:
                 ticket_id=request.ticket_id,
                 ticket_system=request.ticket_system,
             ) if (request.case_id or request.ticket_id) else None,
-            customer_reply=MessageInfo(text=request.message),
+            message=MessageInfo(text=request.message),
         )
 
         is_group_chat = bool(chat_context.get("group_chat", False))
@@ -370,7 +370,7 @@ class ChatService:
                 ticket_id=request.ticket_id,
                 ticket_system=request.ticket_system,
             ) if (request.case_id or request.ticket_id) else None,
-            customer_reply=MessageInfo(text=request.message),
+            message=MessageInfo(text=request.message),
         )
 
         async with api_module.async_session() as session:
