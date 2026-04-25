@@ -331,6 +331,10 @@ class TelegramAdapter:
         self._buffer_delay_seconds = 60
         self._message_mode_detector = ConversationContinuityEvaluator()
         self._kb_sessions: Dict[str, Dict[str, Any]] = {}
+        
+        # Verbose mode for streaming app logs to Telegram
+        self._verbose_mode: bool = False
+        self._verbose_chat_ids: set[str] = set()
     
     async def start(self):
         """Start the Telegram bot"""
@@ -390,6 +394,7 @@ class TelegramAdapter:
             {"command": "clear", "description": "Clear chat history"},
             {"command": "kb", "description": "Search or browse the knowledge base"},
             {"command": "super_analytics", "description": "View quick supervisor analytics"},
+            {"command": "verbose", "description": "Stream app logs (on/off/status)"},
         ]
 
         try:
@@ -754,7 +759,7 @@ class TelegramAdapter:
         elif cmd == "/help":
             await self._send_message(
                 chat_id,
-                "Commands:\n/start - Start\n/help - Help\n/health - Check bot and supervisor health\n/history - View history\n/clear - Clear history\n/kb - Search or browse KB\n/super_analytics - Quick analytics report\n/kbdraft [days] [top_n] - Generate KB drafts from misses\n\nKB candidate review:\n- APPROVE <candidate_id>\n- REVISE <candidate_id>: <note>",
+                "Commands:\n/start - Start\n/help - Help\n/health - Check bot and supervisor health\n/history - View history\n/clear - Clear history\n/kb - Search or browse KB\n/super_analytics - Quick analytics report\n/kbdraft [days] [top_n] - Generate KB drafts from misses\n/verbose on|off|status - Stream app logs\n\nKB candidate review:\n- APPROVE <candidate_id>\n- REVISE <candidate_id>: <note>",
             )
         elif cmd == "/history":
             await self._send_message(chat_id, "Use /clear to clear history")
@@ -770,6 +775,8 @@ class TelegramAdapter:
             await self._handle_super_analytics_command(chat_id, command)
         elif cmd == "/kbdraft":
             await self._handle_kb_draft_command(chat_id, command)
+        elif cmd == "/verbose":
+            await self._handle_verbose_command(chat_id, command)
         else:
             await self._send_message(chat_id, f"Unknown command: {command}")
 
@@ -1299,6 +1306,50 @@ class TelegramAdapter:
             logger.error("Super analytics failed", error=str(e), command=command)
             await self._send_message(chat_id, f"Có lỗi xảy ra khi lấy super analytics: {str(e)}", parse_mode=None)
 
+    async def _handle_verbose_command(self, chat_id: str, command: str) -> None:
+        """Handle /verbose on/off/status command."""
+        tokens = command.split()
+        action = tokens[1].lower() if len(tokens) > 1 else "status"
+
+        if action in ("on", "1", "true", "enable"):
+            self._verbose_mode = True
+            self._verbose_chat_ids.add(chat_id)
+            await self._send_message(
+                chat_id,
+                "🔊 Verbose mode: ON\n\nBạn sẽ nhận được log stream từ app.",
+            )
+        elif action in ("off", "0", "false", "disable"):
+            self._verbose_mode = False
+            self._verbose_chat_ids.discard(chat_id)
+            await self._send_message(
+                chat_id,
+                "🔕 Verbose mode: OFF\n\nBạn sẽ không nhận được log stream nữa.",
+            )
+        elif action in ("status", "?"):
+            status = "ON" if self._verbose_mode and chat_id in self._verbose_chat_ids else "OFF"
+            await self._send_message(
+                chat_id,
+                f"📊 Verbose mode: {status}",
+            )
+        else:
+            await self._send_message(
+                chat_id,
+                "Usage:\n/verbose on - Bật verbose\n/verbose off - Tắt verbose\n/verbose status - Xem trạng thái",
+            )
+
+    async def _send_verbose_log(self, message: str) -> None:
+        """Send verbose log to all verbose-enabled chat IDs."""
+        if not self._verbose_mode or not self._verbose_chat_ids:
+            return
+        
+        # Send to all verbose-enabled chats
+        for chat_id in list(self._verbose_chat_ids):
+            try:
+                await self._send_message(chat_id, message, parse_mode=None)
+            except Exception as e:
+                logger.warning("verbose_log_failed", chat_id=chat_id, error=str(e))
+                self._verbose_chat_ids.discard(chat_id)
+
     async def _handle_kb_draft_command(self, chat_id: str, command: str) -> None:
         """Run KB draft job and return results to Telegram."""
         await self._send_message(chat_id, "⏳ Đang chạy KB draft...", parse_mode=None)
@@ -1394,6 +1445,15 @@ class TelegramAdapter:
         )
 
         session_id = f"telegram_{user_id}"
+        
+        # Ensure session exists before adding message
+        if not self.session_store.get_session(session_id):
+            self.session_store.create_session(
+                session_id=session_id,
+                platform="telegram",
+                user_id=user_id
+            )
+        
         self.session_store.add_message(
             session_id=session_id,
             role="user",
@@ -1478,6 +1538,9 @@ class TelegramAdapter:
         metadata: Dict[str, Any],
     ) -> str:
         """Call Supervisor API"""
+        # Send verbose log
+        await self._send_verbose_log(f"📥 Nhận tin nhắn: {message[:100]}...")
+        
         try:
             async with httpx.AsyncClient() as client:
                 response = await client.post(
@@ -1492,6 +1555,8 @@ class TelegramAdapter:
                     headers={"Authorization": f"Bearer {self.api_key}"} if self.api_key else {},
                     timeout=30.0,
                 )
+                
+                await self._send_verbose_log(f"📤 Supervisor response: {response.status_code}")
 
                 if response.status_code == 200:
                     payload = response.json()
@@ -1502,6 +1567,7 @@ class TelegramAdapter:
 
         except Exception as e:
             logger.error("Supervisor call failed", error=str(e))
+            await self._send_verbose_log(f"❌ Lỗi: {str(e)[:100]}")
             return "Xin lỗi, có lỗi xảy ra."
 
     async def _call_approval_action(self, approval_id: str, action: str, actor: str) -> Optional[Dict[str, Any]]:
