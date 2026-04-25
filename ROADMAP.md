@@ -2,7 +2,10 @@
 
 ## v1.3.0 - Image Processing Enhancements
 
-### Planned
+### In Progress
+- [ ] **Teams Image Support** — Update Power Automate flow để gửi attachments
+  - Teams → Power Automate cần extract images và gửi url/data lên supervisor-api
+  - Hoặc dùng Teams Incoming Webhook thay thế
 - [ ] **Vision OCR Integration** — Extract text from images using vision-capable LLM (llama3.1-vision, etc.)
   - Upload image attachments to vision model
   - Extract error messages / text from screenshots
