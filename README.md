@@ -277,6 +277,8 @@ When reviewing an approval, click **🔍 Search KB** to:
 
 ## Environment Variables
 
+`src/config.py` is the runtime source of truth. Keep `.env.example`, `.env.production.example`, and compose files aligned with it.
+
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `DB_PASSWORD` | Yes | PostgreSQL password |
@@ -289,14 +291,27 @@ When reviewing an approval, click **🔍 Search KB** to:
 | `LLM_PROVIDER` | Yes | `ollama`, `openai`, `azure` |
 | `LLM_MODEL` | Yes | Model name |
 | `OLLAMA_BASE_URL` | No | Ollama server URL |
+| `OLLAMA_IMAGE_MODEL` | No | Separate model for image/OCR tasks |
 | `TELEGRAM_BOT_TOKEN` | No | Telegram bot token |
 | `TELEGRAM_APPROVAL_CHAT_IDS` | No | Comma-separated chat IDs |
+| `APPROVAL_NOTIFICATION_COOLDOWN_SECONDS` | No | Notification cooldown per chat/channel (default `0`) |
+| `ENABLE_LLM_TOOL_PLANNING` | No | Allow LLM to select tools directly |
 | `ENABLE_REASONING_LOOP` | No | Toggle reasoning loop (`true`/`false`) |
 | `REASONING_LOOP_MAX_ITERATIONS` | No | Iteration budget (default `3`) |
 | `REASONING_LOOP_TOOL_RETRY` | No | Tool retry attempts (default `1`) |
 | `REASONING_LOOP_ROLLOUT_USER_PERCENT` | No | % users included (default `100`) |
 | `REASONING_LOOP_ROLLOUT_TEAM_PERCENT` | No | % teams included (default `100`) |
 | `REASONING_LOOP_ROLLOUT_SALT` | No | Deterministic salt for rollout bucketing |
+| `MEMPALACE_ENABLED` | No | Enable external MemPalace memory adapter |
+| `FILE_MEMORY_ENABLED` | No | Enable local file-based memory |
+| `N8N_WEBHOOK_SECRET` | No | Verify incoming n8n webhook calls |
+| `ENABLE_FACT_STORE` | No | Enable structured fact memory |
+| `ENABLE_SUBAGENT_DELEGATION` | No | Enable parallel subagent delegation |
+
+For full variable list and defaults, see:
+- `.env.example` (development baseline)
+- `.env.production.example` (production baseline)
+- `src/config.py` (authoritative runtime defaults)
 
 ---
 

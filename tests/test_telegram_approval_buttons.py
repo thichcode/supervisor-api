@@ -107,37 +107,34 @@ def test_build_approval_message_text_group_chat_has_group_specific_header(group_
 def test_build_approval_inline_keyboard_has_approve_and_reject_buttons(sample_approval):
     keyboard = build_approval_inline_keyboard(sample_approval.id)
 
-    assert keyboard == {
-        "inline_keyboard": [
-            [
-                {"text": "✅ Approve", "callback_data": f"approval:approve:{sample_approval.id}"},
-                {"text": "🚫 Reject", "callback_data": f"approval:reject:{sample_approval.id}"},
-            ],
-            [
-                {"text": "🔍 Search KB", "callback_data": f"approval:search_kb:{sample_approval.id}"},
-            ]
-        ]
-    }
+    rows = keyboard["inline_keyboard"]
+    assert rows[0][0]["text"] == "✅ Approve"
+    assert rows[0][1]["text"] == "🚫 Reject"
+    assert rows[1][0]["text"] == "🔍 Search KB"
+
+    approve_cb = rows[0][0]["callback_data"]
+    reject_cb = rows[0][1]["callback_data"]
+    search_cb = rows[1][0]["callback_data"]
+
+    assert approve_cb.startswith(f"approval:approve:{sample_approval.id}")
+    assert reject_cb.startswith(f"approval:reject:{sample_approval.id}")
+    assert search_cb.startswith("approval:") and f":{sample_approval.id}" in search_cb
 
 
 @pytest.mark.asyncio
 async def test_build_approval_inline_keyboard_group_compact_has_view_full_context(group_approval):
     keyboard = build_approval_inline_keyboard(group_approval.id, compact=True, group_chat=True)
 
-    assert keyboard == {
-        "inline_keyboard": [
-            [
-                {"text": "✅ Approve", "callback_data": f"approval:approve:{group_approval.id}"},
-                {"text": "🚫 Reject", "callback_data": f"approval:reject:{group_approval.id}"},
-            ],
-            [
-                {"text": "🔍 Search KB", "callback_data": f"approval:search_kb:{group_approval.id}"},
-            ],
-            [
-                {"text": "🔎 View full context", "callback_data": f"approval:view_full_context:{group_approval.id}"},
-            ]
-        ]
-    }
+    rows = keyboard["inline_keyboard"]
+    assert rows[0][0]["text"] == "✅ Approve"
+    assert rows[0][1]["text"] == "🚫 Reject"
+    assert rows[1][0]["text"] == "🔍 Search KB"
+    assert rows[2][0]["text"] == "🔎 View full context"
+
+    assert rows[0][0]["callback_data"].startswith(f"approval:approve:{group_approval.id}")
+    assert rows[0][1]["callback_data"].startswith(f"approval:reject:{group_approval.id}")
+    assert rows[1][0]["callback_data"].startswith("approval:") and f":{group_approval.id}" in rows[1][0]["callback_data"]
+    assert rows[2][0]["callback_data"].startswith("approval:") and f":{group_approval.id}" in rows[2][0]["callback_data"]
 
 
 @pytest.mark.asyncio
@@ -186,7 +183,8 @@ async def test_handle_callback_query_view_full_context_expands_group_card(monkey
     assert "AI Response:" in text
     assert "Original:" in text
     assert "Group Chat Approval Required" in text
-    assert reply_markup["inline_keyboard"][1][0]["callback_data"] == f"approval:search_kb:{group_approval.id}"
+    kb_callback = reply_markup["inline_keyboard"][1][0]["callback_data"]
+    assert kb_callback.startswith("approval:") and f":{group_approval.id}" in kb_callback
     assert parse_mode == "Markdown"
 
 

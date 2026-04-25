@@ -31,7 +31,7 @@ from src.core.sanitizer import sanitizer
 from src.core.supervisor import Supervisor
 from src.db import init_db, close_db, async_session, InteractionLog
 from src.harness import HarnessSupervisorBridge
-from src.llm import llm_client
+from src.llm import llm_client, MultiProviderLLMClient, LLMProvider
 from src.memory import redis_cache
 from src.memory.service import MemoryService
 from src.services.interaction_service import InteractionService
@@ -355,7 +355,7 @@ async def _maybe_draft_image_case_candidate(
         select(InteractionLog)
         .where(
             InteractionLog.traffic_class == "service_like",
-            (InteractionLog.kb_hit_count == None) | (InteractionLog.kb_hit_count == 0),
+            (InteractionLog.kb_hit_count.is_(None)) | (InteractionLog.kb_hit_count == 0),
             InteractionLog.input_text.ilike(f"%{signature_fragment}%"),
         )
         .order_by(InteractionLog.created_at.desc())

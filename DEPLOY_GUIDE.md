@@ -57,6 +57,8 @@ python -m src.api.app
 Create `.env` file:
 
 ```bash
+# Source of truth: src/config.py
+
 # ============ APP ============
 APP_ENV=production
 APP_DEBUG=false
@@ -84,6 +86,8 @@ LLM_PROVIDER=ollama
 OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_DEFAULT_MODEL=llama3
 OLLAMA_TIMEOUT=320
+OLLAMA_IMAGE_MODEL=llama3.1-vision
+LLM_HEALTHCHECK_ENABLED=false
 
 # Option B: llama.cpp (direct HTTP)
 # LLM_PROVIDER=ollama
@@ -100,18 +104,53 @@ OLLAMA_TIMEOUT=320
 
 # ============ SECURITY ============
 WEBHOOK_INPUT_SECRET=your_webhook_secret
-CORRECT_HORSE_BATTERY_STAPLE=random_string_for_jwt
+JWT_SECRET=your_jwt_secret
+HMAC_SECRET=your_hmac_secret
+API_KEYS=key1,key2
 
 # ============ OUTPUT ============
 POWER_AUTOMATE_WEBHOOK_URL=https://prod-...-logic-.azure.com/
+WEBHOOK_TIMEOUT=30
+
+# ============ REASONING / TOOLS ============
+ENABLE_TOOLS=true
+ENABLE_REASONING_LOOP=false
+REASONING_LOOP_MAX_ITERATIONS=3
+REASONING_LOOP_TOOL_RETRY=1
+ENABLE_LLM_TOOL_PLANNING=false
+REASONING_LOOP_ROLLOUT_USER_PERCENT=100
+REASONING_LOOP_ROLLOUT_TEAM_PERCENT=100
+REASONING_LOOP_ROLLOUT_SALT=reasoning-loop-v1
+
+# ============ MEMORY ============
+MEMORY_CONVERSATION_TTL=86400
+MEMORY_SUMMARY_TTL=604800
+MEMORY_MAX_TOKENS=4000
+MEMPALACE_ENABLED=false
+MEMPALACE_PATH=
+MEMPALACE_TOP_K=3
+FILE_MEMORY_ENABLED=false
+FILE_MEMORY_PATH=
+
+# ============ TELEGRAM ============
+TELEGRAM_BOT_TOKEN=
+TELEGRAM_APPROVAL_CHAT_IDS=
+TELEGRAM_PARSE_MODE=Markdown
+APPROVAL_NOTIFICATION_COOLDOWN_SECONDS=0
 
 # ============ OPTIONAL: N8N ============
 N8N_BASE_URL=http://localhost:5678
 # N8N_API_KEY=your_n8n_api_key
+N8N_WEBHOOK_SECRET=
 
 # ============ OPTIONAL: MONITORING ============
 LOG_LEVEL=INFO
 ```
+
+For a complete, up-to-date variable list, always cross-check:
+- `src/config.py` (runtime authority)
+- `.env.example` (development baseline)
+- `.env.production.example` (production baseline)
 
 ### 3. Database Setup
 

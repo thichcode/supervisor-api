@@ -18,7 +18,13 @@ import json
 import httpx
 
 from src.config import get_settings
-from src.core.circuit_breaker import get_circuit_breaker, CircuitBreakerConfig, CircuitBreakerError
+from src.core.circuit_breaker import (
+    get_circuit_breaker,
+    CircuitBreakerConfig,
+    CircuitBreakerError,
+    CircuitBreakerMetrics,
+    CircuitState,
+)
 
 settings = get_settings()
 logger = structlog.get_logger()
@@ -374,7 +380,7 @@ class MultiProviderLLMClient:
             logger.info("Circuit breaker reset requested", provider=provider)
         
         # Reset the main circuit breaker
-        self._circuit_breaker._state = "closed"
+        self._circuit_breaker._state = CircuitState.CLOSED
         self._circuit_breaker._failure_count = 0
         self._circuit_breaker.metrics = CircuitBreakerMetrics()
         logger.info("Circuit breaker reset", name="multi_llm_client")
