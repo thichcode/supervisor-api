@@ -1,6 +1,25 @@
-from pydantic_settings import BaseSettings, SettingsConfigDict
+import json
 from functools import lru_cache
-from typing import Literal
+from typing import Any, Literal
+
+from pydantic_settings import BaseSettings, EnvSettingsSource, PydanticBaseSettingsSource, SettingsConfigDict
+
+
+class CommaSeparatedEnvSettingsSource(EnvSettingsSource):
+    def prepare_field_value(self, field_name: str, field: Any, value: Any, value_is_complex: bool):
+        if field_name in {"cors_allowed_origins", "extra_hosts"} and isinstance(value, str):
+            raw = value.strip()
+            if not raw:
+                default_value = getattr(field, "default", None)
+                return default_value if default_value is not None else []
+            try:
+                parsed = json.loads(raw)
+                if isinstance(parsed, list):
+                    return parsed
+            except Exception:
+                pass
+            return [item.strip() for item in raw.split(",") if item.strip()]
+        return super().prepare_field_value(field_name, field, value, value_is_complex)
 
 
 class Settings(BaseSettings):
@@ -196,6 +215,22 @@ class Settings(BaseSettings):
     # Scheduler Configuration
     scheduler_enabled: bool = False
     scheduler_cron_default: str = "0 9 * * *"  # 9 AM daily
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls,
+        init_settings,
+        env_settings,
+        dotenv_settings,
+        file_secret_settings,
+    ):
+        return (
+            init_settings,
+            CommaSeparatedEnvSettingsSource(settings_cls),
+            dotenv_settings,
+            file_secret_settings,
+        )
 
     @property
     def style_learning_user_ids(self) -> set[str]:
