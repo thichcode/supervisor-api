@@ -418,6 +418,21 @@ async def lifespan(app: FastAPI):
         await llm_client.initialize()
         supervisor.set_llm(llm_client)
         logger.info("LLM initialized", model=settings.llm_model)
+        
+        # Initialize separate image processing LLM if configured
+        if settings.ollama_image_model and settings.ollama_image_model != settings.ollama_default_model:
+            try:
+                image_llm_client = MultiProviderLLMClient(
+                    provider=LLMProvider.OLLAMA,
+                    model=settings.ollama_image_model,
+                    base_url=settings.ollama_base_url,
+                    timeout=settings.ollama_timeout,
+                )
+                await image_llm_client.initialize()
+                supervisor.set_image_llm(image_llm_client)
+                logger.info("Image LLM initialized", model=settings.ollama_image_model)
+            except Exception as e:
+                logger.warning("Image LLM initialization failed - using fallback", error=str(e))
     except Exception as e:
         logger.warning("LLM initialization failed - running in fallback mode", error=str(e))
         # App continues without LLM - uses fallback responses

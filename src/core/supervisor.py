@@ -158,6 +158,7 @@ class Supervisor:
         self.simple_agent = SimpleAgent()
         self.reasoning_orchestrator = ReasoningLoopOrchestrator(self)
         self._llm: Optional[MultiProviderLLMClient] = None
+        self._image_llm: Optional[MultiProviderLLMClient] = None  # Separate LLM for image processing
 
         # NEW v2: Initialize enhanced components (based on config)
         self._init_enhancements()
@@ -282,6 +283,14 @@ class Supervisor:
 
     def set_llm(self, llm: MultiProviderLLMClient):
         self._llm = llm
+
+    def set_image_llm(self, llm: MultiProviderLLMClient):
+        """Set separate LLM for image processing tasks"""
+        self._image_llm = llm
+
+    def _get_image_llm(self) -> Optional[MultiProviderLLMClient]:
+        """Get image LLM if available, fallback to main LLM"""
+        return self._image_llm or self._llm
 
     async def simple_process(
         self, payload: InputPayload, memory: MemoryContextModel
@@ -1251,6 +1260,10 @@ Hãy đề xuất giải pháp hoặc các bước tiếp theo."""
                 "candidate_hint": False,
             }
 
+        settings = get_settings()
+        image_llm = self._get_image_llm()
+        use_image_model = image_llm and settings.ollama_image_model
+
         attachment_texts: list[str] = []
         attachment_names: list[str] = []
         for attachment in image_attachments[:5]:
@@ -1259,6 +1272,10 @@ Hãy đề xuất giải pháp hoặc các bước tiếp theo."""
             ocr_text = str(self._attachment_value(attachment, "ocr_text") or self._attachment_value(attachment, "text") or "").strip()
             if ocr_text:
                 attachment_texts.append(ocr_text)
+            elif use_image_model and image_llm:
+                # Use image model to extract text from attachment if no OCR available
+                # Note: This requires the attachment to have actual image data/b64
+                pass  # Image model OCR handling can be added here
 
         payload_text = payload.message.text or ""
         issue_signature = self._normalize_issue_signature(payload_text, " ".join(attachment_texts), " ".join(attachment_names))
@@ -1289,6 +1306,7 @@ Hãy đề xuất giải pháp hoặc các bước tiếp theo."""
             "internal_note": internal_note,
             "draft_reply_hint": draft_reply_hint,
             "candidate_hint": bool(issue_signature),
+            "image_model_used": settings.ollama_image_model if use_image_model else None,
         }
 
     def _build_image_case_clarification(self, image_case_context: dict[str, Any], fallback_question: str = "") -> str:

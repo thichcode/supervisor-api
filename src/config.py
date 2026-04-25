@@ -72,6 +72,9 @@ class Settings(BaseSettings):
     ollama_base_url: str = "http://localhost:11434"
     ollama_default_model: str = "llama3"
     ollama_timeout: int = 320
+    
+    # Image Processing Model (separate from main LLM for OCR/tasks)
+    ollama_image_model: str = "llama3.1-vision"
 
     # Azure OpenAI Configuration (optional)
     azure_openai_endpoint: str = ""
