@@ -11,6 +11,7 @@ import structlog
 import httpx
 
 from src.config import get_settings
+from src.core.conversation_continuity import ConversationContinuityEvaluator
 from src.core.kb_presentation import build_kb_card, format_kb_response
 logger = structlog.get_logger()
 
@@ -22,16 +23,28 @@ def _get_approval_secret() -> str:
     return getattr(settings, "telegram_approval_secret", "") or settings.hmac_secret or "default-approval-secret"
 
 
-def generate_approval_hmac(approval_id: str) -> str:
-    """Generate HMAC for approval callback verification."""
+def generate_approval_hmac(approval_id: str, length: int = 10) -> str:
+    """Generate a short HMAC for approval callback verification.
+
+    Telegram callback_data is limited to 64 bytes, so we keep the signature short.
+    """
     secret = _get_approval_secret()
-    return hmac.new(secret.encode(), approval_id.encode(), "sha256").hexdigest()[:16]
+    return hmac.new(secret.encode(), approval_id.encode(), "sha256").hexdigest()[:length]
 
 
 def verify_approval_hmac(approval_id: str, hmac_sig: str) -> bool:
-    """Verify HMAC signature for approval callback."""
-    expected = generate_approval_hmac(approval_id)
-    return hmac.compare_digest(expected, hmac_sig)
+    """Verify HMAC signature for approval callback.
+
+    Accept both the new shorter signature and legacy longer signatures so old cards
+    continue to work after deployment.
+    """
+    if not hmac_sig:
+        return False
+    for length in (10, 16):
+        expected = generate_approval_hmac(approval_id, length=length)
+        if hmac.compare_digest(expected, hmac_sig):
+            return True
+    return False
 
 
 def get_allowed_approval_chat_ids() -> set[str]:
@@ -159,14 +172,14 @@ def build_approval_inline_keyboard(approval_id: str, compact: bool = False, grou
     ]
     if group_chat is True and compact:
         buttons.append([
-            {"text": "🔍 Search KB", "callback_data": f"approval:search_kb:{approval_id}:{hmac_sig}"},
+            {"text": "🔍 Search KB", "callback_data": f"approval:kb:{approval_id}:{hmac_sig}"},
         ])
         buttons.append([
-            {"text": "🔎 View full context", "callback_data": f"approval:view_full_context:{approval_id}:{hmac_sig}"},
+            {"text": "🔎 View full context", "callback_data": f"approval:ctx:{approval_id}:{hmac_sig}"},
         ])
     else:
         buttons.append([
-            {"text": "🔍 Search KB", "callback_data": f"approval:search_kb:{approval_id}:{hmac_sig}"},
+            {"text": "🔍 Search KB", "callback_data": f"approval:kb:{approval_id}:{hmac_sig}"},
         ])
     return {"inline_keyboard": buttons}
 
@@ -289,16 +302,28 @@ def parse_approval_callback_data(data: str) -> Optional[Tuple[str, str, str]]:
     """
     if not data:
         return None
-    # New format: approval:approve:ID:HMAC (4 parts)
+
+    action_aliases = {
+        "approve": "approve",
+        "reject": "reject",
+        "search_kb": "search_kb",
+        "kb": "search_kb",
+        "view_full_context": "view_full_context",
+        "ctx": "view_full_context",
+    }
+
+    # New format: approval:action:ID:HMAC (4 parts)
     parts = data.split(":")
     if len(parts) == 4 and parts[0] == "approval":
-        action, approval_id, hmac_sig = parts[1], parts[2], parts[3]
-        if action in {"approve", "reject", "search_kb", "view_full_context"} and approval_id:
+        action = action_aliases.get(parts[1])
+        approval_id, hmac_sig = parts[2], parts[3]
+        if action and approval_id:
             return action, approval_id, hmac_sig
-    # Legacy format (without HMAC) for backward compat: approval:approve:ID
+    # Legacy format (without HMAC) for backward compat: approval:action:ID
     if len(parts) == 3 and parts[0] == "approval":
-        action, approval_id = parts[1], parts[2]
-        if action in {"approve", "reject", "search_kb", "view_full_context"} and approval_id:
+        action = action_aliases.get(parts[1])
+        approval_id = parts[2]
+        if action and approval_id:
             return action, approval_id, ""  # Empty HMAC = legacy
     return None
 
