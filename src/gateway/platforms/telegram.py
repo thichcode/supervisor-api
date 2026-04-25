@@ -692,7 +692,7 @@ class TelegramAdapter:
         elif cmd == "/help":
             await self._send_message(
                 chat_id,
-                "Commands:\n/start - Start\n/help - Help\n/health - Check bot and supervisor health\n/history - View history\n/clear - Clear history\n/kb - Search or browse KB\n/super_analytics - Quick analytics report\n\nKB candidate review:\n- APPROVE <candidate_id>\n- REVISE <candidate_id>: <note>",
+                "Commands:\n/start - Start\n/help - Help\n/health - Check bot and supervisor health\n/history - View history\n/clear - Clear history\n/kb - Search or browse KB\n/super_analytics - Quick analytics report\n/kbdraft [days] [top_n] - Generate KB drafts from misses\n\nKB candidate review:\n- APPROVE <candidate_id>\n- REVISE <candidate_id>: <note>",
             )
         elif cmd == "/history":
             await self._send_message(chat_id, "Use /clear to clear history")
@@ -706,6 +706,8 @@ class TelegramAdapter:
             await self._handle_kb_command(chat_id, user_id, command)
         elif cmd == "/super_analytics":
             await self._handle_super_analytics_command(chat_id, command)
+        elif cmd == "/kbdraft":
+            await self._handle_kb_draft_command(chat_id, command)
         else:
             await self._send_message(chat_id, f"Unknown command: {command}")
 
@@ -1234,6 +1236,60 @@ class TelegramAdapter:
         except Exception as e:
             logger.error("Super analytics failed", error=str(e), command=command)
             await self._send_message(chat_id, f"Có lỗi xảy ra khi lấy super analytics: {str(e)}", parse_mode=None)
+
+    async def _handle_kb_draft_command(self, chat_id: str, command: str) -> None:
+        """Run KB draft job and return results to Telegram."""
+        await self._send_message(chat_id, "⏳ Đang chạy KB draft...", parse_mode=None)
+
+        tokens = command.split()
+        days = 30
+        top_n = 5
+        if len(tokens) > 1:
+            try:
+                days = max(1, min(90, int(tokens[1])))
+            except ValueError:
+                pass
+        if len(tokens) > 2:
+            try:
+                top_n = max(1, min(20, int(tokens[2])))
+            except ValueError:
+                pass
+
+        try:
+            from src.services.kb_draft_service import KBDraftService
+            service = KBDraftService()
+            result = await service.run(days=days, top_n=top_n, min_count=2)
+            drafts = result.get("drafts_created", [])
+            miss_count = result.get("miss_patterns_found", 0)
+
+            if not drafts:
+                await self._send_message(
+                    chat_id,
+                    f"Không tìm thấy KB miss patterns nào trong {days} ngày qua.",
+                    parse_mode=None,
+                )
+                return
+
+            lines = [f"📝 KB Draft ({days} ngày, {miss_count} patterns, {len(drafts)} drafts)"]
+            for i, d in enumerate(drafts[:5]):
+                cid = d.get("candidate_id", "?")[:8]
+                title = d.get("title", "")[:40]
+                tags = ", ".join(d.get("tags", [])[:2])
+                lines.append(f"{i+1}. [{cid}] {title}")
+                if tags:
+                    lines.append(f"   Tags: {tags}")
+
+            lines.append("")
+            lines.append("Dùng /approve <id> hoặc /revise <id>: <note>")
+
+            msg = "\n".join(lines)
+            if len(msg) > 3900:
+                msg = msg[:3900] + "..."
+            await self._send_message(chat_id, msg, parse_mode=None)
+
+        except Exception as e:
+            logger.error("KB draft failed", error=str(e), command=command)
+            await self._send_message(chat_id, f"Có lỗi: {str(e)}", parse_mode=None)
 
     async def _buffer_conversation_message(
         self,
