@@ -10,7 +10,7 @@ from tenacity import (
     wait_exponential,
     retry_if_exception_type,
 )
-from typing import Optional, TypeVar, Type, List, Any
+from typing import Optional, TypeVar, Type, List, Any, Dict
 from dataclasses import dataclass, field
 from enum import Enum
 import structlog
