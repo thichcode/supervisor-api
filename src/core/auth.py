@@ -374,17 +374,24 @@ class AuthManager:
     """Central authentication manager"""
     
     def __init__(self):
+        # JWT secret - use jwt_secret if provided, fallback to webhook_input_secret for backward compat
+        jwt_secret = settings.jwt_secret or settings.webhook_input_secret or "default-secret-change-me"
         self.jwt_auth = JWTAuth(
-            secret=settings.webhook_input_secret or "default-secret-change-me",
+            secret=jwt_secret,
             algorithm="HS256"
         )
+        
+        # HMAC secret - use hmac_secret if provided, fallback to webhook_input_secret for backward compat
+        hmac_secret = settings.hmac_secret or settings.webhook_input_secret or "default-secret-change-me"
         self.hmac_auth = HMACAuth(
-            secret=settings.webhook_input_secret or "default-secret-change-me"
+            secret=hmac_secret
         )
+        
         self.api_key_auth = APIKeyAuth()
         
-        # Load API keys from environment if provided
-        api_keys = settings.webhook_input_secret.split(",") if settings.webhook_input_secret else []
+        # API keys - use api_keys if provided, fallback to webhook_input_secret for backward compat
+        api_keys_str = settings.api_keys or settings.webhook_input_secret or ""
+        api_keys = api_keys_str.split(",") if api_keys_str else []
         for i, key in enumerate(api_keys):
             if key and len(key) > 10:
                 self.api_key_auth.add_key(key, f"service-{i}", "service", ["read", "write"])

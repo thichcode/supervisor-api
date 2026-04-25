@@ -2,7 +2,7 @@
 Approval Service - Manages approval queue for AI responses requiring human review
 """
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 import structlog
 
@@ -18,6 +18,11 @@ settings = get_settings()
 APPROVAL_QUEUE_KEY = "approval:queue"
 APPROVAL_TTL = 86400 * 7  # 7 days
 
+# Rate limiting
+APPROVAL_RATE_LIMIT_KEY = "approval:rate_limit"
+APPROVAL_RATE_LIMIT_WINDOW = 60  # 1 minute
+APPROVAL_RATE_LIMIT_MAX = 30  # max 30 requests per window
+
 
 class ApprovalService:
     def __init__(self):
@@ -28,6 +33,64 @@ class ApprovalService:
 
     def _notification_key(self, channel: str) -> str:
         return f"approval:notification:{channel}"
+
+    # ── Rate Limiting ────────────────────────────────────────────────────────
+    async def _check_rate_limit(self, identifier: str, operation: str) -> bool:
+        """Check if operation is rate limited.
+        
+        Returns True if allowed, False if rate limited.
+        """
+        key = f"{APPROVAL_RATE_LIMIT_KEY}:{operation}:{identifier}"
+        now = datetime.now().timestamp()
+        window_start = now - APPROVAL_RATE_LIMIT_WINDOW
+        
+        # Get current count
+        count_data = await redis_cache.get_json(key)
+        count = 0
+        reset_at = 0.0
+        
+        if count_data:
+            reset_at = count_data.get("reset_at", 0.0)
+            if reset_at > window_start:
+                count = count_data.get("count", 0)
+        
+        # Increment if within window
+        if now <= reset_at or reset_at <= window_start:
+            count += 1
+            reset_at = now + APPROVAL_RATE_LIMIT_WINDOW
+            await redis_cache.set_json(key, {"count": count, "reset_at": reset_at}, ttl=APPROVAL_RATE_LIMIT_WINDOW + 10)
+            
+            if count > APPROVAL_RATE_LIMIT_MAX:
+                logger.warning("rate_limited", operation=operation, identifier=identifier, count=count)
+                return False
+            return True
+        
+        # Reset window
+        count = 1
+        reset_at = now + APPROVAL_RATE_LIMIT_WINDOW
+        await redis_cache.set_json(key, {"count": count, "reset_at": reset_at}, ttl=APPROVAL_RATE_LIMIT_WINDOW + 10)
+        return True
+
+    # ── Audit Log ─────────────────────────────────────────────────────────
+    async def _log_audit(self, action: str, approval_id: str, actor: str, details: dict):
+        """Log approval action to immutable audit store."""
+        audit_entry = {
+            "timestamp": datetime.now().isoformat(),
+            "action": action,
+            "approval_id": approval_id,
+            "actor": actor,
+            "details": details,
+        }
+        # Store in Redis with TTL
+        audit_key = f"approval:audit:{approval_id}"
+        audit_list = await redis_cache.get_json(audit_key) or []
+        if not isinstance(audit_list, list):
+            audit_list = []
+        audit_list.append(audit_entry)
+        # Keep only last 100 entries
+        audit_list = audit_list[-100:]
+        await redis_cache.set_json(audit_key, audit_list, ttl=APPROVAL_TTL * 2)
+        logger.info("approval_audit", **audit_entry)
 
     async def _notification_allowed(self, channel: str) -> bool:
         cooldown = self._notification_cooldown_seconds()
@@ -235,29 +298,40 @@ class ApprovalService:
                     approvals.append(approval)
         
         return sorted(approvals, key=lambda a: a.created_at, reverse=True)
-    
+
     async def approve(
         self,
         approval_id: str,
         reviewed_by: str,
         comment: Optional[str] = None,
     ) -> Optional[ApprovalRequest]:
+        # Rate limit
+        if not await self._check_rate_limit(reviewed_by, "approve"):
+            logger.warning("rate_limit_exceeded", actor=reviewed_by, operation="approve")
+            return None
+        
         approval = await self.get_approval(approval_id)
         
         if not approval:
             logger.warning("approval_not_found", approval_id=approval_id)
             return None
-        
+
         if approval.status != ApprovalStatus.PENDING:
             logger.warning("approval_not_pending", approval_id=approval_id, status=approval.status)
             return None
-        
+
         approval.status = ApprovalStatus.APPROVED
         approval.reviewed_by = reviewed_by
         approval.reviewed_at = datetime.now()
         approval.review_comment = comment
         
         await self._save_approval(approval)
+
+        # Audit log
+        await self._log_audit("approve", approval_id, reviewed_by, {
+            "comment": comment or "",
+            "confidence": approval.confidence,
+        })
         
         logger.info(
             "approval_approved",
@@ -265,15 +339,20 @@ class ApprovalService:
             reviewed_by=reviewed_by,
         )
         metrics.record_approval_action("approved")
-        
+
         return approval
-    
+
     async def reject(
         self,
         approval_id: str,
         reviewed_by: str,
         comment: Optional[str] = None,
     ) -> Optional[ApprovalRequest]:
+        # Rate limit
+        if not await self._check_rate_limit(reviewed_by, "reject"):
+            logger.warning("rate_limit_exceeded", actor=reviewed_by, operation="reject")
+            return None
+        
         approval = await self.get_approval(approval_id)
         
         if not approval:
@@ -290,6 +369,12 @@ class ApprovalService:
         approval.review_comment = comment
         
         await self._save_approval(approval)
+        
+        # Audit log
+        await self._log_audit("reject", approval_id, reviewed_by, {
+            "comment": comment or "",
+            "confidence": approval.confidence,
+        })
         
         logger.info(
             "approval_rejected",

@@ -134,9 +134,74 @@ def build_default_registry() -> "ToolRegistryCompat":
     """
     registry = ToolRegistryCompat()
 
+    def _sanitize_command(command: str) -> tuple[bool, str]:
+        """Sanitize shell command to prevent injection.
+        
+        Returns: (is_safe, error_message)
+        """
+        if not command:
+            return False, "Empty command"
+        # Block dangerous patterns
+        dangerous = [
+            "& ", "; ", "| ", "&&", "||", ">", ">>", "<",
+            "\n", "\r", "\x00",  # Control characters
+            "sudo ", "su ",  # Privilege escalation
+            "curl ", "wget ", "ssh ", "scp ", "rsync ",  # Network
+            "rm -rf", "mkfs", "dd if=",  # Destructive
+            "python -c", "perl -e", "ruby -e", "php -r",  # Code execution
+            "export ", "source /", ". /",  # Env/rc injection
+        ]
+        cmd_lower = command.lower()
+        for pattern in dangerous:
+            if pattern in cmd_lower:
+                return False, f"Dangerous pattern blocked: {pattern}"
+        # Must be alphanumeric + basic punctuation
+        import re
+        if not re.match(r"^[a-zA-Z0-9\s\-_./:]+$", command):
+            return False, "Invalid characters in command"
+        return True, ""
+
+    def _sanitize_path(path: str) -> tuple[bool, str]:
+        """Sanitize file path to prevent traversal.
+        
+        Returns: (is_safe, error_message)
+        """
+        if not path:
+            return False, "Empty path"
+        # Block absolute paths outside allowed directories
+        import os
+        abs_path = os.path.abspath(os.expanduser(path))
+        # Allow only within project or /tmp
+        allowed_prefixes = [
+            "/tmp/",
+            os.path.expanduser("~"),
+            "/home/",
+        ]
+        # Also check relative paths that stay within project
+        resolved = os.path.realpath(abs_path)
+        if resolved.startswith("/tmp") or "/home/" in resolved:
+            pass  # OK
+        else:
+            # Check if it's a relative path (stays in project)
+            if not path.startswith("/") and ".." not in path:
+                pass  # OK - relative path
+            else:
+                return False, f"Path traversal blocked: {path}"
+        # Block specific dangerous paths
+        blocked = ["/etc/passwd", "/etc/shadow", "/etc/sudoers", "/.ssh/", "/.gnupg/"]
+        for b in blocked:
+            if b in abs_path:
+                return False, f"Blocked path: {b}"
+        return True, ""
+
     # Tool 1: terminal
     async def _terminal_handler(command: str, timeout: int = 30, workdir: str = None):
         from src.cli_tools import terminal as cli_terminal
+        # Sanitize command
+        is_safe, err = _sanitize_command(command)
+        if not is_safe:
+            return ToolResult(tool_name="terminal", success=False, 
+                          output=f"Command blocked: {err}", metadata={"blocked": True})
         result = cli_terminal(command, timeout=timeout, workdir=workdir)
         ok = result.get("exit_code", 1) == 0
         return ToolResult(tool_name="terminal", success=ok,
@@ -154,6 +219,11 @@ def build_default_registry() -> "ToolRegistryCompat":
     async def _read_handler(path: str, limit: int = 500):
         from src.cli_tools import read_file as cli_read
         from src.cli_tools import FileReadResult
+        # Sanitize path
+        is_safe, err = _sanitize_path(path)
+        if not is_safe:
+            return ToolResult(tool_name="read_file", success=False,
+                          output=f"Path blocked: {err}", metadata={"blocked": True})
         result = cli_read(path, offset=1, limit=limit)
         if isinstance(result, FileReadResult):
             return ToolResult(tool_name="read_file", success=True, output=result.content,
@@ -174,6 +244,11 @@ def build_default_registry() -> "ToolRegistryCompat":
     # Tool 3: write_file
     async def _write_handler(path: str, content: str):
         from src.cli_tools import write_file as cli_write
+        # Sanitize path
+        is_safe, err = _sanitize_path(path)
+        if not is_safe:
+            return ToolResult(tool_name="write_file", success=False,
+                          output=f"Path blocked: {err}", metadata={"blocked": True})
         result = cli_write(path, content)
         ok = result.get("success", False)
         output = f"File written: {path}" if ok else str(result)

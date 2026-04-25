@@ -3,15 +3,44 @@ Telegram Platform Adapter
 """
 
 import asyncio
+import hmac
 from datetime import datetime, timezone
 from typing import Optional, Dict, Any, Tuple
 import secrets
 import structlog
 import httpx
 
-from src.core.conversation_continuity import ConversationContinuityEvaluator
+from src.config import get_settings
 from src.core.kb_presentation import build_kb_card, format_kb_response
 logger = structlog.get_logger()
+
+
+def _get_approval_secret() -> str:
+    """Get secret for HMAC verification of approval callbacks."""
+    settings = get_settings()
+    # Use dedicated secret or fallback to hmac_secret
+    return getattr(settings, "telegram_approval_secret", "") or settings.hmac_secret or "default-approval-secret"
+
+
+def generate_approval_hmac(approval_id: str) -> str:
+    """Generate HMAC for approval callback verification."""
+    secret = _get_approval_secret()
+    return hmac.new(secret.encode(), approval_id.encode(), "sha256").hexdigest()[:16]
+
+
+def verify_approval_hmac(approval_id: str, hmac_sig: str) -> bool:
+    """Verify HMAC signature for approval callback."""
+    expected = generate_approval_hmac(approval_id)
+    return hmac.compare_digest(expected, hmac_sig)
+
+
+def get_allowed_approval_chat_ids() -> set[str]:
+    """Get allowed chat IDs for approval actions."""
+    settings = get_settings()
+    chat_ids = getattr(settings, "telegram_approval_chat_ids", "") or ""
+    if not chat_ids:
+        return set()
+    return set(cid.strip() for cid in chat_ids.split(",") if cid.strip())
 
 
 def _truncate_text(text: str, limit: int = 120) -> str:
@@ -120,23 +149,24 @@ def build_approval_message_text(approval, compact: Optional[bool] = None) -> str
 
 
 def build_approval_inline_keyboard(approval_id: str, compact: bool = False, group_chat: Optional[bool] = None) -> Dict[str, Any]:
-    """Build the inline keyboard for approval actions."""
+    """Build the inline keyboard for approval actions with HMAC verification."""
+    hmac_sig = generate_approval_hmac(approval_id)
     buttons = [
         [
-            {"text": "✅ Approve", "callback_data": f"approval:approve:{approval_id}"},
-            {"text": "🚫 Reject", "callback_data": f"approval:reject:{approval_id}"},
+            {"text": "✅ Approve", "callback_data": f"approval:approve:{approval_id}:{hmac_sig}"},
+            {"text": "🚫 Reject", "callback_data": f"approval:reject:{approval_id}:{hmac_sig}"},
         ]
     ]
     if group_chat is True and compact:
         buttons.append([
-            {"text": "🔍 Search KB", "callback_data": f"approval:search_kb:{approval_id}"},
+            {"text": "🔍 Search KB", "callback_data": f"approval:search_kb:{approval_id}:{hmac_sig}"},
         ])
         buttons.append([
-            {"text": "🔎 View full context", "callback_data": f"approval:view_full_context:{approval_id}"},
+            {"text": "🔎 View full context", "callback_data": f"approval:view_full_context:{approval_id}:{hmac_sig}"},
         ])
     else:
         buttons.append([
-            {"text": "🔍 Search KB", "callback_data": f"approval:search_kb:{approval_id}"},
+            {"text": "🔍 Search KB", "callback_data": f"approval:search_kb:{approval_id}:{hmac_sig}"},
         ])
     return {"inline_keyboard": buttons}
 
@@ -252,17 +282,25 @@ def parse_kb_candidate_text_action(text: str) -> Optional[Tuple[str, str, str]]:
     return None
 
 
-def parse_approval_callback_data(data: str) -> Optional[Tuple[str, str]]:
-    """Parse Telegram callback data for approval actions."""
+def parse_approval_callback_data(data: str) -> Optional[Tuple[str, str, str]]:
+    """Parse Telegram callback data for approval actions (with HMAC).
+    
+    Returns: (action, approval_id, hmac_signature)
+    """
     if not data:
         return None
-    parts = data.split(":", 2)
-    if len(parts) != 3 or parts[0] != "approval":
-        return None
-    action, approval_id = parts[1], parts[2]
-    if action not in {"approve", "reject", "search_kb", "view_full_context"} or not approval_id:
-        return None
-    return action, approval_id
+    # New format: approval:approve:ID:HMAC (4 parts)
+    parts = data.split(":")
+    if len(parts) == 4 and parts[0] == "approval":
+        action, approval_id, hmac_sig = parts[1], parts[2], parts[3]
+        if action in {"approve", "reject", "search_kb", "view_full_context"} and approval_id:
+            return action, approval_id, hmac_sig
+    # Legacy format (without HMAC) for backward compat: approval:approve:ID
+    if len(parts) == 3 and parts[0] == "approval":
+        action, approval_id = parts[1], parts[2]
+        if action in {"approve", "reject", "search_kb", "view_full_context"} and approval_id:
+            return action, approval_id, ""  # Empty HMAC = legacy
+    return None
 
 
 class TelegramAdapter:
@@ -483,7 +521,10 @@ class TelegramAdapter:
         await self._send_message(chat_id, reply)
     
     async def handle_callback_query(self, callback_query: Dict[str, Any]) -> bool:
-        """Handle Telegram inline keyboard callbacks for approval actions."""
+        """Handle Telegram inline keyboard callbacks for approval actions.
+        
+        Verifies HMAC signature and checks allowed chat_ids.
+        """
         data = callback_query.get("data", "")
         parsed = parse_approval_callback_data(data)
         if not parsed:
@@ -495,7 +536,7 @@ class TelegramAdapter:
                 return await self._handle_kb_callback(callback_query, *parsed_kb)
             return False
 
-        action, approval_id = parsed
+        action, approval_id, hmac_sig = parsed
         callback_query_id = callback_query.get("id")
         message = callback_query.get("message") or {}
         chat = message.get("chat") or {}
@@ -506,7 +547,28 @@ class TelegramAdapter:
             or callback_query.get("from", {}).get("username")
             or str(callback_query.get("from", {}).get("id", ""))
         )
-
+        
+        # ── Verify HMAC signature ────────────────────────────────────────
+        allowed_chat_ids = get_allowed_approval_chat_ids()
+        if allowed_chat_ids and chat_id not in allowed_chat_ids:
+            logger.warning("callback_from_unauthorized_chat", chat_id=chat_id, approval_id=approval_id)
+            await self._answer_callback_query(
+                callback_query_id,
+                "Bạn không có quyền approve/reject requests này.",
+                show_alert=True,
+            )
+            return False
+        
+        # Verify HMAC (skip for legacy callbacks with empty signature)
+        if hmac_sig and not verify_approval_hmac(approval_id, hmac_sig):
+            logger.warning("invalid_hmac_signature", approval_id=approval_id, chat_id=chat_id)
+            await self._answer_callback_query(
+                callback_query_id,
+                "Invalid callback - signature verification failed.",
+                show_alert=True,
+            )
+            return False
+        
         try:
             if action == "search_kb":
                 await self._answer_callback_query(

@@ -30,7 +30,12 @@ class Settings(BaseSettings):
     redis_password: str = ""
     redis_pool_size: int = 10
 
-    webhook_input_secret: str = ""
+    # Independent secrets - each must be different in production
+    webhook_input_secret: str = ""  # Legacy - for backward compatibility only
+    jwt_secret: str = ""  # JWT signing - MUST be independent
+    hmac_secret: str = ""  # HMAC validation - MUST be independent  
+    api_keys: str = ""  # Comma-separated API keys - MUST be independent
+
     power_automate_webhook_url: str = ""
     webhook_timeout: int = 30
 
