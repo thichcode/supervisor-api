@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from typing import Optional
 from datetime import datetime
 from enum import Enum
@@ -178,14 +178,23 @@ class ChatRequest(BaseModel):
 
 
 class ChatResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     request_id: str
     status: str
     customer_reply: str = Field(description="Reply to send to the customer")
+    message: str = Field(default="", description="Backward-compatible alias for customer_reply")
     internal_note: Optional[str] = Field(default="", description="Internal note for support team (not sent to customer)")
     message_type: MessageType
     confidence: float
     attachments: list[dict] = Field(default_factory=list)
     metadata: dict = Field(default_factory=dict)
+
+    def model_post_init(self, __context):
+        if not self.message and self.customer_reply:
+            object.__setattr__(self, "message", self.customer_reply)
+        elif not self.customer_reply and self.message:
+            object.__setattr__(self, "customer_reply", self.message)
 
 
 class SystemQueryRequest(BaseModel):
