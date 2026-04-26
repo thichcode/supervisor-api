@@ -183,6 +183,66 @@ def build_approval_inline_keyboard(approval_id: str, compact: bool = False, grou
         ])
     return {"inline_keyboard": buttons}
 
+
+def build_rating_inline_keyboard(request_id: str, thread_id: str) -> Dict[str, Any]:
+    """Build inline keyboard for star rating feedback.
+    
+    Creates 3 buttons: ⭐ (1 star), ⭐⭐ (2 stars), ⭐⭐⭐ (3 stars).
+    Stores request_id and thread_id in callback_data for feedback linking.
+    """
+    hmac_sig = hmac.new(
+        _get_approval_secret().encode(),
+        f"{request_id}:{thread_id}".encode(),
+        "sha256"
+    ).hexdigest()[:8]
+    
+    buttons = [
+        [
+            {"text": "⭐", "callback_data": f"rating:1:{request_id}:{thread_id}:{hmac_sig}"},
+            {"text": "⭐⭐", "callback_data": f"rating:2:{request_id}:{thread_id}:{hmac_sig}"},
+            {"text": "⭐⭐⭐", "callback_data": f"rating:3:{request_id}:{thread_id}:{hmac_sig}"},
+        ]
+    ]
+    return {"inline_keyboard": buttons}
+
+
+def parse_rating_callback_data(data: str) -> Optional[Tuple[int, str, str, str]]:
+    """Parse rating callback data.
+    
+    Expected format: rating:{score}:{request_id}:{thread_id}:{hmac_sig}
+    Returns: (score, request_id, thread_id, hmac_sig) or None if invalid.
+    """
+    if not data.startswith("rating:"):
+        return None
+    
+    parts = data.split(":")
+    if len(parts) != 5:
+        return None
+    
+    try:
+        score = int(parts[1])
+        if score not in (1, 2, 3):
+            return None
+    except ValueError:
+        return None
+    
+    request_id = parts[2]
+    thread_id = parts[3]
+    hmac_sig = parts[4]
+    
+    # Verify HMAC
+    expected = hmac.new(
+        _get_approval_secret().encode(),
+        f"{request_id}:{thread_id}".encode(),
+        "sha256"
+    ).hexdigest()[:8]
+    
+    if not hmac.compare_digest(expected, hmac_sig):
+        return None
+    
+    return (score, request_id, thread_id, hmac_sig)
+
+
 def build_kb_search_prompt(approval_id: str) -> str:
     """Build prompt for KB search."""
     return (
@@ -542,13 +602,17 @@ class TelegramAdapter:
         )
         return
         
-        # Process as regular message
-        reply = await self._call_supervisor(user_id, display_name, text, thread_id, metadata)
+# Process as regular message
+        reply, request_id = await self._call_supervisor(user_id, display_name, text, thread_id, metadata)
         if not reply:
             return
-        
-        # Send response
-        await self._send_message(chat_id, reply)
+
+        # Send response with rating keyboard (if we have request_id)
+        if request_id:
+            rating_keyboard = build_rating_inline_keyboard(request_id, thread_id)
+            await self._send_message(chat_id, reply, reply_markup=rating_keyboard)
+        else:
+            await self._send_message(chat_id, reply)
     
     async def handle_callback_query(self, callback_query: Dict[str, Any]) -> bool:
         """Handle Telegram inline keyboard callbacks for approval actions.
@@ -564,6 +628,11 @@ class TelegramAdapter:
             parsed_kb = self._parse_kb_callback_data(data)
             if parsed_kb:
                 return await self._handle_kb_callback(callback_query, *parsed_kb)
+            
+            # Handle rating callback
+            parsed_rating = parse_rating_callback_data(data)
+            if parsed_rating:
+                return await self._handle_rating_callback(callback_query, *parsed_rating)
             return False
 
         action, approval_id, hmac_sig = parsed
@@ -902,7 +971,60 @@ class TelegramAdapter:
         except Exception as e:
             logger.error("KB search failed", error=str(e), approval_id=approval_id)
             await self._send_message(chat_id, f"Có lỗi xảy ra: {str(e)}")
-    
+
+    async def _handle_rating_callback(
+        self,
+        callback_query: Dict[str, Any],
+        score: int,
+        request_id: str,
+        thread_id: str,
+        hmac_sig: str,
+    ) -> bool:
+        """Handle star rating callback from inline keyboard.
+        
+        Stores the rating as feedback in the database for KB improvement.
+        """
+        callback_query_id = callback_query.get("id")
+        message = callback_query.get("message") or {}
+        chat = message.get("chat") or {}
+        chat_id = str(chat.get("id", ""))
+        user = callback_query.get("from") or {}
+        user_id = user.get("id") or user.get("username") or "unknown"
+        
+        # Map score to label
+        score_labels = {1: "poor", 2: "fair", 3: "good"}
+        label = score_labels.get(score, "unknown")
+        
+        # Send acknowledgment to user
+        stars = "⭐" * score
+        await self._answer_callback_query(
+            callback_query_id,
+            f"Đã ghi nhận đánh giá {stars} ({label})! Cảm ơn bạn.",
+            show_alert=True,
+        )
+        
+        # Store feedback in database
+        try:
+            async with httpx.AsyncClient() as client:
+                await client.post(
+                    f"{self.supervisor_url}/feedback",
+                    json={
+                        "request_id": request_id,
+                        "thread_id": thread_id,
+                        "user_id": str(user_id),
+                        "feedback_type": "explicit_rating",
+                        "feedback_score": float(score) / 3.0,  # Normalize to 0.33, 0.67, 1.0
+                        "feedback_label": label,
+                    },
+                    headers={"Authorization": f"Bearer {self.api_key}"} if self.api_key else {},
+                    timeout=10.0,
+                )
+                logger.info("Rating feedback stored", score=score, request_id=request_id, user_id=user_id)
+        except Exception as e:
+            logger.error("Rating feedback failed", error=str(e), request_id=request_id)
+        
+        return True
+
     def _normalize_kb_kind(self, kind: str) -> str:
         kind = (kind or "all").strip().lower()
         aliases = {
@@ -1554,9 +1676,13 @@ class TelegramAdapter:
         )
 
         try:
-            reply = await self._call_supervisor(user_id, display_name, merged_text, thread_id, metadata)
+            reply, request_id = await self._call_supervisor(user_id, display_name, merged_text, thread_id, metadata)
             if reply:
-                await self._send_message(chat_id, reply)
+                if request_id:
+                    rating_keyboard = build_rating_inline_keyboard(request_id, thread_id)
+                    await self._send_message(chat_id, reply, reply_markup=rating_keyboard)
+                else:
+                    await self._send_message(chat_id, reply)
         finally:
             self._conversation_buffers.pop(thread_id, None)
             task = self._conversation_flush_tasks.pop(thread_id, None)
@@ -1570,8 +1696,12 @@ class TelegramAdapter:
         message: str,
         thread_id: str,
         metadata: Dict[str, Any],
-    ) -> str:
-        """Call Supervisor API"""
+    ) -> Tuple[str, Optional[str]]:
+        """Call Supervisor API.
+        
+        Returns:
+            Tuple of (reply_message, request_id)
+        """
         # Send verbose log
         await self._send_verbose_log(f"📥 Nhận tin nhắn: {message[:100]}...")
         
@@ -1595,20 +1725,22 @@ class TelegramAdapter:
                 if response.status_code == 200:
                     payload = response.json()
                     if payload.get("status") == "skipped":
-                        return ""
-                    return (
+                        return ("", None)
+                    reply = (
                         payload.get("customer_reply")
                         or payload.get("message")
                         or payload.get("response")
                         or payload.get("answer")
                         or "No response"
                     )
-                return f"Lỗi: {response.status_code}"
+                    request_id = payload.get("request_id")
+                    return (reply, request_id)
+                return (f"Lỗi: {response.status_code}", None)
 
         except Exception as e:
             logger.error("Supervisor call failed", error=str(e))
             await self._send_verbose_log(f"❌ Lỗi: {str(e)[:100]}")
-            return "Xin lỗi, có lỗi xảy ra."
+            return ("Xin lỗi, có lỗi xảy ra.", None)
 
     async def _call_approval_action(self, approval_id: str, action: str, actor: str) -> Optional[Dict[str, Any]]:
         """Call the approval action endpoint on Supervisor."""
@@ -1687,4 +1819,7 @@ __all__ = [
     "parse_kb_candidate_text_action",
     "build_kb_candidate_force_reply_markup",
     "build_kb_candidate_revision_prompt",
+    # Rating
+    "build_rating_inline_keyboard",
+    "parse_rating_callback_data",
 ]
