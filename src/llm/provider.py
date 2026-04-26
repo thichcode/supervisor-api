@@ -460,6 +460,19 @@ class MultiProviderLLMClient:
             return usage
         return {}
 
+    def _is_tools_unsupported_error(self, error: Exception) -> bool:
+        message = str(error).lower()
+        return any(
+            phrase in message
+            for phrase in (
+                "does not support tools",
+                "tool calls are not supported",
+                "function calling is not supported",
+                "unsupported tool",
+                "tool_choice",
+            )
+        )
+
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=2, max=30),
@@ -513,7 +526,28 @@ class MultiProviderLLMClient:
                 "max_tokens": max_tokens or self._max_tokens,
             }
 
-            response = await client.chat.completions.create(**create_kwargs)
+            response = None
+            last_error: Optional[Exception] = None
+            try:
+                response = await client.chat.completions.create(**create_kwargs)
+            except Exception as e:
+                last_error = e
+                if tools and self._is_tools_unsupported_error(e):
+                    logger.warning(
+                        "LLM model does not support tools - retrying without tools",
+                        provider=target_provider.value,
+                        model=target_model,
+                        error=str(e),
+                    )
+                    fallback_kwargs = dict(create_kwargs)
+                    fallback_kwargs.pop("tools", None)
+                    fallback_kwargs.pop("tool_choice", None)
+                    response = await client.chat.completions.create(**fallback_kwargs)
+                else:
+                    raise
+
+            if response is None:
+                raise last_error or LLMError("LLM completion returned no response")
 
             await self._circuit_breaker.record_success()
 
