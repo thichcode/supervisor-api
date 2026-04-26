@@ -417,7 +417,7 @@ class ReasoningLoopOrchestrator:
             )
 
         # Plan
-        intent = self.supervisor._classify_intent(payload, memory)
+        intent = await self.supervisor._classify_intent(payload, memory)
         risk = self.supervisor._evaluate_risk(payload, memory)
         use_subagents = self.supervisor.decision_engine.should_use_subagents(intent, risk, payload)
         add_trace(

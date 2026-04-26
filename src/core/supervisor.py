@@ -821,13 +821,13 @@ class Supervisor:
 
     # ===== Original Methods =====
 
-    def _classify_intent(
+    async def _classify_intent(
         self, payload: InputPayload, memory: MemoryContextModel
     ) -> IntentClassification:
         from src.core.intent_classifier import IntentClassifier
 
-        classifier = IntentClassifier()
-        return classifier.classify(payload, memory)
+        classifier = IntentClassifier(llm=self._llm, preferred_model=getattr(get_settings(), "primary_llm_model", None))
+        return await classifier.classify(payload, memory)
 
     def _evaluate_risk(self, payload: InputPayload, memory: MemoryContextModel) -> RiskEvaluation:
         from src.core.risk_evaluator import RiskEvaluator

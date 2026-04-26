@@ -96,46 +96,86 @@ def vip_context():
 
 
 class TestIntentClassifier:
-    def test_classify_faq(self, sample_payload, sample_context):
-        classifier = IntentClassifier()
-        result = classifier.classify(sample_payload, sample_context)
+    @pytest.mark.asyncio
+    async def test_classify_faq(self, sample_payload, sample_context):
+        class FakeLLM:
+            async def classify_intent(self, **kwargs):
+                return {"intent": "faq", "confidence": 0.91, "reasoning": "direct question"}
+
+        classifier = IntentClassifier(llm=FakeLLM())
+        result = await classifier.classify(sample_payload, sample_context)
         assert result.intent == IntentType.FAQ
 
-    def test_classify_policy(self, sample_payload, sample_context):
+    @pytest.mark.asyncio
+    async def test_classify_policy(self, sample_payload, sample_context):
         sample_payload.message.text = "What is the policy for annual leave?"
-        classifier = IntentClassifier()
-        result = classifier.classify(sample_payload, sample_context)
+
+        class FakeLLM:
+            async def classify_intent(self, **kwargs):
+                return {"intent": "policy", "confidence": 0.88, "reasoning": "policy keyword"}
+
+        classifier = IntentClassifier(llm=FakeLLM())
+        result = await classifier.classify(sample_payload, sample_context)
         assert result.intent == IntentType.POLICY
 
-    def test_classify_policy_with_domain_request(self, sample_payload, sample_context):
+    @pytest.mark.asyncio
+    async def test_classify_policy_with_domain_request(self, sample_payload, sample_context):
         sample_payload.message.text = "tôi đang cần tư vấn cách tạo domain theo policy công ty"
-        classifier = IntentClassifier()
-        result = classifier.classify(sample_payload, sample_context)
+
+        class FakeLLM:
+            async def classify_intent(self, **kwargs):
+                return {"intent": "faq", "confidence": 0.52, "reasoning": "uncertain"}
+
+        classifier = IntentClassifier(llm=FakeLLM())
+        result = await classifier.classify(sample_payload, sample_context)
         assert result.intent == IntentType.POLICY
         assert result.confidence >= 0.8
 
-    def test_classify_support_case(self, sample_payload, sample_context):
+    @pytest.mark.asyncio
+    async def test_classify_support_case(self, sample_payload, sample_context):
         sample_payload.case = CaseInfo(case_id="CASE-001", priority="medium")
-        classifier = IntentClassifier()
-        result = classifier.classify(sample_payload, sample_context)
+
+        class FakeLLM:
+            async def classify_intent(self, **kwargs):
+                return {"intent": "faq", "confidence": 0.9, "reasoning": "generic"}
+
+        classifier = IntentClassifier(llm=FakeLLM())
+        result = await classifier.classify(sample_payload, sample_context)
         assert result.intent == IntentType.SUPPORT_CASE
 
-    def test_classify_executive(self, vip_context, sample_payload):
+    @pytest.mark.asyncio
+    async def test_classify_executive(self, vip_context, sample_payload):
         sample_payload.user.vip_flag = True
-        classifier = IntentClassifier()
-        result = classifier.classify(sample_payload, vip_context)
+
+        class FakeLLM:
+            async def classify_intent(self, **kwargs):
+                return {"intent": "executive_request", "confidence": 0.81, "reasoning": "vip"}
+
+        classifier = IntentClassifier(llm=FakeLLM())
+        result = await classifier.classify(sample_payload, vip_context)
         assert result.intent == IntentType.EXECUTIVE_REQUEST
         assert result.confidence >= 0.7
 
-    def test_classify_unknown_defaults_below_half(self, sample_payload, sample_context):
-        classifier = IntentClassifier()
+    @pytest.mark.asyncio
+    async def test_classify_unknown_defaults_below_half(self, sample_payload, sample_context):
         sample_payload.message.text = "xyzqv random gibberish with no business meaning"
-        result = classifier.classify(sample_payload, sample_context)
+
+        class FakeLLM:
+            async def classify_intent(self, **kwargs):
+                return {"intent": "general", "confidence": 0.41, "reasoning": "unknown"}
+
+        classifier = IntentClassifier(llm=FakeLLM())
+        result = await classifier.classify(sample_payload, sample_context)
         assert result.confidence < 0.5
 
-    def test_classify_vietnamese_policy(self, sample_payload_vietnamese, sample_context):
-        classifier = IntentClassifier()
-        result = classifier.classify(sample_payload_vietnamese, sample_context)
+    @pytest.mark.asyncio
+    async def test_classify_vietnamese_policy(self, sample_payload_vietnamese, sample_context):
+        class FakeLLM:
+            async def classify_intent(self, **kwargs):
+                return {"intent": "faq", "confidence": 0.55, "reasoning": "question"}
+
+        classifier = IntentClassifier(llm=FakeLLM())
+        result = await classifier.classify(sample_payload_vietnamese, sample_context)
         assert result.intent in [IntentType.POLICY, IntentType.FAQ]
         assert result.confidence > 0.5
 
