@@ -1394,9 +1394,18 @@ class TelegramAdapter:
                 pass
 
         try:
+            import src.api as api_module
+            from src.config import get_settings
             from src.services.kb_draft_service import KBDraftService
-            service = KBDraftService()
-            result = await service.run(days=days, top_n=top_n, min_count=2)
+
+            settings = get_settings()
+            async with api_module.async_session() as session:
+                service = KBDraftService(
+                    session=session,
+                    telegram_bot_token=settings.telegram_bot_token or "",
+                    telegram_chat_ids=settings.telegram_approval_chat_ids or "",
+                )
+                result = await service.run(days=days, top_n=top_n, min_count=2)
             drafts = result.get("drafts_created", [])
             miss_count = result.get("miss_patterns_found", 0)
 
