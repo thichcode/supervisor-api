@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Any, Optional
 
 import structlog
 
@@ -297,6 +297,7 @@ async def enhanced_kb_search(
     use_context: bool = True,
     use_domain: bool = True,
     user_id: Optional[str] = None,
+    llm: Optional[Any] = None,
 ) -> dict:
     """
     Enhanced KB search with context and domain awareness.
@@ -344,6 +345,67 @@ async def enhanced_kb_search(
         if domain_ctx:
             results["domain_context"] = domain_ctx
             results["enrichment"]["domain_skill_used"] = True
+    
+    # Step 4: Perform actual KB search with enriched context
+    try:
+        from src.knowledge.service import KnowledgeRetrievalService
+        from src.db import async_session
+        
+        # Build enriched query with context
+        enriched_query = query
+        context_parts = []
+        
+        if results.get("domain_context"):
+            context_parts.append(f"[Domain: {detected_domain}]\n{results['domain_context']}")
+        
+        if results.get("system_context"):
+            sys_ctx = SystemContext(**results["system_context"])
+            search_ctx = sys_ctx.to_search_context()
+            if search_ctx:
+                context_parts.append(f"[System State]\n{search_ctx}")
+        
+        # Only enrich query if we have context
+        if context_parts:
+            enriched_query = f"{query}\n\nContext:\n" + "\n\n".join(context_parts)
+        
+        # Call KnowledgeRetrievalService with search_type="all" for comprehensive search
+        async with async_session() as session:
+            kb_service = KnowledgeRetrievalService(session, llm=llm)
+            # Use search_with_llm_enhancement if LLM is available, else basic search
+            if llm:
+                search_result = await kb_service.search_with_llm_enhancement(enriched_query, search_type="all")
+            else:
+                search_result = await kb_service.search(enriched_query, search_type="all")
+        
+        # Convert results to serializable format
+        results["search_results"] = [
+            {
+                "id": r.id,
+                "title": r.title,
+                "text": r.text[:500],  # Truncate for response
+                "similarity": r.similarity,
+                "source": r.source,
+                "category": r.category,
+                "kb_type": r.kb_type,
+            }
+            for r in search_result.results
+        ]
+        results["total_results"] = search_result.total
+        results["template_id"] = search_result.template_id
+        results["template_label"] = search_result.template_label
+        results["clarification"] = getattr(search_result, "clarification", {})
+        
+        logger.info(
+            "Enhanced KB search completed",
+            query=query,
+            domain=detected_domain,
+            results_count=len(results["search_results"]),
+            context_used=bool(context_parts)
+        )
+        
+    except Exception as e:
+        logger.error("Enhanced KB search failed", error=str(e))
+        results["error"] = str(e)
     
     return results
 

@@ -163,42 +163,7 @@ class KnowledgeAgent:
         text_lower = payload.message.text.lower()
         text = payload.message.text
 
-        # =============================================================================
-        # Enhanced: Hybrid Context Loading (Approach 1 + 2)
-        # =============================================================================
-        try:
-            from src.services.kb_enhanced_search import (
-                detect_domain,
-                get_domain_context,
-                load_system_context,
-            )
-            
-            # 1. Detect domain from query (lightweight, always run)
-            detected_domain = detect_domain(text)
-            if detected_domain:
-                knowledge["detected_domain"] = detected_domain
-                logger.info("Domain detected for KB search", domain=detected_domain)
-                
-                # Approach 2: Load domain-specific context immediately
-                domain_ctx = get_domain_context(detected_domain)
-                if domain_ctx:
-                    knowledge["domain_context"] = domain_ctx
-                    logger.debug("Domain context loaded", domain=detected_domain)
-            
-            # 2. Approach 1: Load system context only when needed
-            if self._needs_system_context(text_lower, detected_domain):
-                try:
-                    system_context = await load_system_context()
-                    knowledge["system_context"] = system_context.to_dict()
-                    logger.debug("System context loaded for KB search")
-                except Exception as e:
-                    logger.warning("Failed to load system context", error=str(e))
-                    
-        except ImportError:
-            logger.debug("Enhanced KB search module not available, using basic search")
-        # =============================================================================
-        # End Enhanced
-        # =============================================================================
+
 
         query_type_mapping = {
             "case của tôi": "case_info",
@@ -215,22 +180,54 @@ class KnowledgeAgent:
                 knowledge["query_type"] = qtype
                 break
 
-        knowledge_base_query = self._detect_knowledge_query(text_lower)
-        
-        if knowledge_base_query:
-            knowledge["search_performed"] = True
-            search_results = await self._search_knowledge_base(
-                payload.message.text,
-                knowledge_base_query,
-                llm,
+        # Replace old KB search with enhanced_kb_search (search_type="all")
+        try:
+            from src.services.kb_enhanced_search import enhanced_kb_search
+            
+            enhanced_results = await enhanced_kb_search(
+                query=payload.message.text,
+                user_id=getattr(payload, 'user_id', None),
+                use_context=True,
+                use_domain=True,
+                llm=llm,
             )
-            knowledge["knowledge_results"] = search_results.get("results", []) if isinstance(search_results, dict) else search_results
-            knowledge["knowledge_clarification_needed"] = bool(search_results.get("clarification", {}).get("needs_clarification")) if isinstance(search_results, dict) else False
-            knowledge["knowledge_clarification_question"] = search_results.get("clarification", {}).get("clarification_question", "") if isinstance(search_results, dict) else ""
-            knowledge["knowledge_missing_fields"] = search_results.get("clarification", {}).get("missing_fields", []) if isinstance(search_results, dict) else []
-            knowledge["knowledge_required_fields"] = search_results.get("clarification", {}).get("required_fields", []) if isinstance(search_results, dict) else []
-            knowledge["knowledge_template"] = search_results.get("template", {}) if isinstance(search_results, dict) else {}
-            knowledge["confidence"] = 0.85 if knowledge["knowledge_results"] else 0.4
+            
+            # Map results to knowledge dict
+            knowledge["detected_domain"] = enhanced_results.get("detected_domain")
+            knowledge["system_context"] = enhanced_results.get("system_context")
+            knowledge["domain_context"] = enhanced_results.get("domain_context")
+            
+            search_results = enhanced_results.get("search_results", [])
+            knowledge["knowledge_results"] = search_results
+            knowledge["search_performed"] = len(search_results) > 0
+            
+            clarification = enhanced_results.get("clarification", {})
+            knowledge["knowledge_clarification_needed"] = clarification.get("needs_clarification", False)
+            knowledge["knowledge_clarification_question"] = clarification.get("clarification_question", "")
+            knowledge["knowledge_missing_fields"] = clarification.get("missing_fields", [])
+            knowledge["knowledge_required_fields"] = clarification.get("required_fields", [])
+            
+            knowledge["knowledge_template"] = {
+                "template_id": enhanced_results.get("template_id", ""),
+                "template_label": enhanced_results.get("template_label", ""),
+                "template_score": 0.0,
+                "template_terms": [],
+            }
+            
+            knowledge["confidence"] = 0.85 if search_results else 0.4
+            knowledge["enrichment"] = enhanced_results.get("enrichment", {})
+            
+            logger.info(
+                "Enhanced KB search completed in gather()",
+                query=payload.message.text,
+                results_count=len(search_results),
+                domain=enhanced_results.get("detected_domain")
+            )
+            
+        except ImportError:
+            logger.warning("Enhanced KB search module not available, skipping KB search")
+        except Exception as e:
+            logger.error("Enhanced KB search failed in gather()", error=str(e))
 
         if memory.episodic_memory:
             knowledge["patterns"] = [
@@ -277,79 +274,8 @@ Trả về JSON format:
 
         return knowledge
 
-    def _detect_knowledge_query(self, text_lower: str) -> Optional[str]:
-        patterns = {
-            "policy": ["chính sách", "policy", "quy định", "quy luật", "rule"],
-            "faq": ["faq", "câu hỏi", "hỏi đáp", "question", "là gì", "cái gì", "như thế nào"],
-            "guide": ["hướng dẫn", "cách làm", "manual", "cách sử dụng", "làm sao"],
-            "document": ["tài liệu", "document", "file", "báo cáo"],
-        }
 
-        for kb_type, keywords in patterns.items():
-            if any(kw in text_lower for kw in keywords):
-                return kb_type
 
-        return None
 
-    async def _search_knowledge_base(
-        self,
-        query: str,
-        search_type: str,
-        llm: Optional[MultiProviderLLMClient],
-    ) -> dict:
-        async with async_session() as session:
-            if llm:
-                kb_service = KnowledgeRetrievalService(session, llm)
-                results = await kb_service.search_with_llm_enhancement(query, search_type)
-            else:
-                kb_service = KnowledgeRetrievalService(session, None)
-                results = await kb_service.search(query, search_type)
 
-            formatted_results = [
-                {
-                    "type": r.knowledge_type.value,
-                    "id": r.id,
-                    "title": r.title,
-                    "content": r.content[:500],
-                    "category": r.category,
-                    "similarity": r.similarity,
-                    "metadata": r.metadata or {},
-                }
-                for r in results.results
-            ]
-            clarification = getattr(results, "clarification", {}) or {}
-            return {
-                "results": formatted_results,
-                "clarification": clarification,
-                "template": {
-                    "template_id": results.template_id,
-                    "template_label": results.template_label,
-                    "template_score": results.template_score,
-                    "template_terms": results.template_terms,
-                },
-            }
 
-    def _needs_system_context(self, text_lower: str, detected_domain: Optional[str]) -> bool:
-        """Check if system context (incidents, alerts, tickets) is needed for this query.
-
-        Returns True if query relates to:
-        - System status/health (Approach 1)
-        - Incidents or outages
-        - Specific domains that benefit from system context (Approach 2 hybrid)
-        """
-        # Keywords that suggest system context is needed
-        system_keywords = [
-            "incident", "outage", "down", "error", "lỗi", "sự cố",
-            "status", "health", "alert", "ticket", "case",
-            "system", "hệ thống", "server", "service",
-        ]
-
-        # Check if query contains system-related keywords
-        if any(kw in text_lower for kw in system_keywords):
-            return True
-
-        # Always load system context for specific domains
-        if detected_domain in ["gitlab", "active_directory", "database", "network"]:
-            return True
-
-        return False
