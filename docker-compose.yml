@@ -218,12 +218,6 @@ services:
       - prometheus
     restart: unless-stopped
 
-volumes:
-  postgres_data:
-  redis_data:
-  prometheus_data:
-  grafana_data:
-
   kb-draft-cron:
     build:
       context: .
@@ -243,3 +237,9 @@ volumes:
     networks:
       - default
     restart: unless-stopped
+volumes:
+  postgres_data:
+  redis_data:
+  prometheus_data:
+  grafana_data:
+
