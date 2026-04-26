@@ -1366,6 +1366,51 @@ Hãy đề xuất giải pháp hoặc các bước tiếp theo."""
         except Exception as e:
             logger.warning("Failed to log audit", error=str(e))
 
+    def _looks_like_support_request(self, message: str, conversation_state: dict | None = None) -> bool:
+        text = (message or "").lower()
+        state = conversation_state or {}
+        message_mode = (state.get("last_user_message_mode") or "").lower()
+        support_keywords = [
+            "support", "case", "ticket", "issue", "problem", "bug", "error", "crash",
+            "not working", "broken", "help", "hỗ trợ", "vấn đề", "sự cố", "lỗi", "hỏng",
+            "không được", "bị lỗi", "treo", "đơ", "cần giúp", "giúp tôi", "sửa", "fix",
+            "login", "đăng nhập", "credential", "auth", "authentication", "publickey",
+        ]
+        if message_mode == "problem":
+            return True
+        return any(keyword in text for keyword in support_keywords)
+
+    def _build_support_clarification(self, message: str) -> str:
+        text = (message or "").lower()
+        if any(keyword in text for keyword in ["git", "github", "gitlab", "bitbucket", "ssh", "https", "credential", "publickey", "auth", "đăng nhập", "login"]):
+            return (
+                "Mình cần 3 thông tin để chẩn đoán nhanh: bạn đang dùng GitHub/GitLab/Bitbucket, "
+                "đang login bằng HTTPS hay SSH, và nguyên lỗi hiển thị là gì?"
+            )
+
+        if any(keyword in text for keyword in ["mật khẩu", "password", "sso", "ldap", "vpn", "email", "outlook"]):
+            return (
+                "Bạn cho mình biết hệ thống nào đang lỗi, bạn đang làm ở bước nào, và nguyên thông báo lỗi/mã lỗi là gì?"
+            )
+
+        return (
+            "Bạn cho mình biết hệ thống/dịch vụ nào đang lỗi, bạn đang kẹt ở bước nào, và có mã lỗi hoặc ảnh chụp màn hình không?"
+        )
+
+    def _looks_generic_support_reply(self, answer: str) -> bool:
+        text = (answer or "").lower()
+        generic_phrases = [
+            "bạn cần tôi hỗ trợ gì",
+            "vui lòng cho tôi biết yêu cầu của bạn",
+            "bạn cần hỗ trợ gì",
+            "mình có thể giúp gì",
+            "tôi là trợ lý",
+            "cho mình biết vấn đề",
+            "bạn xác nhận",
+            "nếu cần mình hỗ trợ",
+        ]
+        return any(phrase in text for phrase in generic_phrases)
+
     async def _generate_direct_answer(
         self,
         payload: InputPayload,
@@ -1401,8 +1446,11 @@ Hãy đề xuất giải pháp hoặc các bước tiếp theo."""
         if image_case_context.get("image_case"):
             persona_lines.append(f"Image case signature: {image_case_context.get('issue_signature') or image_case_context.get('issue_summary')}")
 
-        state_lines = []
         conversation_state = memory.conversation_state or {}
+        support_request = self._looks_like_support_request(message, conversation_state)
+        support_clarification = self._build_support_clarification(message) if support_request else ""
+
+        state_lines = []
         chat_type = payload.conversation.chat_type or conversation_state.get("chat_type")
         chat_scope = payload.conversation.chat_scope or conversation_state.get("chat_scope")
         group_chat = (
@@ -1441,6 +1489,12 @@ Hãy đề xuất giải pháp hoặc các bước tiếp theo."""
             system_prompt = (
                 "Bạn là một trợ lý AI hữu ích. Trả lời ngắn gọn, chính xác bằng tiếng Việt."
             )
+            if support_request:
+                system_prompt += (
+                    "\nNgười dùng đang báo một vấn đề kỹ thuật. Không được trả lời kiểu mở đầu chung chung như 'mình là trợ lý' hay 'bạn cần gì'. "
+                    "Nếu thiếu thông tin, chỉ hỏi đúng 1 câu ngắn, tập trung vào các dữ kiện thiếu quan trọng nhất. "
+                    "Với lỗi login Git, ưu tiên hỏi: đang dùng GitHub/GitLab/Bitbucket, login bằng HTTPS hay SSH, và lỗi cụ thể."
+                )
             if persona_block:
                 system_prompt = f"{system_prompt}\n{persona_block}"
             if state_block:
@@ -1453,10 +1507,20 @@ Hãy đề xuất giải pháp hoặc các bước tiếp theo."""
                 user_message=f"Người dùng {user_name} hỏi: {message}",
                 context=merged_context,
             )
-            return response.content, response.confidence
+            answer = response.content
+            if support_request and self._looks_generic_support_reply(answer):
+                answer = support_clarification or answer
+                confidence = min(response.confidence, 0.58)
+                return answer, confidence
+            return answer, response.confidence
 
         if image_case_context.get("clarification_question"):
             return image_case_context["clarification_question"], 0.45
+
+        if support_request:
+            return support_clarification or (
+                "Bạn cho mình biết hệ thống/dịch vụ nào đang lỗi, bạn đang kẹt ở bước nào, và có mã lỗi hoặc ảnh chụp màn hình không?"
+            ), 0.6
 
         return (
             f'Xin chào {user_name}, về câu hỏi của bạn "{message[:100]}...", tôi có thể giúp bạn. Bạn cần thêm thông tin gì không?',

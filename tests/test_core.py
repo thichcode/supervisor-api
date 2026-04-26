@@ -330,7 +330,7 @@ class TestSupervisor:
                     usage={},
                     model="fake",
                     provider="fake",
-                    finish_reason="stop"
+                    finish_reason="stop",
                 )
 
         supervisor = Supervisor()
@@ -354,9 +354,38 @@ class TestSupervisor:
         assert answer == "Dynamic answer"
         assert confidence == 0.91
         assert "style=concise, tone=formal" in captured["system_prompt"]
+
+    @pytest.mark.asyncio
+    async def test_generate_direct_answer_rewrites_generic_support_reply(self, sample_payload):
+        from src.core.supervisor import Supervisor
+
+        class FakeLLM:
+            async def complete(self, system_prompt, user_message, context=None):
+                from src.llm.provider import LLMResponse
+                return LLMResponse(
+                    content="Chào bạn, tôi là trợ lý IT Support. Bạn cần tôi hỗ trợ vấn đề gì ạ?",
+                    confidence=0.93,
+                    usage={},
+                    model="fake",
+                    provider="fake",
+                    finish_reason="stop",
+                )
+
+        supervisor = Supervisor()
+        supervisor.set_llm(FakeLLM())
+        sample_payload.message.text = "tôi đang lỗi login git"
+        memory = MemoryContext(
+            conversation_state={"last_user_message_mode": "problem"},
+        )
+
+        answer, confidence = await supervisor._generate_direct_answer(sample_payload, memory)
+
+        assert "GitHub/GitLab/Bitbucket" in answer
+        assert "HTTPS hay SSH" in answer
+        assert confidence <= 0.58
+
     @pytest.mark.asyncio
     async def test_process_caps_confidence_without_kb(self, sample_payload, sample_context, monkeypatch):
-        from src.core.supervisor import Supervisor
 
         class FakeLLM:
             async def complete(self, system_prompt, user_message, context=None):
