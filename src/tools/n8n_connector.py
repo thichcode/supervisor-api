@@ -190,6 +190,661 @@ SYSTEM_ACTIONS: Dict[str, SystemAction] = {
         ],
         description="Reset password của user"
     ),
+    
+    # =============================================================================
+    # GitLab Integration
+    # =============================================================================
+    "gitlab_merge_requests": SystemAction(
+        name="gitlab_merge_requests",
+        display_name="GitLab Merge Requests",
+        system="gitlab",
+        action_type=ActionType.QUERY,
+        risk_level=RiskLevel.LOW,
+        webhook_path="/webhook/gitlab/merge-requests",
+        parameters=[
+            {"name": "project_id", "type": "string", "required": False},
+            {"name": "state", "type": "string", "required": False},
+            {"name": "limit", "type": "integer", "required": False},
+        ],
+        description="Lấy danh sách Merge Requests"
+    ),
+    "gitlab_issues": SystemAction(
+        name="gitlab_issues",
+        display_name="GitLab Issues",
+        system="gitlab",
+        action_type=ActionType.QUERY,
+        risk_level=RiskLevel.LOW,
+        webhook_path="/webhook/gitlab/issues",
+        parameters=[
+            {"name": "project_id", "type": "string", "required": False},
+            {"name": "state", "type": "string", "required": False},
+            {"name": "labels", "type": "string", "required": False},
+        ],
+        description="Lấy danh sách Issues"
+    ),
+    "gitlab_pipelines": SystemAction(
+        name="gitlab_pipelines",
+        display_name="GitLab Pipelines",
+        system="gitlab",
+        action_type=ActionType.QUERY,
+        risk_level=RiskLevel.LOW,
+        webhook_path="/webhook/gitlab/pipelines",
+        parameters=[
+            {"name": "project_id", "type": "string", "required": True},
+            {"name": "status", "type": "string", "required": False},
+        ],
+        description="Lấy danh sách Pipelines"
+    ),
+    "gitlab_members": SystemAction(
+        name="gitlab_members",
+        display_name="GitLab Project Members",
+        system="gitlab",
+        action_type=ActionType.QUERY,
+        risk_level=RiskLevel.LOW,
+        webhook_path="/webhook/gitlab/members",
+        parameters=[
+            {"name": "project_id", "type": "string", "required": True},
+        ],
+        description="Lấy danh sách thành viên project"
+    ),
+    
+    # =============================================================================
+    # Active Directory (AD)
+    # =============================================================================
+    "ad_user_info": SystemAction(
+        name="ad_user_info",
+        display_name="AD User Info",
+        system="ad",
+        action_type=ActionType.QUERY,
+        risk_level=RiskLevel.LOW,
+        webhook_path="/webhook/ad/user-info",
+        parameters=[
+            {"name": "username", "type": "string", "required": True},
+        ],
+        description="Lấy thông tin user từ AD"
+    ),
+    "ad_group_members": SystemAction(
+        name="ad_group_members",
+        display_name="AD Group Members",
+        system="ad",
+        action_type=ActionType.QUERY,
+        risk_level=RiskLevel.LOW,
+        webhook_path="/webhook/ad/group-members",
+        parameters=[
+            {"name": "group_name", "type": "string", "required": True},
+        ],
+        description="Lấy danh sách thành viên group"
+    ),
+    "ad_locked_users": SystemAction(
+        name="ad_locked_users",
+        display_name="AD Locked Users",
+        system="ad",
+        action_type=ActionType.QUERY,
+        risk_level=RiskLevel.LOW,
+        webhook_path="/webhook/ad/locked-users",
+        description="Lấy danh sách user bị lock"
+    ),
+    
+    # =============================================================================
+    # Zabbix Monitoring
+    # =============================================================================
+    "zabbix_alerts": SystemAction(
+        name="zabbix_alerts",
+        display_name="Zabbix Alerts",
+        system="monitoring",
+        action_type=ActionType.QUERY,
+        risk_level=RiskLevel.LOW,
+        webhook_path="/webhook/zabbix/alerts",
+        parameters=[
+            {"name": "host", "type": "string", "required": False},
+            {"name": "severity", "type": "integer", "required": False},
+            {"name": "limit", "type": "integer", "required": False},
+        ],
+        description="Lấy alerts đang active"
+    ),
+    "zabbix_hosts": SystemAction(
+        name="zabbix_hosts",
+        display_name="Zabbix Hosts",
+        system="monitoring",
+        action_type=ActionType.QUERY,
+        risk_level=RiskLevel.LOW,
+        webhook_path="/webhook/zabbix/hosts",
+        parameters=[
+            {"name": "group", "type": "string", "required": False},
+            {"name": "status", "type": "integer", "required": False},
+        ],
+        description="Lấy danh sách hosts"
+    ),
+    "zabbix_triggers": SystemAction(
+        name="zabbix_triggers",
+        display_name="Zabbix Triggers",
+        system="monitoring",
+        action_type=ActionType.QUERY,
+        risk_level=RiskLevel.LOW,
+        webhook_path="/webhook/zabbix/triggers",
+        parameters=[
+            {"name": "host", "type": "string", "required": False},
+            {"name": "status", "type": "string", "required": False},
+        ],
+        description="Lấy danh sách triggers"
+    ),
+    
+    # =============================================================================
+    # ITC / ServiceNow
+    # =============================================================================
+    "itc_incidents": SystemAction(
+        name="itc_incidents",
+        display_name="ITC Incidents",
+        system="itc",
+        action_type=ActionType.QUERY,
+        risk_level=RiskLevel.LOW,
+        webhook_path="/webhook/itc/incidents",
+        parameters=[
+            {"name": "state", "type": "string", "required": False},
+            {"name": "assigned_to", "type": "string", "required": False},
+            {"name": "limit", "type": "integer", "required": False},
+        ],
+        description="Lấy danh sách incidents"
+    ),
+    "itc_tickets": SystemAction(
+        name="itc_tickets",
+        display_name="ITC Tickets",
+        system="itc",
+        action_type=ActionType.QUERY,
+        risk_level=RiskLevel.LOW,
+        webhook_path="/webhook/itc/tickets",
+        parameters=[
+            {"name": "category", "type": "string", "required": False},
+            {"name": "priority", "type": "string", "required": False},
+        ],
+        description="Lấy danh sách tickets"
+    ),
+    "itc_cmdb": SystemAction(
+        name="itc_cmdb",
+        display_name="ITC CMDB",
+        system="itc",
+        action_type=ActionType.QUERY,
+        risk_level=RiskLevel.LOW,
+        webhook_path="/webhook/itc/cmdb",
+        parameters=[
+            {"name": "ci_type", "type": "string", "required": False},
+            {"name": "name", "type": "string", "required": False},
+        ],
+        description="Lấy thông tin từ CMDB"
+    ),
+    
+    # =============================================================================
+    # Jira
+    # =============================================================================
+    "jira_issues": SystemAction(
+        name="jira_issues",
+        display_name="Jira Issues",
+        system="jira",
+        action_type=ActionType.QUERY,
+        risk_level=RiskLevel.LOW,
+        webhook_path="/webhook/jira/issues",
+        parameters=[
+            {"name": "project", "type": "string", "required": False},
+            {"name": "status", "type": "string", "required": False},
+            {"name": "assignee", "type": "string", "required": False},
+        ],
+        description="Lấy danh sách issues"
+    ),
+    "jira_projects": SystemAction(
+        name="jira_projects",
+        display_name="Jira Projects",
+        system="jira",
+        action_type=ActionType.QUERY,
+        risk_level=RiskLevel.LOW,
+        webhook_path="/webhook/jira/projects",
+        description="Lấy danh sách projects"
+    ),
+    
+    # =============================================================================
+    # Matomo Analytics
+    # =============================================================================
+    "matomo_visitors": SystemAction(
+        name="matomo_visitors",
+        display_name="Matomo Visitors",
+        system="analytics",
+        action_type=ActionType.QUERY,
+        risk_level=RiskLevel.LOW,
+        webhook_path="/webhook/matomo/visitors",
+        parameters=[
+            {"name": "period", "type": "string", "required": False},
+            {"name": "date", "type": "string", "required": False},
+            {"name": "limit", "type": "integer", "required": False},
+        ],
+        description="Lấy thông tin visitors"
+    ),
+    "matomo_pageviews": SystemAction(
+        name="matomo_pageviews",
+        display_name="Matomo Page Views",
+        system="analytics",
+        action_type=ActionType.QUERY,
+        risk_level=RiskLevel.LOW,
+        webhook_path="/webhook/matomo/pageviews",
+        parameters=[
+            {"name": "period", "type": "string", "required": False},
+            {"name": "date", "type": "string", "required": False},
+            {"name": "limit", "type": "integer", "required": False},
+        ],
+        description="Lấy thống kê page views"
+    ),
+    "matomo_analytics": SystemAction(
+        name="matomo_analytics",
+        display_name="Matomo Analytics Summary",
+        system="analytics",
+        action_type=ActionType.QUERY,
+        risk_level=RiskLevel.LOW,
+        webhook_path="/webhook/matomo/summary",
+        parameters=[
+            {"name": "period", "type": "string", "required": False},
+            {"name": "date", "type": "string", "required": False},
+        ],
+        description="Lấy tổng quan analytics"
+    ),
+    
+    # =============================================================================
+    # UptimeRobot
+    # =============================================================================
+    "uptimerobot_monitors": SystemAction(
+        name="uptimerobot_monitors",
+        display_name="UptimeRobot Monitors",
+        system="monitoring",
+        action_type=ActionType.QUERY,
+        risk_level=RiskLevel.LOW,
+        webhook_path="/webhook/uptimerobot/monitors",
+        parameters=[
+            {"name": "status", "type": "string", "required": False},
+        ],
+        description="Lấy danh sách monitors"
+    ),
+    "uptimerobot_incidents": SystemAction(
+        name="uptimerobot_incidents",
+        display_name="UptimeRobot Incidents",
+        system="monitoring",
+        action_type=ActionType.QUERY,
+        risk_level=RiskLevel.LOW,
+        webhook_path="/webhook/uptimerobot/incidents",
+        parameters=[
+            {"name": "limit", "type": "integer", "required": False},
+        ],
+        description="Lấy incidents"
+    ),
+    
+    # =============================================================================
+    # Nginx Log
+    # =============================================================================
+    "nginx_access_log": SystemAction(
+        name="nginx_access_log",
+        display_name="Nginx Access Log",
+        system="infrastructure",
+        action_type=ActionType.QUERY,
+        risk_level=RiskLevel.LOW,
+        webhook_path="/webhook/nginx/access-log",
+        parameters=[
+            {"name": "ip", "type": "string", "required": False},
+            {"name": "path", "type": "string", "required": False},
+            {"name": "limit", "type": "integer", "required": False},
+        ],
+        description="Lấy access log"
+    ),
+    "nginx_error_log": SystemAction(
+        name="nginx_error_log",
+        display_name="Nginx Error Log",
+        system="infrastructure",
+        action_type=ActionType.QUERY,
+        risk_level=RiskLevel.LOW,
+        webhook_path="/webhook/nginx/error-log",
+        parameters=[
+            {"name": "level", "type": "string", "required": False},
+            {"name": "limit", "type": "integer", "required": False},
+        ],
+        description="Lấy error log"
+    ),
+    "nginx_stats": SystemAction(
+        name="nginx_stats",
+        display_name="Nginx Statistics",
+        system="infrastructure",
+        action_type=ActionType.QUERY,
+        risk_level=RiskLevel.LOW,
+        webhook_path="/webhook/nginx/stats",
+        description="Lấy thống kê Nginx"
+    ),
+    
+    # =============================================================================
+    # Domain Info
+    # =============================================================================
+    "domain_whois": SystemAction(
+        name="domain_whois",
+        display_name="Domain WHOIS",
+        system="infrastructure",
+        action_type=ActionType.QUERY,
+        risk_level=RiskLevel.LOW,
+        webhook_path="/webhook/domain/whois",
+        parameters=[
+            {"name": "domain", "type": "string", "required": True},
+        ],
+        description="Lấy thông tin WHOIS domain"
+    ),
+    "domain_dns": SystemAction(
+        name="domain_dns",
+        display_name="Domain DNS Records",
+        system="infrastructure",
+        action_type=ActionType.QUERY,
+        risk_level=RiskLevel.LOW,
+        webhook_path="/webhook/domain/dns",
+        parameters=[
+            {"name": "domain", "type": "string", "required": True},
+            {"name": "record_type", "type": "string", "required": False},
+        ],
+        description="Lấy DNS records"
+    ),
+    "domain_expiry": SystemAction(
+        name="domain_expiry",
+        display_name="Domain Expiry Check",
+        system="infrastructure",
+        action_type=ActionType.QUERY,
+        risk_level=RiskLevel.LOW,
+        webhook_path="/webhook/domain/expiry",
+        parameters=[
+            {"name": "domain", "type": "string", "required": True},
+        ],
+        description="Kiểm tra ngày hết hạn domain"
+    ),
+    
+    # =============================================================================
+    # Cloudflare
+    # =============================================================================
+    "cloudflare_zones": SystemAction(
+        name="cloudflare_zones",
+        display_name="Cloudflare Zones",
+        system="cloud",
+        action_type=ActionType.QUERY,
+        risk_level=RiskLevel.LOW,
+        webhook_path="/webhook/cloudflare/zones",
+        description="Lấy danh sách zones"
+    ),
+    "cloudflare_dns": SystemAction(
+        name="cloudflare_dns",
+        display_name="Cloudflare DNS Records",
+        system="cloud",
+        action_type=ActionType.QUERY,
+        risk_level=RiskLevel.LOW,
+        webhook_path="/webhook/cloudflare/dns",
+        parameters=[
+            {"name": "zone_id", "type": "string", "required": True},
+        ],
+        description="Lấy DNS records từ Cloudflare"
+    ),
+    "cloudflare_analytics": SystemAction(
+        name="cloudflare_analytics",
+        display_name="Cloudflare Analytics",
+        system="cloud",
+        action_type=ActionType.QUERY,
+        risk_level=RiskLevel.LOW,
+        webhook_path="/webhook/cloudflare/analytics",
+        parameters=[
+            {"name": "zone_id", "type": "string", "required": False},
+            {"name": "period", "type": "string", "required": False},
+        ],
+        description="Lấy thống kê traffic"
+    ),
+    "cloudflare_stats": SystemAction(
+        name="cloudflare_stats",
+        display_name="Cloudflare Stats",
+        system="cloud",
+        action_type=ActionType.QUERY,
+        risk_level=RiskLevel.LOW,
+        webhook_path="/webhook/cloudflare/stats",
+        parameters=[
+            {"name": "zone_id", "type": "string", "required": True},
+        ],
+        description="Lấy stats Cloudflare"
+    ),
+    "cloudflare_firewall_rules": SystemAction(
+        name="cloudflare_firewall_rules",
+        display_name="Cloudflare Firewall Rules",
+        system="cloud",
+        action_type=ActionType.QUERY,
+        risk_level=RiskLevel.LOW,
+        webhook_path="/webhook/cloudflare/firewall",
+        parameters=[
+            {"name": "zone_id", "type": "string", "required": False},
+        ],
+        description="Lấy firewall rules"
+    ),
+    
+    # =============================================================================
+    # Veeam Backup Exec
+    # =============================================================================
+    "veeam_jobs": SystemAction(
+        name="veeam_jobs",
+        display_name="Veeam Backup Jobs",
+        system="backup",
+        action_type=ActionType.QUERY,
+        risk_level=RiskLevel.LOW,
+        webhook_path="/webhook/veeam/jobs",
+        description="Lấy danh sách backup jobs"
+    ),
+    "veeam_sessions": SystemAction(
+        name="veeam_sessions",
+        display_name="Veeam Sessions",
+        system="backup",
+        action_type=ActionType.QUERY,
+        risk_level=RiskLevel.LOW,
+        webhook_path="/webhook/veeam/sessions",
+        parameters=[
+            {"name": "limit", "type": "integer", "required": False},
+        ],
+        description="Lấy các phiên backup"
+    ),
+    "veeam_backups": SystemAction(
+        name="veeam_backups",
+        display_name="Veeam Backups",
+        system="backup",
+        action_type=ActionType.QUERY,
+        risk_level=RiskLevel.LOW,
+        webhook_path="/webhook/veeam/backups",
+        description="Lấy danh sách backups"
+    ),
+    "veeam_restore_points": SystemAction(
+        name="veeam_restore_points",
+        display_name="Veeam Restore Points",
+        system="backup",
+        action_type=ActionType.QUERY,
+        risk_level=RiskLevel.LOW,
+        webhook_path="/webhook/veeam/restore-points",
+        parameters=[
+            {"name": "backup_name", "type": "string", "required": False},
+        ],
+        description="Lấy restore points"
+    ),
+    "veeam_repositories": SystemAction(
+        name="veeam_repositories",
+        display_name="Veeam Repositories",
+        system="backup",
+        action_type=ActionType.QUERY,
+        risk_level=RiskLevel.LOW,
+        webhook_path="/webhook/veeam/repositories",
+        description="Lấy danh sách repositories"
+    ),
+    
+    # =============================================================================
+    # Database Monitoring
+    # =============================================================================
+    "db_mysql_status": SystemAction(
+        name="db_mysql_status",
+        display_name="MySQL Status",
+        system="database",
+        action_type=ActionType.QUERY,
+        risk_level=RiskLevel.LOW,
+        webhook_path="/webhook/db/mysql/status",
+        parameters=[
+            {"name": "host", "type": "string", "required": False},
+        ],
+        description="Lấy MySQL status"
+    ),
+    "db_mysql_connections": SystemAction(
+        name="db_mysql_connections",
+        display_name="MySQL Connections",
+        system="database",
+        action_type=ActionType.QUERY,
+        risk_level=RiskLevel.LOW,
+        webhook_path="/webhook/db/mysql/connections",
+        description="Lấy active connections"
+    ),
+    "db_mysql_size": SystemAction(
+        name="db_mysql_size",
+        display_name="MySQL Database Sizes",
+        system="database",
+        action_type=ActionType.QUERY,
+        risk_level=RiskLevel.LOW,
+        webhook_path="/webhook/db/mysql/size",
+        description="Lấy kích thước databases"
+    ),
+    "db_pg_status": SystemAction(
+        name="db_pg_status",
+        display_name="PostgreSQL Status",
+        system="database",
+        action_type=ActionType.QUERY,
+        risk_level=RiskLevel.LOW,
+        webhook_path="/webhook/db/postgresql/status",
+        parameters=[
+            {"name": "host", "type": "string", "required": False},
+        ],
+        description="Lấy PostgreSQL status"
+    ),
+    "db_pg_connections": SystemAction(
+        name="db_pg_connections",
+        display_name="PostgreSQL Connections",
+        system="database",
+        action_type=ActionType.QUERY,
+        risk_level=RiskLevel.LOW,
+        webhook_path="/webhook/db/postgresql/connections",
+        description="Lấy active connections"
+    ),
+    "db_pg_replication": SystemAction(
+        name="db_pg_replication",
+        display_name="PostgreSQL Replication",
+        system="database",
+        action_type=ActionType.QUERY,
+        risk_level=RiskLevel.LOW,
+        webhook_path="/webhook/db/postgresql/replication",
+        description="Lấy trạng thái replication"
+    ),
+    "db_mongo_status": SystemAction(
+        name="db_mongo_status",
+        display_name="MongoDB Status",
+        system="database",
+        action_type=ActionType.QUERY,
+        risk_level=RiskLevel.LOW,
+        webhook_path="/webhook/db/mongodb/status",
+        parameters=[
+            {"name": "host", "type": "string", "required": False},
+        ],
+        description="Lấy MongoDB status"
+    ),
+    "db_mongo_connections": SystemAction(
+        name="db_mongo_connections",
+        display_name="MongoDB Connections",
+        system="database",
+        action_type=ActionType.QUERY,
+        risk_level=RiskLevel.LOW,
+        webhook_path="/webhook/db/mongodb/connections",
+        description="Lấy active connections"
+    ),
+    "db_mongo_size": SystemAction(
+        name="db_mongo_size",
+        display_name="MongoDB Database Sizes",
+        system="database",
+        action_type=ActionType.QUERY,
+        risk_level=RiskLevel.LOW,
+        webhook_path="/webhook/db/mongodb/size",
+        description="Lấy kích thước databases"
+    ),
+    "db_redis_info": SystemAction(
+        name="db_redis_info",
+        display_name="Redis Info",
+        system="database",
+        action_type=ActionType.QUERY,
+        risk_level=RiskLevel.LOW,
+        webhook_path="/webhook/db/redis/info",
+        description="Lấy Redis info"
+    ),
+    "db_redis_keys": SystemAction(
+        name="db_redis_keys",
+        display_name="Redis Keys",
+        system="database",
+        action_type=ActionType.QUERY,
+        risk_level=RiskLevel.LOW,
+        webhook_path="/webhook/db/redis/keys",
+        parameters=[
+            {"name": "pattern", "type": "string", "required": False},
+            {"name": "limit", "type": "integer", "required": False},
+        ],
+        description="Lấy keys trong Redis"
+    ),
+    "db_redis_memory": SystemAction(
+        name="db_redis_memory",
+        display_name="Redis Memory Usage",
+        system="database",
+        action_type=ActionType.QUERY,
+        risk_level=RiskLevel.LOW,
+        webhook_path="/webhook/db/redis/memory",
+        description="Lấy memory usage"
+    ),
+    
+    # =============================================================================
+    # Kubernetes
+    # =============================================================================
+    "k8s_pods": SystemAction(
+        name="k8s_pods",
+        display_name="Kubernetes Pods",
+        system="kubernetes",
+        action_type=ActionType.QUERY,
+        risk_level=RiskLevel.LOW,
+        webhook_path="/webhook/k8s/pods",
+        parameters=[
+            {"name": "namespace", "type": "string", "required": False},
+        ],
+        description="Lấy danh sách pods"
+    ),
+    "k8s_services": SystemAction(
+        name="k8s_services",
+        display_name="Kubernetes Services",
+        system="kubernetes",
+        action_type=ActionType.QUERY,
+        risk_level=RiskLevel.LOW,
+        webhook_path="/webhook/k8s/services",
+        parameters=[
+            {"name": "namespace", "type": "string", "required": False},
+        ],
+        description="Lấy danh sách services"
+    ),
+    "k8s_nodes": SystemAction(
+        name="k8s_nodes",
+        display_name="Kubernetes Nodes",
+        system="kubernetes",
+        action_type=ActionType.QUERY,
+        risk_level=RiskLevel.LOW,
+        webhook_path="/webhook/k8s/nodes",
+        description="Lấy danh sách nodes"
+    ),
+    "k8s_events": SystemAction(
+        name="k8s_events",
+        display_name="Kubernetes Events",
+        system="kubernetes",
+        action_type=ActionType.QUERY,
+        risk_level=RiskLevel.LOW,
+        webhook_path="/webhook/k8s/events",
+        parameters=[
+            {"name": "namespace", "type": "string", "required": False},
+            {"name": "limit", "type": "integer", "required": False},
+        ],
+        description="Lấy events"
+    ),
 }
 
 

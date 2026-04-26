@@ -290,6 +290,63 @@ class KnowledgeRetrievalService:
                     metadata={"doc_type": d.document_type},
                 ))
 
+        elif kb_type == "all":
+            # Tìm kiếm tất cả loại KB: policy, faq, guide, document
+            # 1. Policy
+            policies = await self.repo.search_policies(query, category, tags, limit)
+            for p in policies:
+                results.append(KnowledgeSearchResult(
+                    knowledge_type=KnowledgeType.POLICY,
+                    id=p.policy_id,
+                    title=p.title,
+                    content=p.content,
+                    category=p.category,
+                    tags=p.tags or [],
+                    similarity=self._calculate_text_similarity(query, p.title + " " + p.content),
+                    metadata={"version": p.version},
+                ))
+            # 2. FAQ
+            faqs = await self.repo.search_faqs(query, category, tags, None, limit)
+            for f in faqs:
+                results.append(KnowledgeSearchResult(
+                    knowledge_type=KnowledgeType.FAQ,
+                    id=f.question_id,
+                    title=f.question,
+                    content=f.answer,
+                    category=f.category,
+                    tags=f.tags or [],
+                    keywords=f.keywords or [],
+                    similarity=self._calculate_text_similarity(query, f.question + " " + f.answer),
+                    metadata={"usage_count": f.usage_count},
+                ))
+                await self.repo.increment_faq_usage(f.question_id)
+            # 3. Guide
+            guides = await self.repo.search_guides(query, None, category, tags, limit)
+            for g in guides:
+                results.append(KnowledgeSearchResult(
+                    knowledge_type=KnowledgeType.GUIDE,
+                    id=g.guide_id,
+                    title=g.title,
+                    content=g.content,
+                    category=g.category,
+                    tags=g.tags or [],
+                    similarity=self._calculate_text_similarity(query, g.title + " " + g.content),
+                    metadata={"guide_type": g.guide_type, "steps_count": len(g.steps or [])},
+                ))
+            # 4. Document
+            docs = await self.repo.search_documents(query=query, category=category, tags=tags, limit=limit)
+            for d in docs:
+                results.append(KnowledgeSearchResult(
+                    knowledge_type=KnowledgeType.DOCUMENT,
+                    id=d.document_id,
+                    title=d.title,
+                    content=d.content,
+                    category=d.category,
+                    tags=d.tags or [],
+                    similarity=self._calculate_text_similarity(query, d.title + " " + d.content),
+                    metadata={"doc_type": d.document_type},
+                ))
+
         return results
 
     def _calculate_text_similarity(self, query: str, text: str) -> float:

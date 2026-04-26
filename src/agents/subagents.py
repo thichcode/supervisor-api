@@ -154,9 +154,51 @@ class KnowledgeAgent:
             "query_type": None,
             "knowledge_results": [],
             "search_performed": False,
+            # Enhanced search metadata
+            "detected_domain": None,
+            "system_context": None,
+            "domain_context": None,
         }
 
         text_lower = payload.message.text.lower()
+        text = payload.message.text
+
+        # =============================================================================
+        # Enhanced: Hybrid Context Loading (Approach 1 + 2)
+        # =============================================================================
+        try:
+            from src.services.kb_enhanced_search import (
+                detect_domain,
+                get_domain_context,
+                load_system_context,
+            )
+            
+            # 1. Detect domain from query (lightweight, always run)
+            detected_domain = detect_domain(text)
+            if detected_domain:
+                knowledge["detected_domain"] = detected_domain
+                logger.info("Domain detected for KB search", domain=detected_domain)
+                
+                # Approach 2: Load domain-specific context immediately
+                domain_ctx = get_domain_context(detected_domain)
+                if domain_ctx:
+                    knowledge["domain_context"] = domain_ctx
+                    logger.debug("Domain context loaded", domain=detected_domain)
+            
+            # 2. Approach 1: Load system context only when needed
+            if self._needs_system_context(text_lower, detected_domain):
+                try:
+                    system_context = await load_system_context()
+                    knowledge["system_context"] = system_context.to_dict()
+                    logger.debug("System context loaded for KB search")
+                except Exception as e:
+                    logger.warning("Failed to load system context", error=str(e))
+                    
+        except ImportError:
+            logger.debug("Enhanced KB search module not available, using basic search")
+        # =============================================================================
+        # End Enhanced
+        # =============================================================================
 
         query_type_mapping = {
             "case của tôi": "case_info",
@@ -286,3 +328,28 @@ Trả về JSON format:
                     "template_terms": results.template_terms,
                 },
             }
+
+    def _needs_system_context(self, text_lower: str, detected_domain: Optional[str]) -> bool:
+        """Check if system context (incidents, alerts, tickets) is needed for this query.
+
+        Returns True if query relates to:
+        - System status/health (Approach 1)
+        - Incidents or outages
+        - Specific domains that benefit from system context (Approach 2 hybrid)
+        """
+        # Keywords that suggest system context is needed
+        system_keywords = [
+            "incident", "outage", "down", "error", "lỗi", "sự cố",
+            "status", "health", "alert", "ticket", "case",
+            "system", "hệ thống", "server", "service",
+        ]
+
+        # Check if query contains system-related keywords
+        if any(kw in text_lower for kw in system_keywords):
+            return True
+
+        # Always load system context for specific domains
+        if detected_domain in ["gitlab", "active_directory", "database", "network"]:
+            return True
+
+        return False

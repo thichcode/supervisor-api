@@ -223,3 +223,23 @@ volumes:
   redis_data:
   prometheus_data:
   grafana_data:
+
+  kb-draft-cron:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: supervisor-kb-draft-cron
+    environment:
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=supervisor_db
+      - DB_USER=postgres
+      - DB_PASSWORD=${DB_PASSWORD:-}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+      - TELEGRAM_APPROVAL_CHAT_IDS=${TELEGRAM_APPROVAL_CHAT_IDS:-}
+    entrypoint: ["/bin/sh", "-c"]
+    command: >
+     /bin/sh -c 'echo "0 20 * * * cd /app && python3 scripts/daily_kb_draft_worker.py --send-telegram" > /etc/crontabs/root && cron -f'
+    networks:
+      - default
+    restart: unless-stopped
