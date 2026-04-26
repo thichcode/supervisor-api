@@ -417,7 +417,7 @@ async def lifespan(app: FastAPI):
     try:
         await llm_client.initialize()
         supervisor.set_llm(llm_client)
-        logger.info("LLM initialized", model=settings.llm_model)
+        logger.info("LLM initialized", model=settings.primary_llm_model)
         
         # Initialize separate image processing LLM if configured
         if settings.ollama_image_model and settings.ollama_image_model != settings.ollama_default_model:
@@ -610,7 +610,7 @@ async def receive_webhook(
                 risk_level=result.risk_level,
                 confidence_score=result.confidence,
                 model_provider=(result.metadata or {}).get("model_provider"),
-                model_name=(result.metadata or {}).get("model_name") or settings.llm_model,
+                model_name=(result.metadata or {}).get("model_name") or settings.primary_llm_model,
                 kb_sources=(result.metadata or {}).get("kb_sources", []),
                 approval_required=result.status == "needs_review",
                 approval_status="pending" if result.status == "needs_review" else "not_needed",

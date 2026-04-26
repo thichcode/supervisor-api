@@ -143,7 +143,7 @@ class FeedbackReplayWorker:
         payload = event.event_payload or {}
         user_id = event.user_id or payload.get("user_id")
         request_id = event.request_id
-        model_name = payload.get("model_name") or settings.llm_model
+        model_name = payload.get("model_name") or settings.primary_llm_model
 
         is_positive = self._derive_feedback_signal(event.event_type, payload)
         if is_positive is not None:

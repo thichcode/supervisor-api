@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 import structlog
 import json
+import re
 import httpx
 
 from src.config import get_settings
@@ -228,6 +229,43 @@ class MultiProviderLLMClient:
         # Ollama base URL
         self._ollama_base_url = getattr(settings, 'ollama_base_url', 'http://localhost:11434')
 
+    def _split_model_candidates(self, model_value: Any) -> list[str]:
+        if model_value is None:
+            return []
+        if isinstance(model_value, list):
+            candidates = [str(item).strip() for item in model_value if str(item).strip()]
+            return candidates
+        if isinstance(model_value, str):
+            value = model_value.strip()
+            if not value:
+                return []
+            try:
+                parsed = json.loads(value)
+                if isinstance(parsed, list):
+                    return [str(item).strip() for item in parsed if str(item).strip()]
+            except Exception:
+                pass
+            candidates = [item.strip() for item in re.split(r"[\n,;|]+", value) if item.strip()]
+            return candidates
+        value = str(model_value).strip()
+        return [value] if value else []
+
+    def _resolve_model_candidates(self, model: Optional[str] = None) -> list[str]:
+        candidates = self._split_model_candidates(model)
+        if not candidates:
+            candidates = self._split_model_candidates(settings.llm_model)
+        if not candidates:
+            candidates = ["llama3"]
+        unique_candidates: list[str] = []
+        seen: set[str] = set()
+        for candidate in candidates:
+            key = candidate.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            unique_candidates.append(candidate)
+        return unique_candidates
+
     def get_provider(self, model: str = None) -> LLMProvider:
         """Get provider - explicit override or auto-detect"""
         if self._explicit_provider:
@@ -285,7 +323,8 @@ class MultiProviderLLMClient:
     async def initialize(self):
         """Initialize clients based on configuration"""
         # Determine active model
-        configured_model = settings.llm_model or "llama3"
+        candidates = self._resolve_model_candidates(settings.llm_model)
+        configured_model = candidates[0]
         self._active_model = configured_model
         self._active_provider = self.get_provider(configured_model)
 
@@ -295,7 +334,8 @@ class MultiProviderLLMClient:
         logger.info(
             "Multi-provider LLM client initialized",
             model=self._active_model,
-            provider=self._active_provider.value
+            provider=self._active_provider.value,
+            model_candidates=candidates,
         )
 
     async def close(self):
@@ -473,6 +513,92 @@ class MultiProviderLLMClient:
             )
         )
 
+    async def _complete_single_model(
+        self,
+        target_model: str,
+        system_prompt: str,
+        user_message: str,
+        context: Optional[dict] = None,
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+        tools: Optional[List[Dict]] = None,
+    ) -> LLMResponse:
+        target_provider = self.get_provider(target_model)
+        client = self._get_client(target_provider)
+
+        messages: List[Dict] = [{"role": "system", "content": system_prompt}]
+        if context:
+            context_str = self._format_context(context)
+            messages.append({"role": "system", "content": f"Context:\n{context_str}"})
+
+        messages.append({"role": "user", "content": user_message})
+
+        kwargs: Dict[str, Any] = {"messages": messages}
+        if target_provider == LLMProvider.AZURE:
+            kwargs["deployment_id"] = settings.azure_deployment_name or target_model
+        else:
+            kwargs["model"] = target_model
+
+        if tools:
+            kwargs["tools"] = tools
+            kwargs["tool_choice"] = "auto"
+
+        create_kwargs = {
+            **kwargs,
+            "temperature": temperature or self._temperature,
+            "max_tokens": max_tokens or self._max_tokens,
+        }
+
+        response = await client.chat.completions.create(**create_kwargs)
+
+        await self._circuit_breaker.record_success()
+
+        message = response.choices[0].message
+        content = message.content or ""
+        usage = response.usage
+        usage_dict = self._extract_usage(usage)
+        finish_reason = str(response.choices[0].finish_reason)
+
+        # Parse tool calls
+        tool_calls: List[ToolCall] = []
+        if hasattr(message, "tool_calls") and message.tool_calls:
+            for tc in message.tool_calls:
+                try:
+                    args_str = tc.function.arguments
+                    args = json.loads(args_str) if isinstance(args_str, str) else args_str
+                except (json.JSONDecodeError, TypeError):
+                    args = {"raw": str(tc.function.arguments)}
+                tool_calls.append(
+                    ToolCall(
+                        id=str(tc.index or "") + "_" + str(hash(args_str if isinstance(args_str, str) else "")),
+                        name=tc.function.name,
+                        arguments=args,
+                    )
+                )
+
+        cost = self._calculate_cost(target_model, usage)
+        self._total_cost += cost
+        self._total_tokens += usage_dict.get("total_tokens", 0)
+
+        logger.debug(
+            "LLM completion",
+            provider=target_provider.value,
+            model=target_model,
+            tokens=usage_dict.get("total_tokens", 0),
+            cost_usd=round(cost, 6),
+            tool_calls=len(tool_calls),
+        )
+
+        return LLMResponse(
+            content=content,
+            confidence=self._calculate_confidence(finish_reason),
+            usage=usage_dict,
+            model=target_model,
+            provider=target_provider.value,
+            finish_reason=finish_reason,
+            tool_calls=tool_calls,
+        )
+
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=2, max=30),
@@ -495,119 +621,97 @@ class MultiProviderLLMClient:
         If `tools` is provided, the LLM is instructed to use function-calling.
         Tool calls (if any) are returned in LLMResponse.tool_calls.
         """
-        target_model = model or self._active_model
-        target_provider = self.get_provider(target_model)
-        client = self._get_client(target_provider)
-
-        messages: List[Dict] = [{"role": "system", "content": system_prompt}]
-        if context:
-            context_str = self._format_context(context)
-            messages.append({"role": "system", "content": f"Context:\n{context_str}"})
-
-        messages.append({"role": "user", "content": user_message})
+        candidate_models = self._resolve_model_candidates(model or self._active_model)
+        if not candidate_models:
+            candidate_models = self._resolve_model_candidates(settings.llm_model)
 
         if not await self._circuit_breaker.can_execute():
             raise CircuitBreakerError("multi_llm", "Circuit breaker is open")
 
+        last_error: Optional[Exception] = None
+        tool_attempted = False
+
         try:
-            kwargs: Dict[str, Any] = {"messages": messages}
-            if target_provider == LLMProvider.AZURE:
-                kwargs["deployment_id"] = settings.azure_deployment_name or target_model
-            else:
-                kwargs["model"] = target_model
-
+            attempt_sequences = []
             if tools:
-                kwargs["tools"] = tools
-                kwargs["tool_choice"] = "auto"
+                attempt_sequences.append((True, candidate_models))
+            attempt_sequences.append((False, candidate_models if not tools else candidate_models))
 
-            create_kwargs = {
-                **kwargs,
-                "temperature": temperature or self._temperature,
-                "max_tokens": max_tokens or self._max_tokens,
-            }
-
-            response = None
-            last_error: Optional[Exception] = None
-            try:
-                response = await client.chat.completions.create(**create_kwargs)
-            except Exception as e:
-                last_error = e
-                if tools and self._is_tools_unsupported_error(e):
-                    logger.warning(
-                        "LLM model does not support tools - retrying without tools",
-                        provider=target_provider.value,
-                        model=target_model,
-                        error=str(e),
-                    )
-                    fallback_kwargs = dict(create_kwargs)
-                    fallback_kwargs.pop("tools", None)
-                    fallback_kwargs.pop("tool_choice", None)
-                    response = await client.chat.completions.create(**fallback_kwargs)
-                else:
-                    raise
-
-            if response is None:
-                raise last_error or LLMError("LLM completion returned no response")
-
-            await self._circuit_breaker.record_success()
-
-            message = response.choices[0].message
-            content = message.content or ""
-            usage = response.usage
-            usage_dict = self._extract_usage(usage)
-            finish_reason = str(response.choices[0].finish_reason)
-
-            # Parse tool calls
-            tool_calls: List[ToolCall] = []
-            if hasattr(message, "tool_calls") and message.tool_calls:
-                for tc in message.tool_calls:
+            for use_tools, models in attempt_sequences:
+                for candidate_model in models:
                     try:
-                        args_str = tc.function.arguments
-                        args = json.loads(args_str) if isinstance(args_str, str) else args_str
-                    except (json.JSONDecodeError, TypeError):
-                        args = {"raw": str(tc.function.arguments)}
-                    tool_calls.append(
-                        ToolCall(
-                            id=str(tc.index or "") + "_" + str(hash(args_str if isinstance(args_str, str) else "")),
-                            name=tc.function.name,
-                            arguments=args,
+                        if use_tools:
+                            tool_attempted = True
+                        return await self._complete_single_model(
+                            target_model=candidate_model,
+                            system_prompt=system_prompt,
+                            user_message=user_message,
+                            context=context,
+                            temperature=temperature,
+                            max_tokens=max_tokens,
+                            tools=tools if use_tools else None,
                         )
-                    )
+                    except Exception as e:
+                        last_error = e
+                        if use_tools and tools and self._is_tools_unsupported_error(e):
+                            logger.warning(
+                                "LLM model does not support tools - trying next fallback model",
+                                model=candidate_model,
+                                error=str(e),
+                            )
+                            continue
+                        if use_tools and tools:
+                            logger.warning(
+                                "LLM tool-enabled attempt failed - trying next fallback model",
+                                model=candidate_model,
+                                error=str(e),
+                            )
+                            continue
+                        logger.warning(
+                            "LLM attempt failed - trying next fallback model",
+                            model=candidate_model,
+                            error=str(e),
+                        )
+                        continue
 
-            cost = self._calculate_cost(target_model, usage)
-            self._total_cost += cost
-            self._total_tokens += usage_dict.get("total_tokens", 0)
+            if tools and tool_attempted:
+                logger.warning(
+                    "All tool-enabled model attempts failed; retrying without tools",
+                    candidates=candidate_models,
+                )
+                for candidate_model in candidate_models:
+                    try:
+                        return await self._complete_single_model(
+                            target_model=candidate_model,
+                            system_prompt=system_prompt,
+                            user_message=user_message,
+                            context=context,
+                            temperature=temperature,
+                            max_tokens=max_tokens,
+                            tools=None,
+                        )
+                    except Exception as e:
+                        last_error = e
+                        logger.warning(
+                            "LLM no-tool fallback failed - trying next fallback model",
+                            model=candidate_model,
+                            error=str(e),
+                        )
+                        continue
 
-            logger.debug(
-                "LLM completion",
-                provider=target_provider.value,
-                model=target_model,
-                tokens=usage_dict.get("total_tokens", 0),
-                cost_usd=round(cost, 6),
-                tool_calls=len(tool_calls),
-            )
-
-            return LLMResponse(
-                content=content,
-                confidence=self._calculate_confidence(finish_reason),
-                usage=usage_dict,
-                model=target_model,
-                provider=target_provider.value,
-                finish_reason=finish_reason,
-                tool_calls=tool_calls,
-            )
-
+            raise LLMError(f"Completion failed: {last_error}")
         except Exception as e:
             await self._circuit_breaker.record_failure()
             logger.error(
                 "LLM completion failed",
-                provider=target_provider.value,
-                model=target_model,
+                provider=self.get_provider(candidate_models[0]).value if candidate_models else "unknown",
+                model=candidate_models[0] if candidate_models else "unknown",
                 error=str(e),
             )
-            raise LLMError(f"Completion failed: {e}")
+            raise
 
     async def complete_structured(
+
         self,
         system_prompt: str,
         user_message: str,

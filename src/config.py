@@ -87,7 +87,7 @@ class Settings(BaseSettings):
     # LLM Provider Configuration
     llm_provider: str = ""  # "ollama", "openai", or "azure" (auto-detect if empty)
     openai_api_key: str = ""
-    llm_model: str = "llama3"  # Default to Ollama for Vietnamese
+    llm_model: str = "llama3"  # Comma-separated list supported; first item is primary
     llm_temperature: float = 0.7
     llm_max_tokens: int = 2000
     llm_healthcheck_enabled: bool = False
@@ -231,6 +231,35 @@ class Settings(BaseSettings):
             dotenv_settings,
             file_secret_settings,
         )
+
+    @property
+    def llm_model_candidates(self) -> list[str]:
+        raw = self.llm_model
+        if isinstance(raw, str):
+            value = raw.strip()
+            if not value:
+                return ["llama3"]
+            try:
+                parsed = json.loads(value)
+                if isinstance(parsed, list):
+                    return [str(item).strip() for item in parsed if str(item).strip()]
+            except Exception:
+                pass
+            candidates = [item.strip() for item in value.replace("\n", ",").replace(";", ",").replace("|", ",").split(",")]
+            candidates = [item for item in candidates if item]
+            return candidates or ["llama3"]
+        if isinstance(raw, list):
+            candidates = [str(item).strip() for item in raw if str(item).strip()]
+            return candidates or ["llama3"]
+        return [str(raw).strip()] if str(raw).strip() else ["llama3"]
+
+    @property
+    def primary_llm_model(self) -> str:
+        return self.llm_model_candidates[0]
+
+    @property
+    def model_name_for_display(self) -> str:
+        return ",".join(self.llm_model_candidates)
 
     @property
     def style_learning_user_ids(self) -> set[str]:

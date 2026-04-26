@@ -14,7 +14,7 @@ async def health_check():
     return {
         "status": "healthy",
         "service": "supervisor",
-        "llm_model": settings.llm_model,
+        "llm_model": settings.primary_llm_model,
         "version": settings.app_version,
     }
 
