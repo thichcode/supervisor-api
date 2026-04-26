@@ -107,6 +107,13 @@ class TestIntentClassifier:
         result = classifier.classify(sample_payload, sample_context)
         assert result.intent == IntentType.POLICY
 
+    def test_classify_policy_with_domain_request(self, sample_payload, sample_context):
+        sample_payload.message.text = "tôi đang cần tư vấn cách tạo domain theo policy công ty"
+        classifier = IntentClassifier()
+        result = classifier.classify(sample_payload, sample_context)
+        assert result.intent == IntentType.POLICY
+        assert result.confidence >= 0.8
+
     def test_classify_support_case(self, sample_payload, sample_context):
         sample_payload.case = CaseInfo(case_id="CASE-001", priority="medium")
         classifier = IntentClassifier()

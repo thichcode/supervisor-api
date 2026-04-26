@@ -205,11 +205,63 @@ class IntentClassifier:
         "sales": [r"khách hàng", r"hợp đồng", r"deal", r"quote", r"báo giá"],
     }
 
+    def _has_any(self, text: str, patterns: list[str]) -> bool:
+        return any(re.search(pattern, text, re.IGNORECASE) for pattern in patterns)
+
+    def _classify_rule_based(self, text: str) -> IntentType | None:
+        policy_cues = [
+            r"theo policy",
+            r"theo chính sách",
+            r"theo quy định",
+            r"theo quy trình",
+            r"có được phép",
+            r"được phép",
+            r"phù hợp policy",
+            r"tuân theo policy",
+            r"tạo domain",
+            r"domain",
+        ]
+        support_cues = [
+            r"login",
+            r"đăng nhập",
+            r"lỗi",
+            r"error",
+            r"bug",
+            r"issue",
+            r"sự cố",
+            r"không vào được",
+            r"không hoạt động",
+            r"không được",
+        ]
+        faq_cues = [
+            r"là gì",
+            r"how to",
+            r"how do",
+            r"cách nào",
+            r"làm sao",
+            r"giải thích",
+            r"cho biết",
+            r"muốn hỏi",
+        ]
+
+        if self._has_any(text, policy_cues):
+            return IntentType.POLICY
+        if self._has_any(text, support_cues):
+            return IntentType.SUPPORT_CASE
+        if self._has_any(text, faq_cues):
+            return IntentType.FAQ
+        return None
+
     def classify(self, payload: InputPayload, memory: MemoryContext) -> IntentClassification:
         text = payload.message.text.lower()
 
         if payload.case and payload.case.case_id:
             return IntentClassification(intent=IntentType.SUPPORT_CASE, confidence=0.85)
+
+        rule_based_intent = self._classify_rule_based(text)
+        if rule_based_intent:
+            confidence = 0.86 if rule_based_intent in {IntentType.POLICY, IntentType.SUPPORT_CASE} else 0.8
+            return IntentClassification(intent=rule_based_intent, confidence=confidence)
 
         scores = {}
         for intent, patterns in self.PATTERNS.items():
