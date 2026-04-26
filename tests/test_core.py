@@ -105,6 +105,7 @@ class TestIntentClassifier:
         classifier = IntentClassifier(llm=FakeLLM())
         result = await classifier.classify(sample_payload, sample_context)
         assert result.intent == IntentType.FAQ
+        assert result.source == "model"
 
     @pytest.mark.asyncio
     async def test_classify_policy(self, sample_payload, sample_context):
@@ -117,6 +118,7 @@ class TestIntentClassifier:
         classifier = IntentClassifier(llm=FakeLLM())
         result = await classifier.classify(sample_payload, sample_context)
         assert result.intent == IntentType.POLICY
+        assert result.source == "model"
 
     @pytest.mark.asyncio
     async def test_classify_policy_with_domain_request(self, sample_payload, sample_context):
@@ -130,6 +132,7 @@ class TestIntentClassifier:
         result = await classifier.classify(sample_payload, sample_context)
         assert result.intent == IntentType.POLICY
         assert result.confidence >= 0.8
+        assert result.source == "guardrail"
 
     @pytest.mark.asyncio
     async def test_classify_support_case(self, sample_payload, sample_context):
@@ -142,6 +145,7 @@ class TestIntentClassifier:
         classifier = IntentClassifier(llm=FakeLLM())
         result = await classifier.classify(sample_payload, sample_context)
         assert result.intent == IntentType.SUPPORT_CASE
+        assert result.source == "guardrail"
 
     @pytest.mark.asyncio
     async def test_classify_executive(self, vip_context, sample_payload):
@@ -169,6 +173,19 @@ class TestIntentClassifier:
         assert result.confidence < 0.5
 
     @pytest.mark.asyncio
+    async def test_classify_fallback_source_on_model_failure(self, sample_payload, sample_context):
+        sample_payload.message.text = "plain neutral message with no clear intent"
+
+        class FailingLLM:
+            async def classify_intent(self, **kwargs):
+                raise RuntimeError("boom")
+
+        classifier = IntentClassifier(llm=FailingLLM())
+        result = await classifier.classify(sample_payload, sample_context)
+        assert result.source == "fallback"
+        assert result.confidence >= 0.4
+
+    @pytest.mark.asyncio
     async def test_classify_vietnamese_policy(self, sample_payload_vietnamese, sample_context):
         class FakeLLM:
             async def classify_intent(self, **kwargs):
@@ -178,6 +195,7 @@ class TestIntentClassifier:
         result = await classifier.classify(sample_payload_vietnamese, sample_context)
         assert result.intent in [IntentType.POLICY, IntentType.FAQ]
         assert result.confidence > 0.5
+        assert result.source in ["guardrail", "model"]
 
 
 

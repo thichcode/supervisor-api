@@ -127,6 +127,7 @@ class OutputPayload(BaseModel):
 class IntentClassification(BaseModel):
     intent: IntentType
     confidence: float = Field(ge=0.0, le=1.0)
+    source: str = "fallback"
 
 
 class RiskEvaluation(BaseModel):

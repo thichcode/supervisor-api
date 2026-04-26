@@ -1,6 +1,9 @@
 from src.core import InputPayload, IntentClassification, IntentType
 from src.memory import MemoryContext
 import re
+import structlog
+
+logger = structlog.get_logger()
 
 
 class IntentClassifier:
@@ -239,6 +242,11 @@ class IntentClassifier:
 
         return "\n".join(str(part) for part in parts if part)
 
+    def _emit_result(self, intent: IntentType, confidence: float, source: str) -> IntentClassification:
+        result = IntentClassification(intent=intent, confidence=confidence, source=source)
+        logger.info("intent_classified", intent=intent.value, confidence=confidence, intent_source=source)
+        return result
+
     def _normalize_intent(self, raw_intent) -> IntentType | None:
         if not raw_intent:
             return None
@@ -340,13 +348,13 @@ class IntentClassifier:
         else:
             confidence = min(0.95, 0.6 + (max_score * 0.1))
 
-        return IntentClassification(intent=max_intent, confidence=confidence)
+        return IntentClassification(intent=max_intent, confidence=confidence, source="fallback")
 
     async def classify(self, payload: InputPayload, memory: MemoryContext) -> IntentClassification:
         text = payload.message.text.lower()
 
         if payload.case and payload.case.case_id:
-            return IntentClassification(intent=IntentType.SUPPORT_CASE, confidence=0.85)
+            return self._emit_result(IntentType.SUPPORT_CASE, 0.85, "guardrail")
 
         model_client = self.llm
         if model_client is None:
@@ -377,14 +385,14 @@ class IntentClassifier:
                     or (guardrail_reason == "policy_cue" and model_intent != IntentType.POLICY)
                     or (guardrail_reason == "support_cue" and model_intent == IntentType.FAQ)
                 ):
-                    return IntentClassification(intent=guardrail_intent, confidence=max(model_confidence, guardrail_confidence))
+                    return self._emit_result(guardrail_intent, max(model_confidence, guardrail_confidence), "guardrail")
 
                 if model_intent:
-                    return IntentClassification(intent=model_intent, confidence=max(0.0, min(1.0, model_confidence)))
+                    return self._emit_result(model_intent, max(0.0, min(1.0, model_confidence)), "model")
             except Exception:
                 pass
 
         if guardrail_intent:
-            return IntentClassification(intent=guardrail_intent, confidence=guardrail_confidence)
+            return self._emit_result(guardrail_intent, guardrail_confidence, "guardrail")
 
         return self._fallback_classify(text, payload, memory)

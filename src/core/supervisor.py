@@ -311,7 +311,7 @@ class Supervisor:
                     payload=payload,
                     answer=cached["response"],
                     confidence=cached.get("confidence", 0.9),
-                    intent=IntentClassification(intent=IntentType.FAQ, confidence=0.9),
+                    intent=IntentClassification(intent=IntentType.FAQ, confidence=0.9, source="cache"),
                     risk=RiskEvaluation(risk_level=RiskLevel.LOW, reasons=[]),
                     agents_used=["cache"],
                     status="completed",
@@ -362,7 +362,7 @@ class Supervisor:
                         payload=payload,
                         answer="",
                         confidence=final_confidence,
-                        intent=IntentClassification(intent=IntentType.FAQ, confidence=0.8),
+                        intent=IntentClassification(intent=IntentType.FAQ, confidence=0.8, source="cache"),
                         risk=RiskEvaluation(risk_level=RiskLevel.LOW, reasons=[]),
                         agents_used=["cache"],
                         status="skipped",
@@ -374,7 +374,7 @@ class Supervisor:
                         payload=payload,
                         answer=cached_answer,
                         confidence=final_confidence,
-                        intent=IntentClassification(intent=IntentType.FAQ, confidence=0.8),
+                        intent=IntentClassification(intent=IntentType.FAQ, confidence=0.8, source="cache"),
                         risk=RiskEvaluation(risk_level=RiskLevel.LOW, reasons=[]),
                         agents_used=["cache"],
                         status="needs_review",
@@ -385,7 +385,7 @@ class Supervisor:
                     payload=payload,
                     answer=cached_answer,
                     confidence=final_confidence,
-                    intent=IntentClassification(intent=IntentType.FAQ, confidence=0.8),
+                    intent=IntentClassification(intent=IntentType.FAQ, confidence=0.8, source="cache"),
                     risk=RiskEvaluation(risk_level=RiskLevel.LOW, reasons=[]),
                     agents_used=["cache"],
                     status="completed",
@@ -480,7 +480,14 @@ class Supervisor:
         if settings.enable_reasoning_loop:
             metrics.record_reasoning_loop_fallback("rollout_disabled")
 
-        intent = self._classify_intent(payload, memory)
+        intent = await self._classify_intent(payload, memory)
+        logger.info(
+            "intent_classified",
+            request_id=payload.request_id,
+            intent=intent.intent.value,
+            confidence=intent.confidence,
+            intent_source=getattr(intent, "source", "fallback"),
+        )
         risk = self._evaluate_risk(payload, memory)
 
         if self.decision_engine.should_use_subagents(intent, risk, payload):
@@ -995,6 +1002,7 @@ class Supervisor:
         )
 
         output.metadata.update(extra_metadata or {})
+        output.metadata.setdefault("intent_source", getattr(intent, "source", "fallback"))
         output.request_id = payload.request_id
 
         return output
