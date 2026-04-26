@@ -1596,7 +1596,13 @@ class TelegramAdapter:
                     payload = response.json()
                     if payload.get("status") == "skipped":
                         return ""
-                    return payload.get("message", payload.get("response", "No response"))
+                    return (
+                        payload.get("customer_reply")
+                        or payload.get("message")
+                        or payload.get("response")
+                        or payload.get("answer")
+                        or "No response"
+                    )
                 return f"Lỗi: {response.status_code}"
 
         except Exception as e:
