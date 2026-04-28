@@ -56,7 +56,7 @@ class PolicyAgent:
         memory: MemoryContext,
         llm: Optional[MultiProviderLLMClient] = None,
     ) -> dict:
-        text_lower = payload.message.text.lower()
+        text_lower = (payload.message.text or "").lower()
         policy_info = {
             "relevant_policies": [],
             "guidelines_found": False,
