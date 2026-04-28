@@ -8,13 +8,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     cron \
     && rm -rf /var/lib/apt/lists/*
 
-COPY pyproject.toml ./
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir .
-
+# Copy source code FIRST so pip install uses the latest code
 COPY src/ ./src/
 COPY config/ ./config/
 COPY docker/ ./docker/
+COPY pyproject.toml ./
+
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir .
+
 RUN chmod +x /app/docker/entrypoint.sh
 
 ENV PYTHONUNBUFFERED=1
