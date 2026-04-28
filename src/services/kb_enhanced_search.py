@@ -382,11 +382,11 @@ async def enhanced_kb_search(
             {
                 "id": r.id,
                 "title": r.title,
-                "text": r.text[:500],  # Truncate for response
+                "content": (r.content or "")[:500],  # Truncate for response
                 "similarity": r.similarity,
-                "source": r.source,
+                "source": r.metadata.get("source", ""),
                 "category": r.category,
-                "kb_type": r.kb_type,
+                "kb_type": r.knowledge_type.value if hasattr(r.knowledge_type, "value") else str(r.knowledge_type),
             }
             for r in search_result.results
         ]

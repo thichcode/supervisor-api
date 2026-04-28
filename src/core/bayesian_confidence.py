@@ -356,8 +356,8 @@ class ResponseValidator:
         factors = ConfidenceFactors()
         
         # Context relevance
-        query_terms = set(query.lower().split())
-        response_terms = set(response.lower().split())
+        query_terms = set((query or "").lower().split())
+        response_terms = set((response or "").lower().split())
         overlap = len(query_terms & response_terms)
         factors.context_relevance = min(1.0, overlap / max(1, len(query_terms)))
         
@@ -398,7 +398,7 @@ class ResponseValidator:
             issues.append("Question not directly answered")
         
         # Missing context references
-        if context.get("case_info") and "case" not in response.lower():
+        if context.get("case_info") and "case" not in (response or "").lower():
             issues.append("Case context not referenced")
         
         return issues
