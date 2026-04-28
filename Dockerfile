@@ -43,9 +43,6 @@ ENV PYTHONUNBUFFERED=1 \
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD python - <<EOF
-import urllib.request
-urllib.request.urlopen("http://localhost:8000/health", timeout=5)
-EOF
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5)"
 
 ENTRYPOINT ["/app/docker/entrypoint.sh"]
