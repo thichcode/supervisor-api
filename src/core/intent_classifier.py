@@ -389,8 +389,13 @@ class IntentClassifier:
 
                 if model_intent:
                     return self._emit_result(model_intent, max(0.0, min(1.0, model_confidence)), "model")
-            except Exception:
-                pass
+            except Exception as e:
+                logger.error("Classification failed", error=str(e))
+                return IntentClassification(
+                    intent=IntentType.FAQ,
+                    confidence=0.0,
+                    source="error_fallback",
+                )
 
         if guardrail_intent:
             return self._emit_result(guardrail_intent, guardrail_confidence, "guardrail")
