@@ -187,22 +187,29 @@ class MultiProviderLLMClient:
     - Cost tracking
     """
 
-    def __init__(self):
+    def __init__(
+        self,
+        *,
+        provider: Optional[LLMProvider] = None,
+        model: Optional[str] = None,
+        base_url: Optional[str] = None,
+        timeout: Optional[int] = None,
+    ):
         self._clients: dict[LLMProvider, AsyncOpenAI] = {}
-        self._active_model: str = "llama3"
-        
-        # Set explicit provider override from config
-        explicit_provider = getattr(settings, 'llm_provider', '').lower().strip()
-        if explicit_provider:
-            self._explicit_provider = LLMProvider(explicit_provider)
-            self._active_provider = self._explicit_provider
+        self._active_model: str = model or "llama3"
+
+        # Set explicit provider override from config or constructor param
+        if provider:
+            self._explicit_provider = provider
+            self._active_provider = provider
         else:
-            self._explicit_provider = None
-            self._active_provider = None
+            explicit_provider = getattr(settings, 'llm_provider', '').lower().strip()
+            self._explicit_provider = LLMProvider(explicit_provider) if explicit_provider else None
+            self._active_provider = self._explicit_provider
         self._temperature: float = settings.llm_temperature or 0.7
         self._max_tokens: int = settings.llm_max_tokens or 2000
-        # Use ollama_timeout if set, otherwise agent_timeout
-        self._timeout: int = getattr(settings, 'ollama_timeout', None) or settings.agent_timeout or 60
+        # Use ollama_timeout if set, otherwise agent_timeout or constructor param
+        self._timeout: int = timeout or getattr(settings, 'ollama_timeout', None) or settings.agent_timeout or 60
 
         # Circuit breaker
         self._circuit_breaker = get_circuit_breaker(
@@ -226,8 +233,8 @@ class MultiProviderLLMClient:
             "gpt-3.5-turbo": {"input": 0.0005, "output": 0.0015},
         }
 
-        # Ollama base URL
-        self._ollama_base_url = getattr(settings, 'ollama_base_url', 'http://localhost:11434')
+        # Ollama base URL - override from constructor or settings
+        self._ollama_base_url = base_url or getattr(settings, 'ollama_base_url', 'http://localhost:11434')
 
     def _split_model_candidates(self, model_value: Any) -> list[str]:
         if model_value is None:
