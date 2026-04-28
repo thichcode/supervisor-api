@@ -24,7 +24,7 @@ class SimpleAgent:
     """
 
     def _looks_like_support_request(self, payload: InputPayload, memory: MemoryContext) -> bool:
-        text = payload.message.text.lower()
+        text = (payload.message.text or "").lower()
         message_mode = (memory.conversation_state or {}).get("last_user_message_mode", "").lower()
         support_keywords = [
             "support", "case", "ticket", "issue", "problem", "bug", "error", "crash",
@@ -200,7 +200,7 @@ Trả lời câu hỏi trên."""
 
     def _fallback_answer(self, payload: InputPayload, memory: MemoryContext) -> str:
         """Fallback when no LLM available"""
-        text_lower = payload.message.text.lower()
+        text_lower = (payload.message.text or "").lower()
 
         if self._looks_like_support_request(payload, memory):
             return self._build_support_clarification(payload.message.text)

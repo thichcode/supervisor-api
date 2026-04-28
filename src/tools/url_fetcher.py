@@ -135,7 +135,7 @@ class URLFetcher:
         """Check if URL is from a trusted external domain"""
         try:
             parsed = urlparse(url)
-            domain = parsed.netloc.lower()
+            domain = (parsed.netloc or "").lower()
             
             for trusted_domain in self.trusted_domains:
                 if trusted_domain.lower() in domain:

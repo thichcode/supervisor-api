@@ -375,8 +375,8 @@ class AdaptiveRouter:
         length = len(query.split())
         
         # Complex indicators
-        has_comparison = any(w in query.lower() for w in ["so sánh", "khác", "hơn", "tốt hơn"])
-        has_multi = any(query.lower().__contains__(w) for w in ["và", "hoặc", "cả"])
+        has_comparison = any(w in (query or "").lower() for w in ["so sánh", "khác", "hơn", "tốt hơn"])
+        has_multi = any((query or "").lower().__contains__(w) for w in ["và", "hoặc", "cả"])
         
         if length > 30 or (has_comparison and has_multi):
             return "high"

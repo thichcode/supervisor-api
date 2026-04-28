@@ -160,7 +160,7 @@ class KnowledgeAgent:
             "domain_context": None,
         }
 
-        text_lower = payload.message.text.lower()
+        text_lower = (payload.message.text or "").lower()
         text = payload.message.text
 
 
