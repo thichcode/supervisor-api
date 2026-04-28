@@ -532,6 +532,7 @@ async def receive_webhook(
     import src.api as api_module
     import structlog
 
+    # Define logger FIRST so it's available in except block
     logger = structlog.get_logger()
     metrics.increment_active()
     request_logger = RequestLogger(payload.request_id)
