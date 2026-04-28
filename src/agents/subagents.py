@@ -4,6 +4,9 @@ from src.llm import MultiProviderLLMClient, LLMResponse
 from src.db import async_session
 from src.knowledge import KnowledgeRetrievalService
 from typing import Optional
+import structlog
+
+logger = structlog.get_logger()
 
 
 class ContextAgent:
