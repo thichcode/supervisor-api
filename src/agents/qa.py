@@ -139,7 +139,7 @@ class QAAgent:
             issues.append("Câu trả lời trống")
             confidence -= 0.5
 
-        text_lower = payload.message.text.lower()
+        text_lower = (payload.message.text or "").lower()
 
         support_keywords = ["giúp", "help", "hỗ trợ", "support", "case", "vấn đề"]
         if any(kw in text_lower for kw in support_keywords):
