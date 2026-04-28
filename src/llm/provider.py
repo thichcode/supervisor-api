@@ -266,7 +266,7 @@ class MultiProviderLLMClient:
         unique_candidates: list[str] = []
         seen: set[str] = set()
         for candidate in candidates:
-            key = (candidate or "").lower()()
+            key = (candidate or "").lower()
             if key in seen:
                 continue
             seen.add(key)
@@ -281,7 +281,7 @@ class MultiProviderLLMClient:
 
     def _detect_provider(self, model: str) -> LLMProvider:
         """Auto-detect provider from model name"""
-        model_lower = (model or "").lower()()
+        model_lower = (model or "").lower()
 
         # Ollama models
         ollama_models = [

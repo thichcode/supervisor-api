@@ -507,8 +507,8 @@ class EnsembleScorer:
             scores["length"] = 0.3
         
         # Query relevance score
-        query_terms = set((query or "").lower()().split())
-        content_terms = set((content or "").lower()().split())
+        query_terms = set((query or "").lower().split())
+        content_terms = set((content or "").lower().split())
         relevance = len(query_terms & content_terms) / max(1, len(query_terms))
         scores["relevance"] = min(1.0, relevance * 2)
         
