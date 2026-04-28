@@ -118,7 +118,7 @@ class DecisionEngine:
         if confidence < 0.7:
             return True
 
-        text_lower = payload.message.text.lower()
+        text_lower = (payload.message.text or "").lower()
         commitment_keywords = ["cam kết", "đảm bảo", "chắc chắn", "sẽ làm", "hứa", "commit"]
         if any(kw in text_lower for kw in commitment_keywords):
             return True
@@ -424,7 +424,7 @@ class Supervisor:
             )
 
         # Check for ITC ticket request pattern early
-        text_lower = payload.message.text.lower()
+        text_lower = (payload.message.text or "").lower()
         if "itc" in text_lower and ("support request" in text_lower or "ticket" in text_lower or "woid" in text_lower):
             itc_result = await self._handle_itc_ticket_request(payload)
             itc_answer = itc_result.get("answer")
