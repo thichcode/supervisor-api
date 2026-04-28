@@ -78,7 +78,7 @@ def detect_domain(query: str) -> Optional[str]:
     Returns:
         Domain name or None if no match
     """
-    query_lower = query.lower()
+    query_lower = (query or "").lower()()
     
     for domain, keywords in DOMAIN_KEYWORDS.items():
         for keyword in keywords:
