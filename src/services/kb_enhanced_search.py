@@ -120,7 +120,7 @@ class SystemContext:
         parts = []
         if self.active_alerts > 0:
             parts.append(f"Active alerts: {self.active_alerts}")
-        if self.incidents > 0:
+        if self.recent_incidents > 0:
             parts.append(f"Recent incidents: {self.recent_incidents}")
         if self.open_tickets > 0:
             parts.append(f"Open tickets: {self.open_tickets}")
