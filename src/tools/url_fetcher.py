@@ -121,7 +121,7 @@ class URLFetcher:
         """Check if URL is internal (company network)"""
         try:
             parsed = urlparse(url)
-            domain = parsed.netloc.lower()
+            domain = (parsed.netloc or "").lower()
             
             # Check against internal domains
             for internal_domain in self.internal_domains:

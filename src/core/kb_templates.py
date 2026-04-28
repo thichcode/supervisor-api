@@ -503,6 +503,6 @@ class KBCategoryTemplateMapper:
             boosted = min(1.0, boosted + 0.08)
         if any(term.lower() in haystack for term in template.matched_terms):
             boosted = min(1.0, boosted + 0.1)
-        if knowledge_type.lower() in template.preferred_search_types[:2]:
+        if (knowledge_type or "").lower() in template.preferred_search_types[:2]:
             boosted = min(1.0, boosted + 0.04)
         return boosted

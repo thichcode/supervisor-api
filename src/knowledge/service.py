@@ -356,8 +356,8 @@ class KnowledgeRetrievalService:
         inflation when a single query word matches a large document.
         Also applies length penalty so very short texts need more exact matches.
         """
-        query_words = set(query.lower().split())
-        text_words = set(text.lower().split())
+        query_words = set((query or "").lower().split())
+        text_words = set((text or "").lower().split())
 
         if not query_words or not text_words:
             return 0.4
@@ -424,7 +424,7 @@ class KnowledgeRetrievalService:
 
     def _extract_keywords(self, text: str) -> List[str]:
         keywords = []
-        text_lower = text.lower()
+        text_lower = (text or "").lower()
 
         keyword_patterns = {
             "policy": ["chính sách", "quy định", "policy", "rule"],

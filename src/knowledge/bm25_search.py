@@ -55,7 +55,7 @@ class BM25Search:
     def _tokenize(self, text: str) -> List[str]:
         """Tokenize text into terms."""
         # Convert to lowercase and split
-        text = text.lower()
+        text = (text or "").lower()
         # Remove special characters but keep Vietnamese characters
         text = re.sub(r'[^\w\s]', ' ', text)
         tokens = text.split()
@@ -194,7 +194,7 @@ class TFIDFSearch:
     
     def _tokenize(self, text: str) -> List[str]:
         """Tokenize text."""
-        text = text.lower()
+        text = (text or "").lower()
         text = re.sub(r'[^\w\s]', ' ', text)
         tokens = text.split()
         return [t for t in tokens if len(t) > 1]

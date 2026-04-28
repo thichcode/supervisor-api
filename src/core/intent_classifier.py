@@ -351,7 +351,7 @@ class IntentClassifier:
         return IntentClassification(intent=max_intent, confidence=confidence, source="fallback")
 
     async def classify(self, payload: InputPayload, memory: MemoryContext) -> IntentClassification:
-        text = payload.message.text.lower()
+        text = (payload.message.text or "").lower() if payload.message else ""
 
         if payload.case and payload.case.case_id:
             return self._emit_result(IntentType.SUPPORT_CASE, 0.85, "guardrail")

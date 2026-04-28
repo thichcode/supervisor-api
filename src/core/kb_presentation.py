@@ -26,7 +26,7 @@ def _clean(text: Any) -> str:
 
 
 def _is_action_like(line: str) -> bool:
-    lowered = line.lower()
+    lowered = (line or "").lower()
     verbs = (
         "open",
         "go to",
@@ -138,7 +138,7 @@ def build_kb_card(result: Any, query: str | None = None) -> dict[str, Any]:
 
     steps = steps[:5]
     template_match = KBCategoryTemplateMapper.detect(query)
-    if query and summary and query.lower() not in summary.lower():
+    if query and summary and (query or "").lower() not in (summary or "").lower():
         relevance = f"Phù hợp với: {query}"
     else:
         relevance = ""

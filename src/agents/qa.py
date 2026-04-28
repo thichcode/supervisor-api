@@ -143,12 +143,12 @@ class QAAgent:
 
         support_keywords = ["giúp", "help", "hỗ trợ", "support", "case", "vấn đề"]
         if any(kw in text_lower for kw in support_keywords):
-            if "case" not in draft.lower() and "support" not in draft.lower() and "help" not in draft.lower():
+            if "case" not in (draft or "").lower() and "support" not in (draft or "").lower() and "help" not in (draft or "").lower():
                 issues.append("Yêu cầu hỗ trợ chưa được xử lý rõ ràng")
                 confidence -= 0.1
 
         if context.get("case_info") and context["case_info"].get("status") == "urgent":
-            if "urgent" not in draft.lower() and "asap" not in draft.lower():
+            if "urgent" not in (draft or "").lower() and "asap" not in (draft or "").lower():
                 issues.append("Case khẩn cấp chưa được đánh dấu phù hợp")
                 confidence -= 0.1
 

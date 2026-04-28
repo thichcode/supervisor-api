@@ -314,7 +314,8 @@ async def _extract_attachment_evidence(payload: InputPayload) -> dict[str, Any]:
         " ".join(item.get("ocr_text", "") for item in extracted),
     )
     has_actionable_text = any(item.get("ocr_text") for item in extracted)
-    needs_clarification = bool(has_images and not has_actionable_text and not payload.message.text.strip())
+    message_text = (payload.message.text or "") if payload.message else ""
+    needs_clarification = bool(has_images and not has_actionable_text and not message_text.strip())
     clarification_hint = (
         "Mình thấy ảnh đính kèm nhưng chưa đọc được đủ nội dung. Bạn gửi lại ảnh rõ hơn hoặc chép lại mã lỗi / bước đang bị kẹt nhé."
         if needs_clarification

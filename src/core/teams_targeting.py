@@ -109,7 +109,7 @@ class TeamsTargetResolver:
 
         # 2) Reply-chain / parent target hint.
         if signal.reply_target:
-            normalized_reply = signal.reply_target.lower()
+            normalized_reply = (signal.reply_target or "").lower()
             if self._contains_target([normalized_reply], "thuong"):
                 return TargetDecision(TargetType.THUONG, 0.95, "Inherited from reply target")
             if self._contains_target([normalized_reply], "workflow bot") or self._contains_target([normalized_reply], "workflow_bot"):
@@ -121,7 +121,7 @@ class TeamsTargetResolver:
 
         # 4) Channel policy override.
         if signal.channel_policy_target:
-            policy = signal.channel_policy_target.lower()
+            policy = (signal.channel_policy_target or "").lower()
             if self._contains_target([policy], "thuong"):
                 return TargetDecision(TargetType.THUONG, 0.85, "Channel policy matched Thuong")
             if self._contains_target([policy], "workflow bot") or self._contains_target([policy], "workflow_bot"):
@@ -156,7 +156,7 @@ class TeamsTargetResolver:
         return TargetDecision(TargetType.IGNORE, 0.0, "No meaningful Teams signal")
 
     def _contains_target(self, targets: list[str], target: str) -> bool:
-        needle = target.lower()
+        needle = (target or "").lower()
         return any(needle in t for t in targets)
 
     def _matches_any(self, text: str, patterns: tuple[str, ...]) -> bool:

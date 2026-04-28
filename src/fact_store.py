@@ -228,7 +228,7 @@ class FactStore:
         results = []
         
         for pos, negs in opposites_lower.items():
-            if pos.lower() in query.lower():
+            if (pos or "").lower() in (query or "").lower():
                 for neg in negs:
                     facts = self.search(neg, limit=limit)
                     results.extend([(pos, f) for f in facts])

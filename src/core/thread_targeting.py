@@ -102,7 +102,7 @@ class GroupChatTargetResolver:
         current = (current_text or "").strip()
         history = "\n".join(text for text in history_texts if text).strip()
         corpus = f"{history}\n{current}".strip().lower()
-        current_lower = current.lower()
+        current_lower = (current or "").lower()
 
         score_thuong = 0.0
         score_workflow = 0.0

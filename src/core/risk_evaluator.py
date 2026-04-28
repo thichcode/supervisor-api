@@ -14,7 +14,7 @@ class RiskEvaluator:
         self.legal_keywords = settings.legal_keywords
 
     def evaluate(self, payload: InputPayload, memory: MemoryContext) -> RiskEvaluation:
-        text = payload.message.text.lower()
+        text = (payload.message.text or "").lower() if payload.message else ""
         flags = []
 
         for keyword in self.executive_keywords:
