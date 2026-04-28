@@ -1,30 +1,51 @@
-FROM python:3.11-slim
+FROM python:3.11-slim AS builder
 
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     libpq-dev \
-    cron \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy source code FIRST so pip install uses the latest code
+COPY pyproject.toml ./
+RUN pip install --upgrade pip && \
+    pip install --prefix=/install .
+
+# =========================
+
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# runtime-only libs
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpq5 \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# copy python deps
+COPY --from=builder /install /usr/local
+
+# copy source code AFTER deps
 COPY src/ ./src/
 COPY config/ ./config/
 COPY docker/ ./docker/
-COPY pyproject.toml ./
-
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir .
 
 RUN chmod +x /app/docker/entrypoint.sh
 
-ENV PYTHONUNBUFFERED=1
-ENV PYTHONDONTWRITEBYTECODE=1
+# non-root user (audit friendly)
+RUN useradd -m appuser
+USER appuser
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
 
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD python -c "import httpx; httpx.get('http://localhost:8000/health').raise_for_status()"
+    CMD python - <<EOF
+import urllib.request
+urllib.request.urlopen("http://localhost:8000/health", timeout=5)
+EOF
 
 ENTRYPOINT ["/app/docker/entrypoint.sh"]
