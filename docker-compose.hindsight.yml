@@ -6,6 +6,8 @@ services:
     ports:
       - "8888:8888"  # API
       - "9999:9999"  # UI
+    extra_hosts:
+      - "${EXTRA_HOSTS:-host.docker.internal:host-gateway}"
     environment:
       # LLM Provider
       - HINDSIGHT_API_LLM_PROVIDER=${HINDSIGHT_LLM_PROVIDER:-ollama}
