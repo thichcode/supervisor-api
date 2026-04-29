@@ -306,9 +306,10 @@ class ChatService:
                 metadata={**result.metadata, "approval_id": approval.id, "approval_required": True, "threshold": 0.5},
             )
 
-        # Only auto-send to Power Automate when confidence >= 0.9
+        # Only auto-send to Power Automate when kb_hit=true AND confidence >= 0.9
         if result.status == "completed" and settings.power_automate_webhook_url and auto_send_callback:
-            if result.confidence >= 0.9:
+            kb_hit = result.metadata.get("kb_hit", False) if result.metadata else False
+            if kb_hit and result.confidence >= 0.9:
                 try:
                     await auto_send_callback(result)
                 except Exception:
