@@ -139,6 +139,8 @@ services:
     volumes:
       - ./src:/app/src:ro
       - ./config:/app/config:ro
+      - ./entrypoint.sh:/app/entrypoint.sh
+    entrypoint: ["/bin/bash", "/app/entrypoint.sh"]
     depends_on:
       - postgres
       - redis
