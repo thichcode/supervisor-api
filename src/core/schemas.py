@@ -190,6 +190,15 @@ class ChatResponse(BaseModel):
     confidence: float
     attachments: list[dict] = Field(default_factory=list)
     metadata: dict = Field(default_factory=dict)
+    # ← FIX: track delivery so Telegram approval vs direct reply is distinguishable
+    delivery_status: str = Field(
+        default="direct",
+        description="direct | pending_approval | skipped",
+    )
+    approval_request_id: Optional[str] = Field(
+        default=None,
+        description="Set when delivery_status=pending_approval",
+    )
 
     def model_post_init(self, __context):
         if not self.message and self.customer_reply:

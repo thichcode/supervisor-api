@@ -949,14 +949,50 @@ class N8NConnector:
         
         # Store for later approval
         self.approval_store[request_id] = request
-        
-        logger.info("Action requested", 
+
+        # ← FIX: notify n8n immediately so external systems know a request is pending
+        try:
+            import asyncio
+            loop = asyncio.get_running_loop()
+            loop.create_task(self._notify_n8n_request(request_id, action_def, parameters, user_display_name))
+        except RuntimeError:
+            asyncio.get_event_loop().run_until_complete(
+                self._notify_n8n_request(request_id, action_def, parameters, user_display_name)
+            )
+
+        logger.info("Action requested",
                    request_id=request_id,
                    action=action_name,
                    risk_level=action_def.risk_level.value,
                    requested_by=user_display_name)
-        
+
         return request
+
+    async def _notify_n8n_request(
+        self,
+        request_id: str,
+        action_def,  # SystemAction
+        parameters: Dict[str, Any],
+        user_display_name: str,
+    ):
+        """Fire-and-forget notification to n8n that a request is pending."""
+        try:
+            import httpx
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                await client.post(
+                    f"{self.base_url}/webhook/n8n/action-requested",
+                    json={
+                        "request_id": request_id,
+                        "action": action_def.name,
+                        "system": action_def.system,
+                        "parameters": parameters,
+                        "requested_by": user_display_name,
+                        "risk_level": action_def.risk_level.value,
+                        "status": "pending_approval",
+                    },
+                )
+        except Exception as e:
+            logger.warning("n8n action-requested notification failed", error=str(e))
     
     def approve_action(
         self,

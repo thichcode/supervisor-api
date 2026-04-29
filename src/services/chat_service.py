@@ -314,18 +314,38 @@ class ChatService:
                 except Exception:
                     pass
 
+        # ← FIX: confidence threshold gating (gap 0.8-0.9 treated as approval to avoid undefined)
+        confidence = result.confidence
+        delivery_status = "direct"
+        approval_request_id = None
+        response_text = result.answer
+        response_status = result.status
+
+        if confidence < 0.5:
+            # Low confidence → skip, ask for more info
+            delivery_status = "skipped"
+            response_text = "🤖 Mình chưa chắc về câu trả lời. Bạn có thể cung cấp thêm thông tin không?"
+            response_status = "skipped"
+        elif confidence < 0.9:
+            # Medium confidence → Telegram approval
+            delivery_status = "pending_approval"
+            response_text = f"⚠️ Phản hồi AI (confidence: {confidence:.0%}) đang chờ duyệt qua Telegram."
+            response_status = "pending_approval"
+
         # Extract internal_note from metadata if present
         internal_note = result.metadata.get("internal_note", "") if result.metadata else ""
         metadata_without_internal = {k: v for k, v in result.metadata.items() if k != "internal_note"} if result.metadata else {}
 
         return ChatResponse(
             request_id=request_id,
-            status=result.status,
-            customer_reply=result.answer,
+            status=response_status,
+            customer_reply=response_text,
             internal_note=internal_note,
             message_type=request.message_type,
-            confidence=result.confidence,
-            metadata=metadata_without_internal,
+            confidence=confidence,
+            metadata={**metadata_without_internal, "delivery_status": delivery_status},
+            delivery_status=delivery_status,
+            approval_request_id=approval_request_id,
         )
 
     async def handle_harness_chat(self, request: ChatRequest, auto_send_callback=None, bridge_getter=None) -> ChatResponse:

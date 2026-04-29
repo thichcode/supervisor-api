@@ -518,6 +518,18 @@ class MemoryService:
             ticket_system=ticket_system,
         )
 
+        # ← FIX: save assistant reply so subsequent turns can read it
+        if assistant_text:
+            await self.repo.save_message(
+                request_id=payload.request_id,
+                user_id=user_id,
+                thread_id=thread_id,
+                message_text=assistant_text,
+                direction="outbound",
+                ticket_id=ticket_id,
+                ticket_system=ticket_system,
+            )
+
         await self.repo.upsert_conversation_thread(
             thread_id=thread_id,
             user_id=user_id,
