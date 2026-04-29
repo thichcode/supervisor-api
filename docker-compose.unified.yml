@@ -33,13 +33,20 @@ services:
     environment:
       - HF_HOME=/cache/huggingface
       - HF_HUB_OFFLINE=0
+      - HF_HUB_DISABLE_SYMLINKS=1
+      - HF_ENDPOINT=https://hf-mirror.com
+      - HF_MIRROR=https://hf-mirror.com
+      - HTTP_PROXY=${HTTP_PROXY:-}
+      - HTTPS_PROXY=${HTTPS_PROXY:-}
+      - http_proxy=${http_proxy:-}
+      - https_proxy=${https_proxy:-}
     volumes:
       - hf-cache:/cache/huggingface
     entrypoint: ["/bin/bash", "-c"]
     command:
       - >
         apt-get update && apt-get install -y --no-install-recommends curl && pip install sentence-transformers huggingface_hub && 
-        echo "Downloading embeddings models..." &&
+        echo "Downloading embeddings models via hf-mirror.com..." &&
         python3 -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('BAAI/bge-small-en-v1.5'); print('bge-small done')" &&
         python3 -c "from sentence_transformers import CrossEncoder; CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2'); print('cross-encoder done')" &&
         echo "All models downloaded successfully!" && ls -la /cache/huggingface/hub/ && echo "DONE"
@@ -70,6 +77,8 @@ services:
       - HINDSIGHT_DB_PASSWORD=postgres
       # HuggingFace cache cho embeddings models
       - HF_HOME=/cache/huggingface
+      - HF_ENDPOINT=https://hf-mirror.com
+      - HF_MIRROR=https://hf-mirror.com
     volumes:
       - hindsight-data:/home/hindsight/.pg0
       - hf-cache:/cache/huggingface
