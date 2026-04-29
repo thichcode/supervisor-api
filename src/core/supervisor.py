@@ -340,7 +340,7 @@ class Supervisor:
         settings = get_settings()
         start_time = time.time()
         decision = "direct"
-        final_confidence = 0.8
+        final_confidence = 0.5  # ← FIX v2: start at 0.5, calculate dynamically from KB evidence
         kb_hit = False
         kb_sources = []
         qa_needs_review = False
@@ -972,6 +972,42 @@ class Supervisor:
         if confidence >= 0.9:
             return 0.89
         return round(confidence, 2)
+
+    def _calculate_dynamic_confidence(
+        self,
+        kb_sources: list,
+        question_length: int,
+        answer_length: int,
+        llm_confidence: float = None,
+    ) -> float:
+        """Calculate confidence based on evidence quality, not hardcoded 0.8."""
+        base = 0.5  # start conservative, not 0.8
+
+        # KB evidence boost
+        source_count = len(kb_sources)
+        if source_count >= 3:
+            base += 0.25
+        elif source_count == 2:
+            base += 0.15
+        elif source_count == 1:
+            base += 0.10
+
+        # Source quality boost (similarity scores)
+        if kb_sources:
+            avg_sim = sum(s.get("similarity", 0) for s in kb_sources) / source_count
+            base += avg_sim * 0.15  # up to +0.15
+
+        # LLM confidence signal
+        if llm_confidence is not None:
+            base = (base * 0.7) + (llm_confidence * 0.3)
+
+        # Coverage penalty: answer too short vs question complexity
+        if answer_length > 0 and question_length > 20:
+            ratio = answer_length / question_length
+            if ratio < 0.3:
+                base -= 0.10  # answer seems incomplete
+
+        return max(0.1, min(0.99, round(base, 2)))
 
     def _create_output(
         self,

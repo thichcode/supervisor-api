@@ -35,7 +35,7 @@ class ReasoningState:
 
     decision: str = "direct"
     answer: str = ""
-    confidence: float = 0.8
+    confidence: float = 0.5  # ← FIX v2: start at 0.5, not 0.8
     kb_hit: bool = False
     kb_sources: list[dict[str, Any]] = field(default_factory=list)
     qa_needs_review: bool = False

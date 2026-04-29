@@ -199,6 +199,11 @@ class ChatResponse(BaseModel):
         default=None,
         description="Set when delivery_status=pending_approval",
     )
+    # ← FIX v2: conversation_id alias — thread_id trong request chính là conversation_id
+    conversation_id: Optional[str] = Field(
+        default=None,
+        description="Alias for thread_id. Every response carries the conversation_id for traceability.",
+    )
 
     def model_post_init(self, __context):
         if not self.message and self.customer_reply:

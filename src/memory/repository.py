@@ -197,6 +197,32 @@ class MemoryRepository:
             await self.session.refresh(summary)
             return summary
 
+    async def build_conversation_summary(self, conversation_id: str) -> str:
+        """Build a rolling summary from recent messages + current summary."""
+        messages = await self.get_conversation_messages(conversation_id, limit=10)
+        existing = await self.get_conversation_summary(conversation_id)
+
+        if not messages:
+            return existing.summary_text if existing else ""
+
+        # Build summary from last 10 messages
+        user_msgs = [m.content for m in messages if m.direction == "inbound"]
+        bot_msgs = [m.content for m in messages if m.direction == "outbound"]
+
+        unresolved = []
+        if user_msgs:
+            last_user = user_msgs[-1].strip()
+            if any(q in last_user.lower() for q in ["?", "chưa", "sao", "làm sao", "muốn", "cần"]):
+                unresolved.append(last_user[:100])
+
+        # Combine with existing summary if present
+        if existing and existing.summary_text:
+            combined = f"{existing.summary_text}\n---\n[CURRENT SESSION]\nUser: {user_msgs[-1] if user_msgs else 'N/A'}"
+        else:
+            combined = f"Session started. User: {user_msgs[-1] if user_msgs else 'N/A'}"
+
+        return combined[:2000]  # cap to avoid DB overflow
+
     async def get_conversation_state(self, thread_id: str) -> Optional[ConversationState]:
         result = await self.session.execute(
             select(ConversationState).where(ConversationState.thread_id == thread_id)

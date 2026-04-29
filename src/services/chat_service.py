@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import time
 import uuid
 from datetime import datetime
@@ -64,11 +65,60 @@ class ChatService:
             "group_chat": bool(group_chat) if group_chat is not None else False,
         }
 
+    # ← FIX v2: classify whether this message needs a bot response
+    def _needs_reply(self, text: str) -> tuple[bool, str]:
+        """Returns (needs_reply, reason)."""
+        t = (text or "").strip().lower()
+        if not t:
+            return False, "empty"
+        # Emoji-only or reaction
+        emoji_pattern = re.compile(
+            r"^[\U0001F300-\U0001F9FF\U0001FA00-\U0001FA6F"
+            r"\U0001FA70-\U0001FAFF"
+            r"\u2600-\u26FF\u2700-\u27BF"
+            r"👍🙏✅❌✔️👏❤️❤️‍🔥🫡💪😊😂🥹😎]+$"
+        )
+        if emoji_pattern.match(t) or len(t) <= 3 and not t.isalnum():
+            return False, "emoji_or_reaction"
+        # Ack/no-op patterns
+        ack_patterns = [
+            "ok", "okay", "oke", "được", "ừ", "ờ", "vâng", "dạ", "có",
+            "thanks", "thank", "cảm ơn", "cám ơn",
+            "nhận được", "đã nhận", "received", "noted",
+            "👍", "👌", "😄", "great",
+            "không cần", "bỏ qua", "skip",
+        ]
+        if t in ack_patterns:
+            return False, "acknowledgment"
+        # Question or request → needs reply
+        if any(q in t for q in ["?", "là gì", "sao", "làm sao", "tại sao", "muốn", "cần", "yêu cầu", "hỗ trợ", "giúp", "where", "how", "what", "why"]):
+            return True, "question_or_request"
+        # Ticket/case update without question → no reply needed
+        if any(k in t for k in ["đã cập nhật", "đã tạo", "ticket #", "case #", "đóng case"]):
+            return False, "system_event"
+        # Default: user sent text but unclear intent → ask for clarification
+        return True, "unclear_intent"
+
     async def handle_chat(self, request: ChatRequest, auto_send_callback=None) -> ChatResponse:
         import src.api as api_module
 
+        # ← FIX v2: skip processing for ack/emoji/no-op messages
+        needs_response, skip_reason = self._needs_reply(request.message)
+        if not needs_response:
+            return ChatResponse(
+                request_id=str(uuid.uuid4()),
+                status="skipped",
+                customer_reply="",  # no outbound reply
+                message_type=request.message_type,
+                confidence=0.0,
+                metadata={"skip_reason": skip_reason, "conversation_id": request.thread_id},
+                delivery_status="skipped",
+                conversation_id=request.thread_id,
+            )
+
         request_id = str(uuid.uuid4())
-        thread_id = request.thread_id or f"chat-{request.user_id}-{int(time.time())}"
+        conversation_id = request.thread_id or f"chat-{request.user_id}-{int(time.time())}"
+        thread_id = conversation_id  # canonical name
         chat_context = self._normalize_chat_context(request)
         payload = InputPayload(
             request_id=request_id,
@@ -304,6 +354,7 @@ class ChatService:
                 message_type=request.message_type,
                 confidence=result.confidence,
                 metadata={**result.metadata, "approval_id": approval.id, "approval_required": True, "threshold": 0.5},
+                conversation_id=conversation_id,
             )
 
         # Only auto-send to Power Automate when kb_hit=true AND confidence >= 0.9
@@ -336,6 +387,17 @@ class ChatService:
             response_text = f"⚠️ Phản hồi AI (confidence: {confidence:.0%}) đang chờ duyệt qua Telegram."
             response_status = "pending_approval"
 
+        # ← FIX v2: update conversation summary every turn
+        try:
+            from src.db import async_session
+            from src.memory.repository import MemoryRepository
+            async with async_session() as ss:
+                repo = MemoryRepository(ss)
+                summary_text = await repo.build_conversation_summary(conversation_id)
+                await repo.upsert_conversation_summary(conversation_id, summary_text, [])
+        except Exception:
+            pass  # non-critical
+
         # Extract internal_note from metadata if present
         internal_note = result.metadata.get("internal_note", "") if result.metadata else ""
         metadata_without_internal = {k: v for k, v in result.metadata.items() if k != "internal_note"} if result.metadata else {}
@@ -350,13 +412,15 @@ class ChatService:
             metadata={**metadata_without_internal, "delivery_status": delivery_status},
             delivery_status=delivery_status,
             approval_request_id=approval_request_id,
+            conversation_id=conversation_id,
         )
 
     async def handle_harness_chat(self, request: ChatRequest, auto_send_callback=None, bridge_getter=None) -> ChatResponse:
         import src.api as api_module
 
         request_id = str(uuid.uuid4())
-        thread_id = request.thread_id or f"chat-harness-{request.user_id}-{int(time.time())}"
+        conversation_id = request.thread_id or f"chat-harness-{request.user_id}-{int(time.time())}"
+        thread_id = conversation_id  # canonical name
         chat_context = self._normalize_chat_context(
             ChatRequest(
                 user_id=request.user_id,
@@ -502,6 +566,7 @@ class ChatService:
                 message_type=request.message_type,
                 confidence=result.confidence,
                 metadata={**result.metadata, "approval_id": approval.id, "approval_required": True, "threshold": 0.5, "harness_metrics": harness_metrics, "harness_evaluation": harness_evaluation},
+                conversation_id=conversation_id,
             )
 
         # Only auto-send to Power Automate when kb_hit=true AND confidence >= 0.9
@@ -525,4 +590,5 @@ class ChatService:
             message_type=request.message_type,
             confidence=result.confidence,
             metadata={**metadata_without_internal, "harness_metrics": harness_metrics, "harness_evaluation": harness_evaluation},
+            conversation_id=conversation_id,
         )
