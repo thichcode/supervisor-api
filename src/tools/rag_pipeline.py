@@ -3,6 +3,7 @@ RAG Pipeline - Hybrid search combining BM25 + Vector (semantic) search
 Supports multiple vector stores: ChromaDB, Qdrant, Pinecone
 """
 
+import asyncio
 import hashlib
 import re
 from typing import Optional, List, Dict, Any, Tuple
@@ -469,8 +470,98 @@ class RAGPipeline:
                 "top_k": self.config.top_k,
             }
         }
+    
+    async def generate_answer(
+        self,
+        query: str,
+        llm: Any,
+        top_k: Optional[int] = None,
+        filter_metadata: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """
+        RAG generation: retrieve relevant documents and generate answer using LLM.
+        
+        Args:
+            query: User's question
+            llm: LLM instance with `complete()` method
+            top_k: Number of documents to retrieve
+            filter_metadata: Optional metadata filter
+            
+        Returns:
+            Dict with 'answer', 'sources', 'confidence'
+        """
+        # Step 1: Retrieve relevant documents
+        search_results = self.search(query, top_k=top_k, filter_metadata=filter_metadata)
+        
+        if not search_results:
+            return {
+                "answer": "Không tìm thấy thông tin liên quan trong cơ sở dữ liệu.",
+                "sources": [],
+                "confidence": 0.2,
+            }
+        
+        # Step 2: Build context from retrieved documents
+        context_parts = []
+        sources = []
+        
+        for i, result in enumerate(search_results[:5]):  # Top 5
+            doc = result.document
+            context_parts.append(f"[Nguồn {i+1}]: {doc.content[:500]}")
+            sources.append({
+                "id": doc.id,
+                "score": result.score,
+                "source": result.source,
+                "metadata": doc.metadata,
+            })
+        
+        context = "\n\n".join(context_parts)
+        
+        # Step 3: Build RAG prompt
+        prompt = f"""Bạn là trợ lý IT nhiệt tình và chính xác. Hãy trả lời câu hỏi dựa trên thông tin dưới đây.
 
+THÔNG TIN THAM KHẢO:
+{context}
 
+CÂU HỎI: {query}
+
+HƯỚNG DẪN:
+- Trả lời trực tiếp câu hỏi dựa trên thông tin đã cho
+- Nếu thông tin không đủ, hãy nói rõ những gì còn thiếu
+- Trích dẫn nguồn (Nguồn 1, Nguồn 2...) khi trả lời
+- Giữ câu trả lời súc tích nhưng đầy đủ
+
+CÂU TRẢ LỜI:"""
+        
+        # Step 4: Generate answer using LLM
+        try:
+            if hasattr(llm, 'complete'):
+                response = await llm.complete(prompt) if asyncio.iscoroutinefunction(llm.complete) else llm.complete(prompt)
+            elif hasattr(llm, 'generate'):
+                response = await llm.generate(prompt) if asyncio.iscoroutinefunction(llm.generate) else llm.generate(prompt)
+            else:
+                logger.warning("LLM instance doesn't have complete/generate method")
+                return {
+                    "answer": "LLM không hỗ trợ tạo câu trả lời.",
+                    "sources": sources,
+                    "confidence": 0.3,
+                }
+            
+            answer = response.text if hasattr(response, 'text') else str(response)
+            
+            return {
+                "answer": answer,
+                "sources": sources,
+                "confidence": min(0.95, 0.5 + len(search_results) * 0.1),
+            }
+        except Exception as exc:
+            logger.error("LLM generation failed", error=str(exc))
+            return {
+                "answer": f"Lỗi khi tạo câu trả lời: {exc}",
+                "sources": sources,
+                "confidence": 0.2,
+            }
+
+# Convenience functions
 # Convenience functions
 def create_document(
     content: str,

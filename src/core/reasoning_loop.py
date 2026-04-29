@@ -7,10 +7,11 @@ ENABLE_REASONING_LOOP and delegated from Supervisor.process.
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 import json
-import logging
 import time
 
-logger = logging.getLogger("reasoning_loop")
+import structlog
+
+logger = structlog.get_logger(__name__)
 
 from src.core import InputPayload, OutputPayload
 from src.config import get_settings
@@ -60,6 +61,59 @@ class ReasoningLoopOrchestrator:
     def __init__(self, supervisor: "Supervisor", tool_registry: ToolRegistry | None = None):
         self.supervisor = supervisor
         self.tool_registry = tool_registry or build_default_registry()
+
+    async def _generate_response(
+        self,
+        payload: InputPayload,
+        memory: Any,
+        context: dict,
+        policy: dict,
+        knowledge: dict,
+        llm: Any,
+    ) -> tuple[str, float]:
+        """
+        Generate a response using DraftAgent + QAAgent validation.
+        
+        This is the core response generation pipeline:
+        1. DraftAgent.generate() creates initial draft
+        2. QAAgent.refine() validates and refines
+        
+        Args:
+            payload: Input payload with user message
+            memory: Memory context
+            context: Context from ContextAgent
+            policy: Policy from PolicyAgent
+            knowledge: Knowledge from KnowledgeAgent
+            llm: LLM instance for generation
+            
+        Returns:
+            Tuple of (answer, confidence)
+        """
+        # Step 1: Generate draft
+        draft = await self.supervisor.draft_agent.generate(
+            payload,
+            context,
+            policy,
+            knowledge,
+            llm,
+        )
+        
+        if not draft:
+            return "(no draft generated)", 0.3
+        
+        # Step 2: Validate and refine
+        validation = await self.supervisor._enhanced_validate(
+            draft,
+            payload,
+            context,
+            policy,
+            knowledge,
+        )
+        
+        answer = self.supervisor.qa_agent.refine(validation, payload, context)
+        confidence = validation.get("confidence", 0.5)
+        
+        return answer, confidence
 
     def _should_delegate_to_subagent_pool(self, payload: InputPayload) -> bool:
         """Detect multi-source / complex tasks that benefit from parallel subagents.

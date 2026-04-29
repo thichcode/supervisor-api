@@ -194,7 +194,7 @@ class HindsightService:
         
         Args:
             query: The question to reflect on
-        
+            
         Returns:
             Reflected response or None
         """
@@ -202,9 +202,13 @@ class HindsightService:
             return None
         
         try:
-            result = self.client.reflect(
-                bank_id=self.bank_id,
-                query=query,
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(
+                None,
+                lambda: self.client.reflect(
+                    bank_id=self.bank_id,
+                    query=query,
+                )
             )
             logger.debug(f"Hindsight reflect: '{query}'")
             return result.get("content") if result else None
