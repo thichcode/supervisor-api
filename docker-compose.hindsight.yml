@@ -21,9 +21,6 @@ services:
       - HINDSIGHT_DB_PASSWORD=${DB_PASSWORD}
     volumes:
       - hindsight-data:/home/hindsight/.pg0
-    depends_on:
-      - postgres  # Ensure supervisor's postgres is running first
-
   # Optional: Separate PostgreSQL for Hindsight (use this OR supervisor's postgres)
   # Uncomment nếu muốn dùng PostgreSQL riêng
   # postgres:
