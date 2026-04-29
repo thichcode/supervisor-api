@@ -1,6 +1,4 @@
 # Full production deployment: supervisor-api + Hindsight + LLM
-version: '3.8'
-
 services:
   # ============ SUPERVISOR API ============
   supervisor:

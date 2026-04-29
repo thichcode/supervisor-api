@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   hindsight:
     image: ghcr.io/vectorize-io/hindsight:latest
