@@ -726,6 +726,9 @@ async def _auto_send_to_power_automate(payload: OutputPayload) -> bool:
     # Extract metadata for richer payload
     meta = payload.metadata or {}
     
+    # Extract conversation info from metadata
+    conversation_info = meta.get("conversation_summary") or meta.get("conversation_id", "")
+    
     # Format payload for Power Automate with expanded fields
     pa_payload = {
         "request_id": getattr(payload, 'request_id', ''),
@@ -737,6 +740,14 @@ async def _auto_send_to_power_automate(payload: OutputPayload) -> bool:
         "agents_used": meta.get("agents_used", []),
         "status": payload.status,
         "processing_time_ms": meta.get("processing_time_ms", 0),
+        
+        # Conversation info for Power Automate
+        "conversation": {
+            "thread_id": meta.get("conversation_id", ""),
+            "message_id": meta.get("message_id", ""),
+            "summary": meta.get("conversation_summary"),
+            "unresolved_points": meta.get("unresolved_points", []),
+        },
         
         # KB related fields
         "kb_hit": meta.get("kb_hit", False),

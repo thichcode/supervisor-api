@@ -581,10 +581,15 @@ class ChatService:
                     kb_sources=kb_sources,
                 )
                 # Create a modified result-like object for the callback
+                # ← Include conversation info with summary for Power Automate
+                webhook_metadata = {**(result.metadata or {}), 'conversation_id': conversation_id}
+                if hasattr(memory, 'conversation_summary') and memory.conversation_summary:
+                    webhook_metadata['conversation_summary'] = memory.conversation_summary
+                
                 webhook_payload = type('obj', (object,), {
                     'answer': grounded_answer,
                     'confidence': result.confidence,
-                    'metadata': {**(result.metadata or {}), 'conversation_id': conversation_id}
+                    'metadata': webhook_metadata
                 })()
                 try:
                     await auto_send_callback(webhook_payload)
