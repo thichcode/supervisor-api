@@ -13,27 +13,31 @@ services:
       - HINDSIGHT_API_LLM_MODEL=llama3
       - HINDSIGHT_API_LLM_TIMEOUT=60
       - HINDSIGHT_API_DISABLE_FACT_EXTRACTION=true
-      # Database - use external postgres
+      # Database - dùng chung PostgreSQL với supervisor (port 5432)
       - HINDSIGHT_DB_HOST=localhost
       - HINDSIGHT_DB_PORT=5432
       - HINDSIGHT_DB_NAME=hindsight_db
       - HINDSIGHT_DB_USER=postgres
-      - HINDSIGHT_DB_PASSWORD=${DB_PASSWORD:-postgres}
+      - HINDSIGHT_DB_PASSWORD=${DB_PASSWORD}
     volumes:
       - hindsight-data:/home/hindsight/.pg0
+    depends_on:
+      - postgres  # Ensure supervisor's postgres is running first
 
-  postgres:
-    image: pgvector/pgvector:pg16
-    container_name: hindsight-postgres
-    environment:
-      - POSTGRES_DB=hindsight_db
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=${DB_PASSWORD:-postgres}
-    volumes:
-      - postgres-data:/var/lib/postgresql/data
-    ports:
-      - "5433:5432"
+  # Optional: Separate PostgreSQL for Hindsight (use this OR supervisor's postgres)
+  # Uncomment nếu muốn dùng PostgreSQL riêng
+  # postgres:
+  #   image: pgvector/pgvector:pg16
+  #   container_name: hindsight-postgres
+  #   network_mode: host
+  #   ports:
+  #     - "5433:5432"
+  #   environment:
+  #     - POSTGRES_DB=hindsight_db
+  #     - POSTGRES_USER=postgres
+  #     - POSTGRES_PASSWORD=${DB_PASSWORD}
+  #   volumes:
+  #     - postgres-data:/var/lib/postgresql/data
 
 volumes:
   hindsight-data:
-  postgres-data:
