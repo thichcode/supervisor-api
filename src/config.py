@@ -1,4 +1,5 @@
 import json
+import os
 from functools import lru_cache
 from typing import Any, Literal
 
@@ -87,18 +88,18 @@ class Settings(BaseSettings):
     # LLM Provider Configuration
     llm_provider: str = ""  # "ollama", "openai", or "azure" (auto-detect if empty)
     openai_api_key: str = ""
-    llm_model: str = "gemma4:e4b"  # Comma-separated list supported; first item is primary
+    llm_model: str = Field(default_factory=lambda: os.getenv("LLM_MODEL", ""))
     llm_temperature: float = 0.7
     llm_max_tokens: int = 2000
     llm_healthcheck_enabled: bool = False
-
+    
     # Ollama Configuration (for self-hosted Vietnamese models)
-    ollama_base_url: str = "http://localhost:11434"
-    ollama_default_model: str = "gemma4:e4b"
+    ollama_base_url: str = Field(default_factory=lambda: os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"))
+    ollama_default_model: str = Field(default_factory=lambda: os.getenv("OLLAMA_DEFAULT_MODEL", ""))
     ollama_timeout: int = 320
     
     # Image Processing Model (separate from main LLM for OCR/tasks)
-    ollama_image_model: str = "llama3.1-vision"
+    ollama_image_model: str = Field(default_factory=lambda: os.getenv("OLLAMA_IMAGE_MODEL", ""))
 
     # Azure OpenAI Configuration (optional)
     azure_openai_endpoint: str = ""
@@ -111,16 +112,21 @@ class Settings(BaseSettings):
 
     log_level: str = "INFO"
     
-    # Recommended AI Models for different use cases
-    # Override via LLM_MODEL env var
-    recommended_models: dict = {
-        "faq": "gemma4:e4b",           # Quick factual answers
-        "policy": "gemma4:e4b",        # Policy interpretation
-        "support_case": "gemma4:e4b", # Technical support
-        "analysis": "gemma4:e4b",     # Data analysis
-        "executive": "gemma4:e4b",    # High-priority executive
-        "default": "gemma4:e4b",
-    }
+    # Recommended AI Models for different use cases (populated in model_post_init)
+    recommended_models: dict = {}
+    
+    def model_post_init(self, __context) -> None:
+        """Populate recommended_models based on ollama_default_model if not set"""
+        if not self.recommended_models:
+            model = self.ollama_default_model or "gemma4:e4b"
+            self.recommended_models = {
+                "faq": model,
+                "policy": model,
+                "support_case": model,
+                "analysis": model,
+                "executive": model,
+                "default": model,
+            }
     
     # Keyword patterns for intent classification and risk evaluation
     executive_keywords: list[str] = [
