@@ -196,7 +196,9 @@ class MultiProviderLLMClient:
         timeout: Optional[int] = None,
     ):
         self._clients: dict[LLMProvider, AsyncOpenAI] = {}
-        self._active_model: str = model or "llama3"
+        # Read model from constructor param, then settings, then default
+        settings_model = getattr(settings, 'llm_model', None) or ""
+        self._active_model: str = model or settings_model or "llama3.1"
 
         # Set explicit provider override from config or constructor param
         if provider:
@@ -262,7 +264,9 @@ class MultiProviderLLMClient:
         if not candidates:
             candidates = self._split_model_candidates(settings.llm_model)
         if not candidates:
-            candidates = ["llama3"]
+            # Fallback to default model from settings or llama3.1
+            default_model = getattr(settings, 'llm_model', None) or "llama3.1"
+            candidates = [default_model]
         unique_candidates: list[str] = []
         seen: set[str] = set()
         for candidate in candidates:
@@ -445,13 +449,13 @@ class MultiProviderLLMClient:
             if LLMProvider.OLLAMA in self._clients:
                 ollama_client = self._clients[LLMProvider.OLLAMA]
                 await ollama_client.chat.completions.create(
-                    model="llama3",
+                    model=self._active_model,
                     messages=[{"role": "user", "content": "ping"}],
                     max_tokens=5
                 )
                 results["ollama"] = {
                     "status": "healthy",
-                    "model": "llama3",
+                    "model": self._active_model,
                     "response_time": "fast"
                 }
             else:

@@ -757,7 +757,7 @@ class Supervisor:
 
             # Calculate Bayesian confidence
             confidence, factor_scores = self.bayesian_confidence.calculate_confidence(
-                factors, "llama3"
+                factors, getattr(settings, 'llm_model', None) or "llama3.1"
             )
 
             # Also use ResponseValidator for issues detection
