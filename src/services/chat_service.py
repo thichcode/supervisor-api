@@ -322,13 +322,16 @@ class ChatService:
         response_text = result.answer
         response_status = result.status
 
+        # Extract kb_hit for threshold gating
+        kb_hit = result.metadata.get("kb_hit", False) if result.metadata else False
+
         if confidence < 0.5:
             # Low confidence → skip, ask for more info
             delivery_status = "skipped"
             response_text = "🤖 Mình chưa chắc về câu trả lời. Bạn có thể cung cấp thêm thông tin không?"
             response_status = "skipped"
-        elif confidence < 0.9:
-            # Medium confidence → Telegram approval
+        elif kb_hit and confidence < 0.9:
+            # KB hit + medium confidence → Telegram approval
             delivery_status = "pending_approval"
             response_text = f"⚠️ Phản hồi AI (confidence: {confidence:.0%}) đang chờ duyệt qua Telegram."
             response_status = "pending_approval"
@@ -501,9 +504,10 @@ class ChatService:
                 metadata={**result.metadata, "approval_id": approval.id, "approval_required": True, "threshold": 0.5, "harness_metrics": harness_metrics, "harness_evaluation": harness_evaluation},
             )
 
-        # Only auto-send to Power Automate when confidence >= 0.9
+        # Only auto-send to Power Automate when kb_hit=true AND confidence >= 0.9
         if result.status == "completed" and settings.power_automate_webhook_url and auto_send_callback:
-            if result.confidence >= 0.9:
+            kb_hit = result.metadata.get("kb_hit", False) if result.metadata else False
+            if kb_hit and result.confidence >= 0.9:
                 try:
                     await auto_send_callback(result)
                 except Exception:
