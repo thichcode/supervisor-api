@@ -76,7 +76,8 @@ services:
     depends_on:
       hf-downloader:
         condition: service_completed_successfully
-      - hindsight-postgres
+      hindsight-postgres:
+        condition: service_started
 
   # ============ POSTGRESQL (Hindsight - riêng vì hindsight dùng embedded pg0) ============
   hindsight-postgres:
