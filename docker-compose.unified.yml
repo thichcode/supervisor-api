@@ -28,20 +28,21 @@ services:
 
   # ============ INIT: Pre-download embeddings models ============
   hf-downloader:
-    image: ghcr.io/huggingface/text-embeddings-inference:latest
+    image: python:3.11-slim
     container_name: hf-downloader
     environment:
       - HF_HOME=/cache/huggingface
+      - HF_HUB_OFFLINE=0
     volumes:
       - hf-cache:/cache/huggingface
     entrypoint: ["/bin/bash", "-c"]
     command:
       - >
+        apt-get update && apt-get install -y --no-install-recommends curl && pip install sentence-transformers huggingface_hub && 
         echo "Downloading embeddings models..." &&
         python3 -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('BAAI/bge-small-en-v1.5'); print('bge-small done')" &&
         python3 -c "from sentence_transformers import CrossEncoder; CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2'); print('cross-encoder done')" &&
-        echo "All models downloaded successfully!" &&
-        ls -la /cache/huggingface/hub/ && echo "DONE"
+        echo "All models downloaded successfully!" && ls -la /cache/huggingface/hub/ && echo "DONE"
     restart: "no"
 
   # ============ HINDSIGHT (Agent Memory - MCP Server) ============
