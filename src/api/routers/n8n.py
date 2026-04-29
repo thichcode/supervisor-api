@@ -138,17 +138,18 @@ async def external_webhook(
     settings = get_settings()
     n8n_base = settings.n8n_base_url or "http://localhost:5678"
     
-    # Build n8n webhook URL based on source system
+# Build n8n webhook URL based on source system
     # n8n sẽ có webhook cho từng source: /webhook/gitlab, /webhook/ad, etc.
-    webhook_path = f"/webhook/{source_system.lower()}"
+    source = (source_system or "unknown").lower()
+    webhook_path = f"/webhook/{source}"
     n8n_url = f"{n8n_base}{webhook_path}"
-    
+
     # Enrich payload với metadata cho n8n route
     enriched_payload = {
-        "source_system": source_system.lower(),
+        "source_system": source,
         "received_at": datetime.now().isoformat(),
         "routing": {
-            "workflow": workflow or source_system.lower(),
+            "workflow": workflow or source,
             "priority": priority,
             "category": category,
             "tags": tags.split(",") if tags else [],
@@ -170,7 +171,7 @@ async def external_webhook(
     return {
         "success": True,
         "request_id": request_id,
-        "source_system": source_system.lower(),
+        "source_system": source,
         "forwarded_to_n8n": n8n_url,
         "n8n_response": n8n_response,
         "routing": enriched_payload["routing"],

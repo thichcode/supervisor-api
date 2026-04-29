@@ -162,7 +162,7 @@ class MemoryService:
         )
 
     def _infer_user_style(self, text: str) -> tuple[str, dict]:
-        normalized = re.sub(r"\s+", " ", text).strip().lower()
+        normalized = re.sub(r"\s+", " ", (text or "")).strip().lower()
         words = re.findall(r"[\wÀ-ỹ']+", normalized)
         word_count = len(words)
         has_numbered_steps = bool(re.search(r"(^|\n)\s*(\d+\.|[-*])\s+", text))

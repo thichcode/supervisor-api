@@ -116,7 +116,7 @@ def _attachment_url(attachment: Any) -> str:
 def _attachment_is_image(attachment: Any) -> bool:
     attachment_type = str(_attachment_value(attachment, "type") or "").strip().lower()
     content_type = _attachment_content_type(attachment)
-    name = _attachment_name(attachment, 0).lower()
+    name = (_attachment_name(attachment, 0) or "").lower()
     return (
         attachment_type in {"image", "photo", "picture"}
         or content_type.startswith("image/")

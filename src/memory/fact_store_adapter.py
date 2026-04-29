@@ -115,7 +115,7 @@ class AsyncFactStore:
         results: List[Fact] = []
 
         # 1. Keyword search on message text
-        keywords = [w for w in text.lower().split() if len(w) > 3]
+        keywords = [w for w in (text or "").lower().split() if len(w) > 3]
         for kw in keywords[:3]:
             hits = await self.search(kw, limit=limit, min_trust=0.3)
             results.extend(hits)

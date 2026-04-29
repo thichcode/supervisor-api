@@ -3,7 +3,7 @@ from typing import Optional
 
 
 def _slugify(value: str) -> str:
-    return value.strip().lower().replace(" ", "_").replace("/", "_")
+    return (value or "").strip().lower().replace(" ", "_").replace("/", "_")
 
 
 @dataclass
