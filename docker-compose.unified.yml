@@ -1,0 +1,146 @@
+# Unified deployment: supervisor-api + Hindsight + dependencies
+# Run: docker compose -f docker-compose.unified.yml up -d
+
+services:
+  # ============ POSTGRESQL (supervisor + hindsight share) ============
+  postgres:
+    image: postgres:16
+    container_name: supervisor-postgres
+    environment:
+      - POSTGRES_DB=supervisor_db
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+    volumes:
+      - postgres-supervisor:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+
+  # ============ REDIS ============
+  redis:
+    image: redis:7-alpine
+    container_name: supervisor-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    restart: unless-stopped
+
+  # ============ INIT: Pre-download embeddings models ============
+  hf-downloader:
+    image: ghcr.io/huggingface/text-embeddings-inference:latest
+    container_name: hf-downloader
+    environment:
+      - HF_HOME=/cache/huggingface
+    volumes:
+      - hf-cache:/cache/huggingface
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - >
+        echo "Downloading embeddings models..." &&
+        python3 -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('BAAI/bge-small-en-v1.5'); print('bge-small done')" &&
+        python3 -c "from sentence_transformers import CrossEncoder; CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2'); print('cross-encoder done')" &&
+        echo "All models downloaded successfully!" &&
+        ls -la /cache/huggingface/hub/ && echo "DONE"
+    restart: "no"
+
+  # ============ HINDSIGHT (Agent Memory - MCP Server) ============
+  hindsight:
+    image: ghcr.io/vectorize-io/hindsight:latest
+    container_name: hindsight-api
+    network_mode: host
+    ports:
+      - "8888:8888"  # MCP API
+      - "9999:9999"  # UI (Control Plane)
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      # LLM - dùng Ollama remote
+      - HINDSIGHT_API_LLM_PROVIDER=ollama
+      - HINDSIGHT_API_LLM_BASE_URL=https://itollma.fsoft.com.vn/api
+      - HINDSIGHT_API_LLM_MODEL=qwen2.5:14b-instruct
+      - HINDSIGHT_API_LLM_TIMEOUT=120
+      - HINDSIGHT_API_DISABLE_FACT_EXTRACTION=false
+      # Database - PostgreSQL riêng cho Hindsight (port 5433)
+      - HINDSIGHT_DB_HOST=localhost
+      - HINDSIGHT_DB_PORT=5433
+      - HINDSIGHT_DB_NAME=hindsight_db
+      - HINDSIGHT_DB_USER=postgres
+      - HINDSIGHT_DB_PASSWORD=postgres
+      # HuggingFace cache cho embeddings models
+      - HF_HOME=/cache/huggingface
+    volumes:
+      - hindsight-data:/home/hindsight/.pg0
+      - hf-cache:/cache/huggingface
+    restart: unless-stopped
+    depends_on:
+      hf-downloader:
+        condition: service_completed_successfully
+      - hindsight-postgres
+
+  # ============ POSTGRESQL (Hindsight - riêng vì hindsight dùng embedded pg0) ============
+  hindsight-postgres:
+    image: pgvector/pgvector:pg16
+    container_name: hindsight-postgres
+    environment:
+      - POSTGRES_DB=hindsight_db
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+    volumes:
+      - postgres-hindsight:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"
+    restart: unless-stopped
+
+  # ============ SUPERVISOR API ============
+  supervisor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: supervisor-api
+    network_mode: host
+    ports:
+      - "8000:8000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      - APP_ENV=production
+      - APP_PORT=8000
+      # Database
+      - DB_HOST=localhost
+      - DB_PORT=5432
+      - DB_NAME=supervisor_db
+      - DB_USER=postgres
+      - DB_PASSWORD=postgres
+      # Redis
+      - REDIS_HOST=localhost
+      - REDIS_PORT=6379
+      # LLM - dùng llama.cpp trên host
+      - LLM_PROVIDER=ollama
+      - OLLAMA_BASE_URL=http://localhost:8088
+      - OLLAMA_DEFAULT_MODEL=llama-3.1-8b-instruct-q4_K_M
+      - OLLAMA_TIMEOUT=320
+      # Hindsight MCP
+      - HINDSIGHT_ENABLED=true
+      - HINDSIGHT_BASE_URL=http://localhost:8888
+      - HINDSIGHT_BANK_ID=supervisor-api
+      # Telegram
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_APPROVAL_CHAT_IDS=518470028
+      # Webhook
+      - WEBHOOK_INPUT_SECRET=${WEBHOOK_INPUT_SECRET:-}
+      - POWER_AUTOMATE_WEBHOOK_URL=${POWER_AUTOMATE_WEBHOOK_URL:-}
+    volumes:
+      - ./src:/app/src:ro
+      - ./config:/app/config:ro
+    depends_on:
+      - postgres
+      - redis
+      - hindsight
+
+volumes:
+  postgres-supervisor:
+  postgres-hindsight:
+  redis-data:
+  hindsight-data:
+  hf-cache:
