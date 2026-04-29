@@ -220,7 +220,7 @@ class HindsightService:
 def get_hindsight_service() -> HindsightService:
     """Factory function to get Hindsight service instance."""
     # Read from environment
-    base_url = os.environ.get("HINDSIGHT_BASE_URL", "http://localhost:8888")
+    base_url = os.environ.get("HINDSIGHT_BASE_URL", "http://hindsight:8000")
     bank_id = os.environ.get("HINDSIGHT_BANK_ID", "supervisor-api")
     enabled = os.environ.get("HINDSIGHT_ENABLED", "true").lower() == "true"
     

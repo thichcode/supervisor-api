@@ -27,7 +27,7 @@ services:
       - OLLAMA_TIMEOUT=320
       # Hindsight
       - HINDSIGHT_ENABLED=true
-      - HINDSIGHT_BASE_URL=http://localhost:8888
+      - HINDSIGHT_BASE_URL=http://hindsight:8000
       - HINDSIGHT_BANK_ID=supervisor-api
       # Telegram
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
