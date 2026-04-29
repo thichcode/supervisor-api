@@ -7,34 +7,20 @@ services:
       - "8888:8888"  # API
       - "9999:9999"  # UI
     environment:
-      # LLM Provider - dùng Ollama từ host
-      - HINDSIGHT_API_LLM_PROVIDER=ollama
-      - HINDSIGHT_API_LLM_BASE_URL=http://localhost:8088
-      - HINDSIGHT_API_LLM_MODEL=llama3
-      - HINDSIGHT_API_LLM_TIMEOUT=60
-      - HINDSIGHT_API_DISABLE_FACT_EXTRACTION=true
+      # LLM Provider
+      - HINDSIGHT_API_LLM_PROVIDER=${HINDSIGHT_LLM_PROVIDER:-ollama}
+      - HINDSIGHT_API_LLM_BASE_URL=${HINDSIGHT_LLM_BASE_URL:-http://localhost:8088}
+      - HINDSIGHT_API_LLM_MODEL=${HINDSIGHT_LLM_MODEL:-llama3}
+      - HINDSIGHT_API_LLM_TIMEOUT=${HINDSIGHT_LLM_TIMEOUT:-60}
+      - HINDSIGHT_API_DISABLE_FACT_EXTRACTION=${HINDSIGHT_DISABLE_FACT_EXTRACTION:-false}
       # Database - dùng chung PostgreSQL với supervisor (port 5432)
-      - HINDSIGHT_DB_HOST=localhost
-      - HINDSIGHT_DB_PORT=5432
-      - HINDSIGHT_DB_NAME=hindsight_db
-      - HINDSIGHT_DB_USER=postgres
+      - HINDSIGHT_DB_HOST=${HINDSIGHT_DB_HOST:-localhost}
+      - HINDSIGHT_DB_PORT=${HINDSIGHT_DB_PORT:-5432}
+      - HINDSIGHT_DB_NAME=${HINDSIGHT_DB_NAME:-hindsight_db}
+      - HINDSIGHT_DB_USER=${HINDSIGHT_DB_USER:-postgres}
       - HINDSIGHT_DB_PASSWORD=${DB_PASSWORD}
     volumes:
       - hindsight-data:/home/hindsight/.pg0
-  # Optional: Separate PostgreSQL for Hindsight (use this OR supervisor's postgres)
-  # Uncomment nếu muốn dùng PostgreSQL riêng
-  # postgres:
-  #   image: pgvector/pgvector:pg16
-  #   container_name: hindsight-postgres
-  #   network_mode: host
-  #   ports:
-  #     - "5433:5432"
-  #   environment:
-  #     - POSTGRES_DB=hindsight_db
-  #     - POSTGRES_USER=postgres
-  #     - POSTGRES_PASSWORD=${DB_PASSWORD}
-  #   volumes:
-  #     - postgres-data:/var/lib/postgresql/data
 
 volumes:
   hindsight-data:
