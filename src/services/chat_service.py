@@ -4,6 +4,7 @@ import re
 import time
 import uuid
 from datetime import datetime
+import structlog
 
 from src.config import get_settings
 from src.core.approval import approval_service
@@ -11,15 +12,18 @@ from src.core.schemas import CaseInfo, ChatRequest, ChatResponse, ConversationIn
 from src.core.teams_targeting import TeamsTargetResolver, extract_teams_signal
 from src.core.thread_targeting import GroupChatTargetResolver
 from src.memory.service import MemoryService
+from src.memory.hindsight_service import get_hindsight_service
 from src.services.interaction_service import InteractionService
 
 settings = get_settings()
+logger = structlog.get_logger(__name__)
 
 
 class ChatService:
     def __init__(self):
         self.group_chat_resolver = GroupChatTargetResolver()
         self.teams_target_resolver = TeamsTargetResolver()
+        self.hindsight = get_hindsight_service()
 
     def _normalize_chat_context(self, request: ChatRequest) -> dict:
         metadata = dict(request.metadata or {})
@@ -338,6 +342,16 @@ class ChatService:
             interaction_service = InteractionService(session)
             memory = await memory_service.retrieve(payload)
 
+            # ← HINDSIGHT: Recall relevant memories before processing
+            if self.hindsight.enabled:
+                hindsight_memories = await self.hindsight.recall(
+                    query=request.message,
+                    limit=5,
+                )
+                if hindsight_memories:
+                    memory.external_memory = hindsight_memories
+                    logger.debug(f"Hindsight recall: '{request.message[:50]}...' -> {len(hindsight_memories)} memories")
+
             history_texts = [*memory.recent_messages, memory.conversation_summary or ""]
             routing_metadata = {}
             target_decision = None
@@ -467,6 +481,20 @@ class ChatService:
                 ticket_system=request.ticket_system,
                 extra_metadata=result.metadata or {},
             )
+
+            # ← HINDSIGHT: Store interaction for future recall
+            if self.hindsight.enabled:
+                await self.hindsight.retain(
+                    content=f"User: {request.message}\nAssistant: {result.answer}",
+                    metadata={
+                        "user_id": request.user_id,
+                        "thread_id": thread_id,
+                        "intent": (result.metadata or {}).get("intent"),
+                        "confidence": result.confidence,
+                        "kb_sources": (result.metadata or {}).get("kb_sources", []),
+                    },
+                )
+
             await session.commit()
 
         if result.status == "needs_review":

@@ -125,10 +125,16 @@ class HindsightService:
             return False
         
         try:
-            self.client.retain(
-                bank_id=self.bank_id,
-                content=content,
-                metadata=metadata or {},
+            import asyncio
+            # hindsight_client calls are blocking, run in executor
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(
+                None,
+                lambda: self.client.retain(
+                    bank_id=self.bank_id,
+                    content=content,
+                    metadata=metadata or {},
+                )
             )
             logger.debug(f"Hindsight retain: {content[:50]}...")
             return True
@@ -155,10 +161,16 @@ class HindsightService:
             return []
         
         try:
-            results = self.client.recall(
-                bank_id=self.bank_id,
-                query=query,
-                limit=limit,
+            import asyncio
+            # hindsight_client calls are blocking, run in executor
+            loop = asyncio.get_event_loop()
+            results = await loop.run_in_executor(
+                None,
+                lambda: self.client.recall(
+                    bank_id=self.bank_id,
+                    query=query,
+                    limit=limit,
+                )
             )
             logger.debug(f"Hindsight recall: '{query}' -> {len(results)} results")
             return [
