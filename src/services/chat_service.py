@@ -65,6 +65,187 @@ class ChatService:
             "group_chat": bool(group_chat) if group_chat is not None else False,
         }
 
+    # ← FIX v3: Entity extraction from user message
+    def _extract_entities(self, text: str) -> dict:
+        """Extract entities from user message.
+        
+        Returns:
+            - user_mentioned: name of user being discussed (e.g., "anh Sơn")
+            - object_type: ticket/case/issue/system
+            - action_problem: what happened (e.g., "không vào được", "lỗi")
+            - ticket_id: explicit ticket ID found
+        """
+        import re
+        t = (text or "").strip()
+        entities = {
+            "user_mentioned": None,
+            "object_type": None,
+            "action_problem": None,
+            "ticket_id": None,
+        }
+        
+        # Extract ticket ID patterns: ticket #123, WO#456, case #789
+        ticket_patterns = [
+            r"(?:ticket|case|wo|inc|request)\s*#?(\d+)",
+            r"#(\d{4,})",
+        ]
+        for pattern in ticket_patterns:
+            match = re.search(pattern, t, re.IGNORECASE)
+            if match:
+                entities["ticket_id"] = match.group(1)
+                entities["object_type"] = "ticket"
+                break
+        
+        # Extract user mentions (anh/chị/bạn + name)
+        user_patterns = [
+            r"(?:anh|chị|bạn|ông|bà|mr\.?|ms\.?)\s+([A-Za-zÀ-ỹ]{2,})",
+            r"nhân viên\s+([A-Za-zÀ-ỹ]{2,})",
+            r"user\s+([A-Za-zÀ-ỹ]{2,})",
+        ]
+        for pattern in user_patterns:
+            match = re.search(pattern, t, re.IGNORECASE)
+            if match:
+                entities["user_mentioned"] = match.group(1).strip()
+                break
+        
+        # Extract object type
+        if any(kw in t.lower() for kw in ["ticket", "case", "wo#", "request#"]):
+            entities["object_type"] = "ticket"
+        elif any(kw in t.lower() for kw in ["lỗi", "error", "bug", "sự cố", "incident"]):
+            entities["object_type"] = "incident"
+        elif any(kw in t.lower() for kw in ["email", "mail", "outlook"]):
+            entities["object_type"] = "email"
+        elif any(kw in t.lower() for kw in ["vpn", "network", "wifi", "internet"]):
+            entities["object_type"] = "network"
+        
+        # Extract action/problem (what's happening)
+        problem_patterns = [
+            r"(?:không\s+|không\s+thể\s+|cannot|can't|unable to)\s+(\w+)",
+            r"(?:lỗi|error|bug)\s+(.+?)(?:\.|$)",
+            r"(?:vấn đề|problem|issue)\s+(?:là|is|:)\s*(.+?)(?:\.|$)",
+            r"(\w+)\s+bị\s+(?:lỗi|hỏng|die|down)",
+        ]
+        for pattern in problem_patterns:
+            match = re.search(pattern, t, re.IGNORECASE)
+            if match:
+                entities["action_problem"] = match.group(1).strip()
+                break
+        
+        # If no specific problem found but message contains problem keywords
+        if not entities["action_problem"]:
+            problem_keywords = ["không vào được", "không đăng nhập", "lỗi", "chậm", "down", "die", "không truy cập"]
+            for kw in problem_keywords:
+                if kw in t.lower():
+                    entities["action_problem"] = kw
+                    break
+        
+        return entities
+
+    # ← FIX v3: Build clarification question based on extracted entities
+    def _build_clarification_message(self, entities: dict, conversation_id: str, kb_hit: bool, kb_sources: list = None) -> str:
+        """Build a clarification question when confidence is [0.5, 0.9)."""
+        parts = []
+        
+        # Always include conversation_id
+        parts.append(f"[conversation_id: {conversation_id}]")
+        
+        # Context about what we understood
+        understood = []
+        if entities.get("user_mentioned"):
+            understood.append(f"người dùng liên quan: {entities['user_mentioned']}")
+        if entities.get("object_type"):
+            understood.append(f"object: {entities['object_type']}")
+        if entities.get("action_problem"):
+            understood.append(f"vấn đề: {entities['action_problem']}")
+        if entities.get("ticket_id"):
+            understood.append(f"ticket_id: {entities['ticket_id']}")
+        
+        if understood:
+            parts.append(f"Tóm tắt: {', '.join(understood)}")
+        else:
+            parts.append("Tóm tắt: Chưa xác định rõ vấn đề")
+        
+        # KB evidence if available
+        if kb_hit and kb_sources:
+            sources_info = []
+            for src in kb_sources[:3]:
+                title = src.get("title", src.get("content", "N/A")[:50])
+                sources_info.append(f"- {title}")
+            if sources_info:
+                parts.append(f"Thông tin xác thực từ KB:\n" + "\n".join(sources_info))
+        
+        # What we need to clarify
+        missing = []
+        if not entities.get("ticket_id") and entities.get("object_type") == "ticket":
+            missing.append("mã ticket hoặc ảnh lỗi khi user mở ticket")
+        if not entities.get("action_problem"):
+            missing.append("mô tả chi tiết sự cố (lỗi gì, khi nào, ở đâu)")
+        if not kb_hit:
+            missing.append("thêm thông tin để tra cứu KB")
+        
+        if missing:
+            parts.append(f"Hướng xử lý / câu hỏi cần bổ sung: {', '.join(missing)}")
+        
+        # Closing
+        if kb_hit:
+            parts.append("Tôi đã tìm thấy thông tin liên quan nhưng cần thêm dữ liệu để kết luận chính xác.")
+        else:
+            parts.append("Tôi chưa đủ thông tin từ KB/hệ thống để kết luận. Bạn bổ sung giúp mình nhé.")
+        
+        return "\n".join(parts)
+
+    # ← FIX v3: Build grounded answer with entities and KB sources
+    def _build_grounded_answer(
+        self,
+        answer: str,
+        entities: dict,
+        conversation_id: str,
+        kb_hit: bool,
+        kb_sources: list = None,
+    ) -> str:
+        """Build a grounded answer that follows the user's requirements.
+        
+        Format:
+        [conversation_id: {{conversation_id}}]
+        Tóm tắt: ...
+        Thông tin xác thực từ KB/ticket: ...
+        Hướng xử lý / câu hỏi cần bổ sung: ...
+        """
+        parts = []
+        
+        # Always include conversation_id
+        parts.append(f"[conversation_id: {conversation_id}]")
+        
+        # Context about what we understood
+        understood = []
+        if entities.get("user_mentioned"):
+            understood.append(f"người dùng liên quan: {entities['user_mentioned']}")
+        if entities.get("object_type"):
+            understood.append(f"object: {entities['object_type']}")
+        if entities.get("action_problem"):
+            understood.append(f"vấn đề: {entities['action_problem']}")
+        if entities.get("ticket_id"):
+            understood.append(f"ticket_id: {entities['ticket_id']}")
+        
+        if understood:
+            parts.append(f"Tóm tắt: {', '.join(understood)}")
+        
+        # If we have KB sources, add evidence
+        if kb_hit and kb_sources:
+            sources_info = []
+            for src in kb_sources[:3]:
+                title = src.get("title", src.get("content", "N/A")[:80])
+                sources_info.append(f"- {title}")
+            if sources_info:
+                parts.append(f"Thông tin xác thực từ KB:\n" + "\n".join(sources_info))
+        
+        # Add the answer if it's substantive
+        if answer and len(answer) > 10:
+            if not answer.startswith("[conversation_id:"):
+                parts.append(answer)
+        
+        return "\n\n".join(parts) if len(parts) > 1 else (answer or "")
+
     # ← FIX v2: classify whether this message needs a bot response
     def _needs_reply(self, text: str) -> tuple[bool, str]:
         """Returns (needs_reply, reason)."""
@@ -360,12 +541,31 @@ class ChatService:
         # Only auto-send to Power Automate when kb_hit=true AND confidence >= 0.9
         if result.status == "completed" and settings.power_automate_webhook_url and auto_send_callback:
             kb_hit = result.metadata.get("kb_hit", False) if result.metadata else False
+            kb_sources = result.metadata.get("kb_sources", []) if result.metadata else []
             if kb_hit and result.confidence >= 0.9:
+                # Build grounded answer for webhook payload
+                entities = self._extract_entities(request.message)
+                grounded_answer = self._build_grounded_answer(
+                    answer=result.answer,
+                    entities=entities,
+                    conversation_id=conversation_id,
+                    kb_hit=kb_hit,
+                    kb_sources=kb_sources,
+                )
+                # Create a modified result-like object for the callback
+                webhook_payload = type('obj', (object,), {
+                    'answer': grounded_answer,
+                    'confidence': result.confidence,
+                    'metadata': {**(result.metadata or {}), 'conversation_id': conversation_id}
+                })()
                 try:
-                    await auto_send_callback(result)
+                    await auto_send_callback(webhook_payload)
                 except Exception:
                     pass
 
+        # Extract entities from user message (for clarification flow)
+        entities = self._extract_entities(request.message)
+        
         # ← FIX: confidence threshold gating (gap 0.8-0.9 treated as approval to avoid undefined)
         confidence = result.confidence
         delivery_status = "direct"
@@ -375,17 +575,29 @@ class ChatService:
 
         # Extract kb_hit for threshold gating
         kb_hit = result.metadata.get("kb_hit", False) if result.metadata else False
+        kb_sources = result.metadata.get("kb_sources", []) if result.metadata else []
 
+        # ← FIX v3: Use entity-based clarification instead of generic fallback
         if confidence < 0.5:
-            # Low confidence → skip, ask for more info
+            # Low confidence → ask clarification with extracted entities
             delivery_status = "skipped"
-            response_text = "🤖 Mình chưa chắc về câu trả lời. Bạn có thể cung cấp thêm thông tin không?"
+            response_text = self._build_clarification_message(
+                entities=entities,
+                conversation_id=conversation_id,
+                kb_hit=kb_hit,
+                kb_sources=kb_sources,
+            )
             response_status = "skipped"
-        elif kb_hit and confidence < 0.9:
-            # KB hit + medium confidence → Telegram approval
-            delivery_status = "pending_approval"
-            response_text = f"⚠️ Phản hồi AI (confidence: {confidence:.0%}) đang chờ duyệt qua Telegram."
-            response_status = "pending_approval"
+        elif 0.5 <= confidence < 0.9:
+            # Medium confidence → ask clarifying question with context
+            delivery_status = "clarification"
+            response_text = self._build_clarification_message(
+                entities=entities,
+                conversation_id=conversation_id,
+                kb_hit=kb_hit,
+                kb_sources=kb_sources,
+            )
+            response_status = "needs_clarification"
 
         # ← FIX v2: update conversation summary every turn
         try:
@@ -401,6 +613,16 @@ class ChatService:
         # Extract internal_note from metadata if present
         internal_note = result.metadata.get("internal_note", "") if result.metadata else ""
         metadata_without_internal = {k: v for k, v in result.metadata.items() if k != "internal_note"} if result.metadata else {}
+
+        # ← FIX v3: Format answer with grounded answer when confidence >= 0.9 and status is completed
+        if response_status == "completed" and delivery_status == "direct" and confidence >= 0.9:
+            response_text = self._build_grounded_answer(
+                answer=result.answer,
+                entities=entities,
+                conversation_id=conversation_id,
+                kb_hit=kb_hit,
+                kb_sources=kb_sources,
+            )
 
         return ChatResponse(
             request_id=request_id,
