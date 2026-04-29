@@ -87,14 +87,14 @@ class Settings(BaseSettings):
     # LLM Provider Configuration
     llm_provider: str = ""  # "ollama", "openai", or "azure" (auto-detect if empty)
     openai_api_key: str = ""
-    llm_model: str = "llama3"  # Comma-separated list supported; first item is primary
+    llm_model: str = "gemma4:e4b"  # Comma-separated list supported; first item is primary
     llm_temperature: float = 0.7
     llm_max_tokens: int = 2000
     llm_healthcheck_enabled: bool = False
 
     # Ollama Configuration (for self-hosted Vietnamese models)
     ollama_base_url: str = "http://localhost:11434"
-    ollama_default_model: str = "llama3"
+    ollama_default_model: str = "gemma4:e4b"
     ollama_timeout: int = 320
     
     # Image Processing Model (separate from main LLM for OCR/tasks)
@@ -114,12 +114,12 @@ class Settings(BaseSettings):
     # Recommended AI Models for different use cases
     # Override via LLM_MODEL env var
     recommended_models: dict = {
-        "faq": "llama3",           # Quick factual answers
-        "policy": "llama3",        # Policy interpretation
-        "support_case": "llama3", # Technical support
-        "analysis": "llama3",     # Data analysis
-        "executive": "llama3",    # High-priority executive
-        "default": "llama3",
+        "faq": "gemma4:e4b",           # Quick factual answers
+        "policy": "gemma4:e4b",        # Policy interpretation
+        "support_case": "gemma4:e4b", # Technical support
+        "analysis": "gemma4:e4b",     # Data analysis
+        "executive": "gemma4:e4b",    # High-priority executive
+        "default": "gemma4:e4b",
     }
     
     # Keyword patterns for intent classification and risk evaluation
@@ -238,7 +238,7 @@ class Settings(BaseSettings):
         if isinstance(raw, str):
             value = raw.strip()
             if not value:
-                return ["llama3"]
+                return ["gemma4:e4b"]
             try:
                 parsed = json.loads(value)
                 if isinstance(parsed, list):
@@ -247,11 +247,11 @@ class Settings(BaseSettings):
                 pass
             candidates = [item.strip() for item in value.replace("\n", ",").replace(";", ",").replace("|", ",").split(",")]
             candidates = [item for item in candidates if item]
-            return candidates or ["llama3"]
+            return candidates or ["gemma4:e4b"]
         if isinstance(raw, list):
             candidates = [str(item).strip() for item in raw if str(item).strip()]
-            return candidates or ["llama3"]
-        return [str(raw).strip()] if str(raw).strip() else ["llama3"]
+            return candidates or ["gemma4:e4b"]
+        return [str(raw).strip()] if str(raw).strip() else ["gemma4:e4b"]
 
     @property
     def primary_llm_model(self) -> str:
