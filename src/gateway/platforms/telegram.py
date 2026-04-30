@@ -436,7 +436,18 @@ class TelegramAdapter:
             os.getenv("HTTPS_PROXY") or os.getenv("https_proxy") or
             os.getenv("HTTP_PROXY") or os.getenv("http_proxy")
         )
-        return proxy.strip() if proxy else None
+        if not proxy:
+            return None
+        
+        proxy = proxy.strip()
+        
+        # Add scheme if missing (httpx requires full URL with scheme)
+        if not proxy.startswith(("http://", "https://", "socks5://", "socks5h://")):
+            # Assume http:// for proxies without scheme
+            proxy = f"http://{proxy}"
+            logger.info("Added http:// scheme to proxy URL", proxy=proxy)
+        
+        return proxy
     
     async def _get_http_client(self) -> httpx.AsyncClient:
         """Get or create shared HTTP client with proxy support."""
