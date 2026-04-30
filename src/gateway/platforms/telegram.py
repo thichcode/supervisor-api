@@ -4,6 +4,7 @@ Telegram Platform Adapter
 
 import asyncio
 import hmac
+import os
 from datetime import datetime, timezone
 from typing import Optional, Dict, Any, Tuple
 import secrets
@@ -420,26 +421,59 @@ class TelegramAdapter:
         # Verbose mode for streaming app logs to Telegram
         self._verbose_mode: bool = False
         self._verbose_chat_ids: set[str] = set()
+        
+        # Proxy support - read from environment
+        self._proxy_url = self._get_proxy_from_env()
+        self._http_client: Optional[httpx.AsyncClient] = None
+        
+        if self._proxy_url:
+            logger.info("Telegram adapter using proxy", proxy=self._proxy_url)
+        
     
+    def _get_proxy_from_env(self) -> Optional[str]:
+        """Read proxy URL from environment variables."""
+        proxy = (
+            os.getenv("HTTPS_PROXY") or os.getenv("https_proxy") or
+            os.getenv("HTTP_PROXY") or os.getenv("http_proxy")
+        )
+        return proxy.strip() if proxy else None
+    
+    async def _get_http_client(self) -> httpx.AsyncClient:
+        """Get or create shared HTTP client with proxy support."""
+        if self._http_client is None or self._http_client.is_closed:
+            proxies = self._proxy_url if self._proxy_url else None
+            self._http_client = httpx.AsyncClient(
+                proxies=proxies,
+                timeout=30.0,
+                trust_env=True
+            )
+        return self._http_client
+    
+    async def _close_http_client(self):
+        """Close the shared HTTP client."""
+        if self._http_client and not self._http_client.is_closed:
+            await self._http_client.aclose()
+            self._http_client = None
+
     async def start(self):
         """Start the Telegram bot"""
         # Test connection
         try:
             async with asyncio.timeout(10):
-                async with httpx.AsyncClient() as client:
-                    resp = await client.get(f"{self.api_base}/getMe")
-                    if resp.status_code != 200:
-                        logger.error(
-                            "Telegram auth failed",
-                            status=resp.status_code,
-                            body=resp.text[:500],
-                        )
-                        return
-                    
-                    me = resp.json()
-                    logger.info("Telegram bot started", username=me.get("result", {}).get("username"))
-                    await self._register_bot_commands()
-                    
+                client = await self._get_http_client()
+                resp = await client.get(f"{self.api_base}/getMe")
+                if resp.status_code != 200:
+                    logger.error(
+                        "Telegram auth failed",
+                        status=resp.status_code,
+                        body=resp.text[:500],
+                    )
+                    return
+
+                me = resp.json()
+                logger.info("Telegram bot started", username=me.get("result", {}).get("username"))
+                await self._register_bot_commands()
+
         except Exception as e:
             logger.error(
                 "Failed to start Telegram",
@@ -457,6 +491,10 @@ class TelegramAdapter:
     async def stop(self):
         """Stop the Telegram bot"""
         self.is_running = False
+        
+        # Close HTTP client
+        await self._close_http_client()
+        
         if self._task:
             self._task.cancel()
             try:
@@ -483,21 +521,21 @@ class TelegramAdapter:
         ]
 
         try:
-            async with httpx.AsyncClient() as client:
-                resp = await client.post(
-                    f"{self.api_base}/setMyCommands",
-                    json={"commands": commands},
-                    timeout=10.0,
-                )
-                if resp.status_code != 200:
-                    logger.warning("Failed to register Telegram commands", status=resp.status_code)
-                    return False
-                data = resp.json()
-                if not data.get("ok", False):
-                    logger.warning("Telegram commands registration returned not ok", response=data)
-                    return False
-                logger.info("Telegram commands registered", commands=[c["command"] for c in commands])
-                return True
+            client = await self._get_http_client()
+            resp = await client.post(
+                f"{self.api_base}/setMyCommands",
+                json={"commands": commands},
+                timeout=10.0,
+            )
+            if resp.status_code != 200:
+                logger.warning("Failed to register Telegram commands", status=resp.status_code)
+                return False
+            data = resp.json()
+            if not data.get("ok", False):
+                logger.warning("Telegram commands registration returned not ok", response=data)
+                return False
+            logger.info("Telegram commands registered", commands=[c["command"] for c in commands])
+            return True
         except Exception as e:
             logger.error("Failed to register Telegram commands", error=str(e))
             return False
@@ -506,24 +544,24 @@ class TelegramAdapter:
         """Poll for updates"""
         while self.is_running:
             try:
-                async with httpx.AsyncClient() as client:
-                    resp = await client.get(
-                        f"{self.api_base}/getUpdates",
-                        params={
-                            "offset": self._offset,
-                            "timeout": 30,
-                        }
-                    )
-                    
-                    if resp.status_code == 200:
-                        updates = resp.json().get("result", [])
-                        
-                        for update in updates:
-                            self._offset = update.get("update_id", 0) + 1
-                            await self._handle_update(update)
-                    
-                    await asyncio.sleep(1)
-                    
+                client = await self._get_http_client()
+                resp = await client.get(
+                    f"{self.api_base}/getUpdates",
+                    params={
+                        "offset": self._offset,
+                        "timeout": 30,
+                    }
+                )
+
+                if resp.status_code == 200:
+                    updates = resp.json().get("result", [])
+
+                    for update in updates:
+                        self._offset = update.get("update_id", 0) + 1
+                        await self._handle_update(update)
+
+                await asyncio.sleep(1)
+
             except asyncio.TimeoutError:
                 continue
             except Exception as e:
@@ -881,23 +919,23 @@ class TelegramAdapter:
         supervisor_ready = False
         
         try:
-            async with httpx.AsyncClient() as client:
-                resp = await client.get(f"{self.supervisor_url}/health", timeout=10.0)
-                supervisor_ok = resp.status_code == 200
-                if supervisor_ok:
-                    data = resp.json()
-                    status_lines.append(f"Supervisor: {data.get('status', 'unknown')}")
-                    status_lines.append(f"Model: {data.get('llm_model', 'N/A')}")
-                else:
-                    status_lines.append(f"Supervisor: error {resp.status_code}")
+            client = await self._get_http_client()
+            resp = await client.get(f"{self.supervisor_url}/health", timeout=10.0)
+            supervisor_ok = resp.status_code == 200
+            if supervisor_ok:
+                data = resp.json()
+                status_lines.append(f"Supervisor: {data.get('status', 'unknown')}")
+                status_lines.append(f"Model: {data.get('llm_model', 'N/A')}")
+            else:
+                status_lines.append(f"Supervisor: error {resp.status_code}")
 
-                ready_resp = await client.get(f"{self.supervisor_url}/health/ready", timeout=10.0)
-                supervisor_ready = ready_resp.status_code == 200
-                if supervisor_ready:
-                    ready_data = ready_resp.json()
-                    status_lines.append(f"Readiness: {ready_data.get('status', 'unknown')}")
-                else:
-                    status_lines.append(f"Readiness: error {ready_resp.status_code}")
+            ready_resp = await client.get(f"{self.supervisor_url}/health/ready", timeout=10.0)
+            supervisor_ready = ready_resp.status_code == 200
+            if supervisor_ready:
+                ready_data = ready_resp.json()
+                status_lines.append(f"Readiness: {ready_data.get('status', 'unknown')}")
+            else:
+                status_lines.append(f"Readiness: error {ready_resp.status_code}")
         except Exception as e:
             status_lines.append(f"Supervisor: unreachable ({str(e)})")
 
@@ -915,58 +953,58 @@ class TelegramAdapter:
         try:
             await self._send_message(chat_id, f"🔍 Đang tìm: {keywords}...")
 
-            async with httpx.AsyncClient() as client:
-                response = await client.post(
-                    f"{self.supervisor_url}/approvals/{approval_id}/retry-with-kb",
-                    json={"keywords": keywords, "requested_by": user_id},
-                    headers={"Authorization": f"Bearer {self.api_key}"} if self.api_key else {},
-                    timeout=60.0
-                )
+            client = await self._get_http_client()
+            response = await client.post(
+                f"{self.supervisor_url}/approvals/{approval_id}/retry-with-kb",
+                json={"keywords": keywords, "requested_by": user_id},
+                headers={"Authorization": f"Bearer {self.api_key}"} if self.api_key else {},
+                timeout=60.0
+            )
 
-                if response.status_code == 200:
-                    data = response.json()
-                    new_response = data.get("new_response", "Không tìm thấy kết quả.")
-                    kb_summary = data.get("kb_summary", "")
-                    kb_action_items = data.get("kb_action_items", []) or []
-                    kb_sources = data.get("kb_sources", []) or []
-                    kb_template_label = data.get("kb_template_label", "")
-                    kb_template_hint = data.get("kb_template_hint", "")
-                    kb_cards = [build_kb_card(item, query=keywords) for item in kb_sources]
-                    source_lines = []
-                    for idx, card in enumerate(kb_cards[:3], start=1):
-                        kb_id_part = f" | ID: {card['id']}" if card.get("id") else ""
-                        source_lines.append(f"{idx}. {card['title']}{kb_id_part} ({card.get('source_hint', '')})")
+            if response.status_code == 200:
+                data = response.json()
+                new_response = data.get("new_response", "Không tìm thấy kết quả.")
+                kb_summary = data.get("kb_summary", "")
+                kb_action_items = data.get("kb_action_items", []) or []
+                kb_sources = data.get("kb_sources", []) or []
+                kb_template_label = data.get("kb_template_label", "")
+                kb_template_hint = data.get("kb_template_hint", "")
+                kb_cards = [build_kb_card(item, query=keywords) for item in kb_sources]
+                source_lines = []
+                for idx, card in enumerate(kb_cards[:3], start=1):
+                    kb_id_part = f" | ID: {card['id']}" if card.get("id") else ""
+                    source_lines.append(f"{idx}. {card['title']}{kb_id_part} ({card.get('source_hint', '')})")
 
-                    message_lines = ["🔄 KB Response", ""]
-                    if kb_template_label:
-                        message_lines.append(f"Mẫu KB: {kb_template_label}")
-                        if kb_template_hint:
-                            message_lines.append(f"Gợi ý: {kb_template_hint}")
-                        message_lines.append("")
-                    if kb_summary:
-                        message_lines.append(f"Tóm tắt:\n{kb_summary}")
-                        message_lines.append("")
-                    if kb_action_items:
-                        message_lines.append("Làm theo:")
-                        for idx, step in enumerate(kb_action_items[:5], start=1):
-                            message_lines.append(f"{idx}. {step}")
-                        message_lines.append("")
-                    else:
-                        message_lines.append(f"Response:\n{new_response}")
-                        message_lines.append("")
-                    if source_lines:
-                        message_lines.append("Nguồn:")
-                        message_lines.extend(source_lines)
-                        message_lines.append("")
-                    message_lines.append(f"Confidence: {data.get('confidence', 'N/A')}%")
-                    message_lines.append(f"Approval ID: {approval_id}")
-                    message = "\n".join(message_lines).strip()
-                    await self._send_message(chat_id, message)
+                message_lines = ["🔄 KB Response", ""]
+                if kb_template_label:
+                    message_lines.append(f"Mẫu KB: {kb_template_label}")
+                    if kb_template_hint:
+                        message_lines.append(f"Gợi ý: {kb_template_hint}")
+                    message_lines.append("")
+                if kb_summary:
+                    message_lines.append(f"Tóm tắt:\n{kb_summary}")
+                    message_lines.append("")
+                if kb_action_items:
+                    message_lines.append("Làm theo:")
+                    for idx, step in enumerate(kb_action_items[:5], start=1):
+                        message_lines.append(f"{idx}. {step}")
+                    message_lines.append("")
                 else:
-                    await self._send_message(
-                        chat_id,
-                        f"Lỗi khi tìm KB: {response.status_code}"
-                    )
+                    message_lines.append(f"Response:\n{new_response}")
+                    message_lines.append("")
+                if source_lines:
+                    message_lines.append("Nguồn:")
+                    message_lines.extend(source_lines)
+                    message_lines.append("")
+                message_lines.append(f"Confidence: {data.get('confidence', 'N/A')}%")
+                message_lines.append(f"Approval ID: {approval_id}")
+                message = "\n".join(message_lines).strip()
+                await self._send_message(chat_id, message)
+            else:
+                await self._send_message(
+                    chat_id,
+                    f"Lỗi khi tìm KB: {response.status_code}"
+                )
 
         except Exception as e:
             logger.error("KB search failed", error=str(e), approval_id=approval_id)
@@ -1005,21 +1043,21 @@ class TelegramAdapter:
         
         # Store feedback in database
         try:
-            async with httpx.AsyncClient() as client:
-                await client.post(
-                    f"{self.supervisor_url}/feedback",
-                    json={
-                        "request_id": request_id,
-                        "thread_id": thread_id,
-                        "user_id": str(user_id),
-                        "feedback_type": "explicit_rating",
-                        "feedback_score": float(score) / 3.0,  # Normalize to 0.33, 0.67, 1.0
-                        "feedback_label": label,
-                    },
-                    headers={"Authorization": f"Bearer {self.api_key}"} if self.api_key else {},
-                    timeout=10.0,
-                )
-                logger.info("Rating feedback stored", score=score, request_id=request_id, user_id=user_id)
+            client = await self._get_http_client()
+            await client.post(
+                f"{self.supervisor_url}/feedback",
+                json={
+                    "request_id": request_id,
+                    "thread_id": thread_id,
+                    "user_id": str(user_id),
+                    "feedback_type": "explicit_rating",
+                    "feedback_score": float(score) / 3.0,  # Normalize to 0.33, 0.67, 1.0
+                    "feedback_label": label,
+                },
+                headers={"Authorization": f"Bearer {self.api_key}"} if self.api_key else {},
+                timeout=10.0,
+            )
+            logger.info("Rating feedback stored", score=score, request_id=request_id, user_id=user_id)
         except Exception as e:
             logger.error("Rating feedback failed", error=str(e), request_id=request_id)
         
@@ -1206,16 +1244,16 @@ class TelegramAdapter:
         offset = max(0, (page - 1) * page_size)
 
         try:
-            async with httpx.AsyncClient() as client:
-                response = await client.get(
-                    f"{self.supervisor_url}/knowledge/candidates",
-                    params={
-                        "status": session.get("status", "pending"),
-                        "limit": page_size,
-                        "offset": offset,
-                    },
-                    timeout=30.0,
-                )
+            client = await self._get_http_client()
+            response = await client.get(
+                f"{self.supervisor_url}/knowledge/candidates",
+                params={
+                    "status": session.get("status", "pending"),
+                    "limit": page_size,
+                    "offset": offset,
+                },
+                timeout=30.0,
+            )
             if response.status_code != 200:
                 await self._send_message(chat_id, f"Lỗi khi lấy KB candidates: {response.status_code}", parse_mode=None)
                 return
@@ -1371,12 +1409,12 @@ class TelegramAdapter:
         }
 
         try:
-            async with httpx.AsyncClient() as client:
-                response = await client.post(
-                    f"{self.supervisor_url}/knowledge/search",
-                    json=payload,
-                    timeout=30.0,
-                )
+            client = await self._get_http_client()
+            response = await client.post(
+                f"{self.supervisor_url}/knowledge/search",
+                json=payload,
+                timeout=30.0,
+            )
 
             if response.status_code != 200:
                 await self._send_message(chat_id, f"Lỗi khi tìm KB: {response.status_code}", parse_mode=None)
@@ -1396,12 +1434,12 @@ class TelegramAdapter:
             if current_page != page and total > 0:
                 offset = max(0, (current_page - 1) * page_size)
                 payload["offset"] = offset
-                async with httpx.AsyncClient() as client:
-                    response = await client.post(
-                        f"{self.supervisor_url}/knowledge/search",
-                        json=payload,
-                        timeout=30.0,
-                    )
+                client = await self._get_http_client()
+                response = await client.post(
+                    f"{self.supervisor_url}/knowledge/search",
+                    json=payload,
+                    timeout=30.0,
+                )
                 if response.status_code != 200:
                     await self._send_message(chat_id, f"Lỗi khi tìm KB: {response.status_code}", parse_mode=None)
                     return
@@ -1430,12 +1468,12 @@ class TelegramAdapter:
                 days = 1
 
         try:
-            async with httpx.AsyncClient() as client:
-                response = await client.get(
-                    f"{self.supervisor_url}/metrics/dashboard/boss-report",
-                    params={"days": days},
-                    timeout=20.0,
-                )
+            client = await self._get_http_client()
+            response = await client.get(
+                f"{self.supervisor_url}/metrics/dashboard/boss-report",
+                params={"days": days},
+                timeout=20.0,
+            )
 
             if response.status_code != 200:
                 await self._send_message(chat_id, f"Lỗi khi lấy super analytics: {response.status_code}", parse_mode=None)
@@ -1706,36 +1744,36 @@ class TelegramAdapter:
         await self._send_verbose_log(f"📥 Nhận tin nhắn: {message[:100]}...")
         
         try:
-            async with httpx.AsyncClient() as client:
-                response = await client.post(
-                    f"{self.supervisor_url}/chat",
-                    json={
-                        "user_id": user_id,
-                        "display_name": display_name,
-                        "message": message,
-                        "thread_id": thread_id,
-                        "metadata": metadata,
-                    },
-                    headers={"Authorization": f"Bearer {self.api_key}"} if self.api_key else {},
-                    timeout=30.0,
-                )
-                
-                await self._send_verbose_log(f"📤 Supervisor response: {response.status_code}")
+            client = await self._get_http_client()
+            response = await client.post(
+                f"{self.supervisor_url}/chat",
+                json={
+                    "user_id": user_id,
+                    "display_name": display_name,
+                    "message": message,
+                    "thread_id": thread_id,
+                    "metadata": metadata,
+                },
+                headers={"Authorization": f"Bearer {self.api_key}"} if self.api_key else {},
+                timeout=30.0,
+            )
 
-                if response.status_code == 200:
-                    payload = response.json()
-                    if payload.get("status") == "skipped":
-                        return ("", None)
-                    reply = (
-                        payload.get("customer_reply")
-                        or payload.get("message")
-                        or payload.get("response")
-                        or payload.get("answer")
-                        or "No response"
-                    )
-                    request_id = payload.get("request_id")
-                    return (reply, request_id)
-                return (f"Lỗi: {response.status_code}", None)
+            await self._send_verbose_log(f"📤 Supervisor response: {response.status_code}")
+
+            if response.status_code == 200:
+                payload = response.json()
+                if payload.get("status") == "skipped":
+                    return ("", None)
+                reply = (
+                    payload.get("customer_reply")
+                    or payload.get("message")
+                    or payload.get("response")
+                    or payload.get("answer")
+                    or "No response"
+                )
+                request_id = payload.get("request_id")
+                return (reply, request_id)
+            return (f"Lỗi: {response.status_code}", None)
 
         except Exception as e:
             logger.error("Supervisor call failed", error=str(e))
@@ -1751,62 +1789,62 @@ class TelegramAdapter:
             "comment": f"Telegram inline {action} by {actor}",
         }
         headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                f"{self.supervisor_url}/approvals/{approval_id}/action",
-                json=payload,
-                headers=headers,
-                timeout=30.0,
-            )
-            if response.status_code != 200:
-                logger.warning("Approval action failed", approval_id=approval_id, status=response.status_code, body=response.text)
-                return None
-            return response.json()
+        client = await self._get_http_client()
+        response = await client.post(
+            f"{self.supervisor_url}/approvals/{approval_id}/action",
+            json=payload,
+            headers=headers,
+            timeout=30.0,
+        )
+        if response.status_code != 200:
+            logger.warning("Approval action failed", approval_id=approval_id, status=response.status_code, body=response.text)
+            return None
+        return response.json()
 
     async def _answer_callback_query(self, callback_query_id: str, text: str, show_alert: bool = False):
 
-        async with httpx.AsyncClient() as client:
-            await client.post(
-                f"{self.api_base}/answerCallbackQuery",
-                json={
-                    "callback_query_id": callback_query_id,
-                    "text": text,
-                    "show_alert": show_alert,
-                },
-            )
+        client = await self._get_http_client()
+        await client.post(
+            f"{self.api_base}/answerCallbackQuery",
+            json={
+                "callback_query_id": callback_query_id,
+                "text": text,
+                "show_alert": show_alert,
+            },
+        )
 
     async def _edit_message_text(self, chat_id: str, message_id: Any, text: str, reply_markup: Optional[Dict[str, Any]] = None, parse_mode: Optional[str] = "Markdown"):
 
-        async with httpx.AsyncClient() as client:
-            payload = {
-                "chat_id": chat_id,
-                "message_id": message_id,
-                "text": text,
-            }
-            if parse_mode:
-                payload["parse_mode"] = parse_mode
-            if reply_markup is not None:
-                payload["reply_markup"] = reply_markup
-            await client.post(
-                f"{self.api_base}/editMessageText",
-                json=payload,
-            )
-    
+        client = await self._get_http_client()
+        payload = {
+            "chat_id": chat_id,
+            "message_id": message_id,
+            "text": text,
+        }
+        if parse_mode:
+            payload["parse_mode"] = parse_mode
+        if reply_markup is not None:
+            payload["reply_markup"] = reply_markup
+        await client.post(
+            f"{self.api_base}/editMessageText",
+            json=payload,
+        )
+
     async def _send_message(self, chat_id: str, text: str, reply_markup: Optional[Dict[str, Any]] = None, parse_mode: Optional[str] = "Markdown"):
         """Send a message via Telegram"""
-        async with httpx.AsyncClient() as client:
-            payload = {
-                "chat_id": chat_id,
-                "text": text,
-            }
-            if parse_mode:
-                payload["parse_mode"] = parse_mode
-            if reply_markup is not None:
-                payload["reply_markup"] = reply_markup
-            await client.post(
-                f"{self.api_base}/sendMessage",
-                json=payload,
-            )
+        client = await self._get_http_client()
+        payload = {
+            "chat_id": chat_id,
+            "text": text,
+        }
+        if parse_mode:
+            payload["parse_mode"] = parse_mode
+        if reply_markup is not None:
+            payload["reply_markup"] = reply_markup
+        await client.post(
+            f"{self.api_base}/sendMessage",
+            json=payload,
+        )
 
 
 __all__ = [
