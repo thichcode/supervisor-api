@@ -134,8 +134,14 @@ services:
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
       - TELEGRAM_APPROVAL_CHAT_IDS=518470028
       # Webhook
-      - WEBHOOK_INPUT_SECRET=${WEBHOOK_INPUT_SECRET:-}
+      - WEBHOOK_INPUT_SECRET=${WEBH...T:-}
       - POWER_AUTOMATE_WEBHOOK_URL=${POWER_AUTOMATE_WEBHOOK_URL:-}
+      # Proxy settings (loaded from .env file)
+      - HTTP_PROXY=${HTTP_PROXY:-}
+      - HTTPS_PROXY=${HTTPS_PROXY:-}
+      - http_proxy=${http_proxy:-}
+      - https_proxy=${https_proxy:-}
+      - NO_PROXY=${NO_PROXY:-localhost,127.0.0.1}
     volumes:
       - ./src:/app/src:ro
       - ./config:/app/config:ro
