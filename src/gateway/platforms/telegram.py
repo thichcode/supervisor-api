@@ -443,9 +443,8 @@ class TelegramAdapter:
         if self._http_client is None or self._http_client.is_closed:
             proxies = self._proxy_url if self._proxy_url else None
             self._http_client = httpx.AsyncClient(
-                proxies=proxies,
                 timeout=30.0,
-                trust_env=True
+                trust_env=True  # Automatically reads HTTP_PROXY/HTTPS_PROXY from env
             )
         return self._http_client
     
