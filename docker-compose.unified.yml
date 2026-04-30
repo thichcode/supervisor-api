@@ -9,7 +9,7 @@ services:
     environment:
       - POSTGRES_DB=supervisor_db
       - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_PASSWORD=${DB_PASSWORD:-***}
     volumes:
       - postgres-supervisor:/var/lib/postgresql/data
     ports:
@@ -71,7 +71,7 @@ services:
       - HINDSIGHT_DB_PORT=5433
       - HINDSIGHT_DB_NAME=hindsight_db
       - HINDSIGHT_DB_USER=postgres
-      - HINDSIGHT_DB_PASSWORD=postgres
+      - HINDSIGHT_DB_PASSWORD=${DB_PASSWORD:-***}
       # HuggingFace cache cho embeddings models
       - HF_HOME=/cache/huggingface
       - HF_ENDPOINT=https://hf-mirror.com
@@ -86,14 +86,14 @@ services:
       hindsight-postgres:
         condition: service_started
 
-  # ============ POSTGRESQL (Hindsight - riêng vì hindsight dùng embedded pg0) ============
+  # ============ POSTGRESQL (Hindsight - riêng vì hindsight dùng embedded pgl) ============
   hindsight-postgres:
     image: pgvector/pgvector:pg16
     container_name: hindsight-postgres
     environment:
       - POSTGRES_DB=hindsight_db
       - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_PASSWORD=${DB_PASSWORD:-***}
     volumes:
       - postgres-hindsight:/var/lib/postgresql/data
     ports:
@@ -117,7 +117,7 @@ services:
       - DB_PORT=5432
       - DB_NAME=supervisor_db
       - DB_USER=postgres
-      - DB_PASSWORD=postgres
+      - DB_PASSWORD=${DB_PASSWORD:-***}
       # Redis
       - REDIS_HOST=localhost
       - REDIS_PORT=6379
@@ -134,7 +134,7 @@ services:
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
       - TELEGRAM_APPROVAL_CHAT_IDS=518470028
       # Webhook
-      - WEBHOOK_INPUT_SECRET=${WEBH...T:-}
+      - WEBHOOK_INPUT_SECRET=${WEBHOOK_INPUT_SECRET:-}
       - POWER_AUTOMATE_WEBHOOK_URL=${POWER_AUTOMATE_WEBHOOK_URL:-}
       # Proxy settings (loaded from .env file)
       - HTTP_PROXY=${HTTP_PROXY:-}
