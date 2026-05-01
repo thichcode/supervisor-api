@@ -452,19 +452,13 @@ class TelegramAdapter:
     async def _get_http_client(self) -> httpx.AsyncClient:
         """Get or create shared HTTP client with proxy support."""
         if self._http_client is None or self._http_client.is_closed:
+            # Always use trust_env=True to respect HTTP_PROXY + NO_PROXY from environment
+            self._http_client = httpx.AsyncClient(
+                timeout=30.0,
+                trust_env=True
+            )
             if self._proxy_url:
-                # Use explicit proxy - httpx uses 'proxy' param (not 'proxies')
-                self._http_client = httpx.AsyncClient(
-                    proxy=self._proxy_url,
-                    timeout=30.0,
-                    trust_env=False  # Don't auto-read env since we're explicitly setting proxy
-                )
-                logger.info("HTTP client created with proxy", proxy=self._proxy_url)
-            else:
-                self._http_client = httpx.AsyncClient(
-                    timeout=30.0,
-                    trust_env=True
-                )
+                logger.info("Proxy detected from environment", proxy=self._proxy_url)
         return self._http_client
     
     async def _close_http_client(self):
