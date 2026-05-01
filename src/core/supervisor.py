@@ -353,11 +353,9 @@ class Supervisor:
             cache_result = self._check_cache(payload)
             if cache_result:
                 cached_answer = cache_result.get("response", "")
-                final_confidence = self._normalize_final_confidence(
-                    cache_result.get("confidence", 0.8),
-                    kb_hit=False,
-                    qa_needs_review=False,
-                )
+                # Cache hit: use cached confidence but cap at 0.89 (no auto-send without KB evidence)
+                final_confidence = min(0.89, cache_result.get("confidence", 0.8))
+                final_confidence = round(final_confidence, 2)
                 logger.debug("Cache hit", request_id=payload.request_id)
                 response_route = self.decision_engine.response_route(final_confidence, kb_hit=False)
                 if response_route == "skip":
@@ -593,11 +591,21 @@ class Supervisor:
                     support_context={"image_case_context": image_case_context},
                 )
 
-        final_confidence = self._normalize_final_confidence(
-            final_confidence,
-            kb_hit=kb_hit,
-            qa_needs_review=qa_needs_review,
-        )
+        # Calculate confidence dynamically based on evidence quality
+        if kb_hit and kb_sources:
+            # Use dynamic confidence based on KB evidence quality
+            final_confidence = self._calculate_dynamic_confidence(
+                kb_sources=kb_sources,
+                question_length=len(payload.message.text or ""),
+                answer_length=len(answer or ""),
+                llm_confidence=final_confidence if final_confidence > 0.5 else None,
+            )
+        else:
+            # Non-KB: keep LLM/QA confidence but cap at 0.89 (prevent auto-send without KB evidence)
+            # No longer artificially cap at 0.49 - let confidence reflect actual answer quality
+            final_confidence = min(0.89, final_confidence)
+
+        final_confidence = round(final_confidence, 2)
 
         response_route = self.decision_engine.response_route(final_confidence, kb_hit=kb_hit)
         if response_route == "skip":

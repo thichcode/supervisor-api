@@ -919,12 +919,20 @@ class ReasoningLoopOrchestrator:
                 state.agents_used = ["draft"]
                 state.answer, state.confidence = await self.supervisor._generate_direct_answer(payload, memory)
 
-        # Observe
-        final_confidence = self.supervisor._normalize_final_confidence(
-            state.confidence,
-            kb_hit=state.kb_hit,
-            qa_needs_review=state.qa_needs_review,
-        )
+        # Calculate confidence dynamically based on evidence quality
+        if state.kb_hit and hasattr(state, 'kb_sources') and state.kb_sources:
+            # Use dynamic confidence based on KB evidence
+            final_confidence = self.supervisor._calculate_dynamic_confidence(
+                kb_sources=state.kb_sources,
+                question_length=len(payload.message.text or ""),
+                answer_length=len(state.answer or ""),
+                llm_confidence=state.confidence if state.confidence > 0.5 else None,
+            )
+        else:
+            # Non-KB: cap at 0.89 to prevent auto-send without KB evidence
+            final_confidence = min(0.89, state.confidence)
+
+        final_confidence = round(final_confidence, 2)
 
         if final_confidence < clarify_threshold and not state.kb_hit:
             clarification_question = self._build_interrupt_clarification_question(
