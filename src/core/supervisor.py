@@ -85,18 +85,21 @@ class DecisionEngine:
         """Classify how a response should be delivered.
 
         Returns one of:
-        - "skip": do not send the response
+        - "skip": do not send the response (only for very low confidence < 0.3)
         - "approve": keep the response pending human approval
         - "send": send immediately
 
         High-confidence responses only auto-send when they are backed by KB.
         """
-        if confidence < 0.5:
+        # Very low confidence: skip entirely (no meaningful answer)
+        if confidence < 0.3:
             return "skip"
 
+        # High confidence + KB hit: auto-send
         if confidence >= 0.9 and kb_hit:
             return "send"
 
+        # Everything else: needs approval (always provide some answer)
         return "approve"
 
     def needs_human_review(
