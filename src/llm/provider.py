@@ -196,9 +196,15 @@ class MultiProviderLLMClient:
         timeout: Optional[int] = None,
     ):
         self._clients: dict[LLMProvider, AsyncOpenAI] = {}
-        # Read model from constructor param, then settings, then default
+        # Read model from constructor param, then settings (LLM_MODEL / OLLAMA_DEFAULT_MODEL), then fallback
         settings_model = getattr(settings, 'llm_model', None) or ""
-        self._active_model: str = model or settings_model or "llama3.1"
+        if not settings_model:
+            # Fallback to config's primary model (reads from LLM_MODEL or OLLAMA_DEFAULT_MODEL env)
+            try:
+                settings_model = settings.primary_llm_model
+            except Exception:
+                settings_model = ""
+        self._active_model: str = model or settings_model or "Llama-3.1-8B-Instruct-Q4_K_M.gguf"
 
         # Set explicit provider override from config or constructor param
         if provider:
@@ -264,9 +270,12 @@ class MultiProviderLLMClient:
         if not candidates:
             candidates = self._split_model_candidates(settings.llm_model)
         if not candidates:
-            # Fallback to default model from settings or llama3.1
-            default_model = getattr(settings, 'llm_model', None) or "llama3.1"
-            candidates = [default_model]
+            # Fallback to config's primary model (reads LLM_MODEL / OLLAMA_DEFAULT_MODEL)
+            try:
+                candidates = [settings.primary_llm_model]
+            except Exception:
+                # Ultimate fallback - should match llama.cpp served model
+                candidates = [settings.ollama_default_model or "Llama-3.1-8B-Instruct-Q4_K_M.gguf"]
         unique_candidates: list[str] = []
         seen: set[str] = set()
         for candidate in candidates:
