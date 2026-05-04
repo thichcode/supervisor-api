@@ -54,7 +54,7 @@ class KnowledgeRetrievalService:
 
         results = self._deduplicate_and_rank(results, normalized_query, template_match)
 
-        if (not results or results[0].similarity < 0.5) and query_variants:
+        if (not results or results[0].similarity < 0.3) and query_variants:
             for variant in query_variants:
                 for kb_type in search_types:
                     kb_results = await self._search_knowledge_base(kb_type, variant, category, tags, limit)
@@ -95,7 +95,7 @@ class KnowledgeRetrievalService:
             }
 
         top = results[0]
-        if top.similarity < 0.5:
+        if top.similarity < 0.3:
             return {
                 "needs_clarification": False,
                 "missing_fields": [],
@@ -416,7 +416,7 @@ class KnowledgeRetrievalService:
             return
 
         top = results[0]
-        if top.similarity >= 0.5:
+        if top.similarity >= 0.3:
             metrics.record_kb_search(search_type, "hit")
         else:
             metrics.record_kb_fallback(search_type, "low_similarity")

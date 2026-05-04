@@ -10,7 +10,7 @@ logger = structlog.get_logger()
 
 
 class ContextAgent:
-    def build(self, payload: InputPayload, memory: MemoryContext) -> dict:
+    def build(self, payload: InputPayload, memory: MemoryContext, external_memory: Optional[list] = None) -> dict:
         context = {
             "current_message": payload.message.text,
             "conversation_history": memory.recent_messages,
@@ -35,6 +35,13 @@ class ContextAgent:
             "resolved_points": [],
             "unresolved_points": memory.conversation_state.get("open_loops", []) if memory.conversation_state else [],
         }
+
+        if external_memory:
+            # Include hindsight memories as a separate field
+            context["external_memory"] = [
+                {"content": mem.get("content"), "metadata": mem.get("metadata"), "score": mem.get("score")}
+                for mem in external_memory[:5]
+            ]
 
         if payload.case and memory.case_memory:
             context["case_info"] = {
@@ -148,6 +155,7 @@ class KnowledgeAgent:
         payload: InputPayload,
         memory: MemoryContext,
         llm: Optional[MultiProviderLLMClient] = None,
+        external_memory: Optional[list] = None,
     ) -> dict:
         knowledge = {
             "facts": [],
@@ -165,6 +173,18 @@ class KnowledgeAgent:
 
         text_lower = (payload.message.text or "").lower()
         text = payload.message.text
+
+        # Augment query with external memory if available
+        augmented_query = text
+        if external_memory:
+            memory_context_lines = []
+            for mem in external_memory[:3]:
+                content = mem.get("content", "")[:300]
+                if content:
+                    memory_context_lines.append(f"- {content}")
+            if memory_context_lines:
+                augmented_query = text + "\n\n[Previous related interactions from Hindsight memory:]\n" + "\n".join(memory_context_lines)
+                logger.debug("Augmented KB query with hindsight memories", original=text[:50], added=len(memory_context_lines))
 
 
 
@@ -187,8 +207,10 @@ class KnowledgeAgent:
         try:
             from src.services.kb_enhanced_search import enhanced_kb_search
             
+            # Use augmented query that includes hindsight memories if available
+            search_query = augmented_query if 'augmented_query' in locals() else payload.message.text
             enhanced_results = await enhanced_kb_search(
-                query=payload.message.text,
+                query=search_query,
                 user_id=getattr(payload, 'user_id', None),
                 use_context=True,
                 use_domain=True,

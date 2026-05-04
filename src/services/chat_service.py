@@ -250,6 +250,36 @@ class ChatService:
         
         return "\n\n".join(parts) if len(parts) > 1 else (answer or "")
 
+    def _build_fallback_answer(self, query: str, conversation_id: str, confidence: float) -> str:
+        """Generate a structured fallback answer (4W1H or step‑by‑step) when KB is not hit.
+        
+        Format:
+        [conversation_id: ...]
+        🔍 *Những gì cần xác định:*
+        - **Vấn đề là gì?** (What) – ...
+        - **Xảy ra ở đâu?** (Where) – ...
+        - **Xảy ra khi nào?** (When) – ...
+        - **Tại sao có thể xảy ra?** (Why) – ...
+        - **Làm thế nào để xử lý?** (How) – ...
+        👉 Hướng dẫn chung hoặc yêu cầu bổ sung thông tin.
+        """
+        parts = [f"[conversation_id: {conversation_id}]"]
+        parts.append("🔍 *Những gì cần xác định để hỗ trợ chính xác:*")
+        parts.append("- **Vấn đề là gì?** (What) – Hãy mô tả cụ thể lỗi hoặc yêu cầu.")
+        parts.append("- **Xảy ra ở đâu?** (Where) – Hệ thống, thiết bị, ứng dụng nào?")
+        parts.append("- **Xảy ra khi nào?** (When) – Thời gian bắt đầu, tần suất.")
+        parts.append("- **Tại sao có thể xảy ra?** (Why) – Nguyên nhân phổ biến (nếu biết).")
+        parts.append("- **Làm thế nào để xử lý?** (How) – Các bước kiểm tra hoặc khắc phục.")
+        parts.append("")
+        parts.append("👉 *Hướng dẫn chung:*")
+        if confidence < 0.5:
+            parts.append("Tôi chưa đủ thông tin để đưa ra câu trả lời chính xác. Vui lòng cung cấp thêm chi tiết theo cấu trúc trên.")
+        else:
+            parts.append("Tôi đã tìm thấy một số thông tin liên quan nhưng chưa đủ để kết luận. Hãy bổ sung các thông tin còn thiếu theo mẫu trên.")
+        parts.append("")
+        parts.append("Nếu cần hướng dẫn từng bước cụ thể, vui lòng mô tả rõ hơn về tình huống của bạn.")
+        return "\n".join(parts)
+
     # ← FIX v2: classify whether this message needs a bot response
     def _needs_reply(self, text: str) -> tuple[bool, str]:
         """Returns (needs_reply, reason)."""
@@ -610,26 +640,40 @@ class ChatService:
         kb_hit = result.metadata.get("kb_hit", False) if result.metadata else False
         kb_sources = result.metadata.get("kb_sources", []) if result.metadata else []
 
-        # ← FIX v3: Use entity-based clarification instead of generic fallback
+        # ← FIX v3: Use entity-based clarification or 4W1H fallback
         if confidence < 0.5:
-            # Low confidence → ask clarification with extracted entities
+            # Low confidence
             delivery_status = "skipped"
-            response_text = self._build_clarification_message(
-                entities=entities,
-                conversation_id=conversation_id,
-                kb_hit=kb_hit,
-                kb_sources=kb_sources,
-            )
+            if kb_hit:
+                response_text = self._build_clarification_message(
+                    entities=entities,
+                    conversation_id=conversation_id,
+                    kb_hit=kb_hit,
+                    kb_sources=kb_sources,
+                )
+            else:
+                response_text = self._build_fallback_answer(
+                    query=request.message,
+                    conversation_id=conversation_id,
+                    confidence=confidence,
+                )
             response_status = "skipped"
         elif 0.5 <= confidence < 0.9:
-            # Medium confidence → ask clarifying question with context
+            # Medium confidence
             delivery_status = "clarification"
-            response_text = self._build_clarification_message(
-                entities=entities,
-                conversation_id=conversation_id,
-                kb_hit=kb_hit,
-                kb_sources=kb_sources,
-            )
+            if kb_hit:
+                response_text = self._build_clarification_message(
+                    entities=entities,
+                    conversation_id=conversation_id,
+                    kb_hit=kb_hit,
+                    kb_sources=kb_sources,
+                )
+            else:
+                response_text = self._build_fallback_answer(
+                    query=request.message,
+                    conversation_id=conversation_id,
+                    confidence=confidence,
+                )
             response_status = "needs_clarification"
 
         # ← FIX v2: update conversation summary every turn

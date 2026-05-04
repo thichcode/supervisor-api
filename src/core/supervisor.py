@@ -950,7 +950,10 @@ class Supervisor:
 
         if self._llm:
             system_prompt = (
-                "Bạn là một trợ lý AI hữu ích. Trả lời ngắn gọn, chính xác bằng tiếng Việt."
+                "Bạn là trợ lý IT. Hãy trả lời câu hỏi của người dùng theo cấu trúc 4W1H "
+                "(What, Where, When, Why, How) hoặc đưa ra hướng dẫn từng bước (step‑by‑step). "
+                "Nếu không biết câu trả lời chính xác, hãy đưa ra các bước chẩn đoán chung hoặc "
+                "hướng dẫn cách thu thập thêm thông tin. Trả lời bằng tiếng Việt."
             )
             if persona_block:
                 system_prompt = f"{system_prompt}\n{persona_block}"
