@@ -10,6 +10,7 @@ from typing import Optional, Dict, Any, Tuple
 import secrets
 import structlog
 import httpx
+import requests
 
 from src.config import get_settings
 from src.core.conversation_continuity import ConversationContinuityEvaluator
@@ -424,7 +425,8 @@ class TelegramAdapter:
         
         # Proxy support - read from environment
         self._proxy_url = self._get_proxy_from_env()
-        self._http_client: Optional[httpx.AsyncClient] = None
+        # HTTP client only for Supervisor calls (bypasses proxy for localhost via NO_PROXY)
+        self._supervisor_client: Optional[httpx.AsyncClient] = None
         
         if self._proxy_url:
             logger.info("Telegram adapter using proxy", proxy=self._proxy_url)
@@ -449,44 +451,58 @@ class TelegramAdapter:
         
         return proxy
     
-    async def _get_http_client(self) -> httpx.AsyncClient:
-        """Get or create shared HTTP client with proxy support (trust_env respects NO_PROXY)."""
-        if self._http_client is None or self._http_client.is_closed:
-            # trust_env=True reads HTTP_PROXY/HTTPS_PROXY and respects NO_PROXY
-            self._http_client = httpx.AsyncClient(
+    async def _get_supervisor_client(self) -> httpx.AsyncClient:
+        """Get or create HTTP client exclusively for Supervisor calls (bypasses proxy via NO_PROXY)."""
+        if self._supervisor_client is None or self._supervisor_client.is_closed:
+            self._supervisor_client = httpx.AsyncClient(
                 timeout=30.0,
                 trust_env=True,
             )
-            # Scheme fix already applied in _get_proxy_from_env – httpx will use it automatically
             if self._proxy_url:
-                logger.info("Proxy detected from environment (trust_env=True, NO_PROXY respected)", proxy=self._proxy_url)
-        return self._http_client
+                logger.info("Supervisor HTTP client uses trust_env (NO_PROXY respected)", proxy=self._proxy_url)
+        return self._supervisor_client
     
-    async def _close_http_client(self):
-        """Close the shared HTTP client."""
-        if self._http_client and not self._http_client.is_closed:
-            await self._http_client.aclose()
-            self._http_client = None
+    async def _close_supervisor_client(self):
+        """Close the shared HTTP client used for Supervisor calls."""
+        if self._supervisor_client and not self._supervisor_client.is_closed:
+            await self._supervisor_client.aclose()
+            self._supervisor_client = None
+
+    async def _telegram_request(self, method: str, http_method: str = "POST", params: dict = None, json_data: dict = None) -> dict:
+        """
+        Call Telegram Bot API using `requests` (supports proxy reliably).
+        Runs in a thread to avoid blocking the event loop.
+        """
+        url = f"{self.api_base}/{method}"
+        proxies = {}
+        if self._proxy_url:
+            # requests expects a dict: {'https': proxy_url, 'http': proxy_url}
+            proxies = {
+                "http": self._proxy_url,
+                "https": self._proxy_url,
+            }
+        def _sync_call():
+            resp = requests.request(
+                http_method,
+                url,
+                params=params,
+                json=json_data,
+                proxies=proxies,
+                timeout=30,
+            )
+            resp.raise_for_status()
+            return resp.json()
+        return await asyncio.to_thread(_sync_call)
 
     async def start(self):
-        """Start the Telegram bot"""
-        # Test connection
+        """Start the Telegram bot using requests-based API caller."""
         try:
-            async with asyncio.timeout(10):
-                client = await self._get_http_client()
-                resp = await client.get(f"{self.api_base}/getMe")
-                if resp.status_code != 200:
-                    logger.error(
-                        "Telegram auth failed",
-                        status=resp.status_code,
-                        body=resp.text[:500],
-                    )
-                    return
-
-                me = resp.json()
-                logger.info("Telegram bot started", username=me.get("result", {}).get("username"))
-                await self._register_bot_commands()
-
+            result = await self._telegram_request("getMe", http_method="GET")
+            if not result.get("ok"):
+                raise Exception(f"Telegram auth failed: {result}")
+            me = result["result"]
+            logger.info("Telegram bot started", username=me.get("username"))
+            await self._register_bot_commands()
         except Exception as e:
             logger.error(
                 "Failed to start Telegram",
@@ -506,7 +522,7 @@ class TelegramAdapter:
         self.is_running = False
         
         # Close HTTP client
-        await self._close_http_client()
+        await self._close_supervisor_client()
         
         if self._task:
             self._task.cancel()
@@ -521,7 +537,7 @@ class TelegramAdapter:
         self._conversation_buffers.clear()
     
     async def _register_bot_commands(self):
-        """Register the Telegram command menu so /health appears in the client UI."""
+        """Register the Telegram command menu using requests-based API caller."""
         commands = [
             {"command": "start", "description": "Start the bot"},
             {"command": "help", "description": "Show available commands"},
@@ -534,18 +550,9 @@ class TelegramAdapter:
         ]
 
         try:
-            client = await self._get_http_client()
-            resp = await client.post(
-                f"{self.api_base}/setMyCommands",
-                json={"commands": commands},
-                timeout=10.0,
-            )
-            if resp.status_code != 200:
-                logger.warning("Failed to register Telegram commands", status=resp.status_code)
-                return False
-            data = resp.json()
-            if not data.get("ok", False):
-                logger.warning("Telegram commands registration returned not ok", response=data)
+            result = await self._telegram_request("setMyCommands", json_data={"commands": commands})
+            if not result.get("ok"):
+                logger.warning("Telegram commands registration returned not ok", response=result)
                 return False
             logger.info("Telegram commands registered", commands=[c["command"] for c in commands])
             return True
@@ -554,21 +561,19 @@ class TelegramAdapter:
             return False
 
     async def _poll_loop(self):
-        """Poll for updates"""
+        """Poll for updates using requests-based API caller."""
         while self.is_running:
             try:
-                client = await self._get_http_client()
-                resp = await client.get(
-                    f"{self.api_base}/getUpdates",
+                result = await self._telegram_request(
+                    "getUpdates",
+                    http_method="GET",
                     params={
                         "offset": self._offset,
                         "timeout": 30,
                     }
                 )
-
-                if resp.status_code == 200:
-                    updates = resp.json().get("result", [])
-
+                if result.get("ok"):
+                    updates = result.get("result", [])
                     for update in updates:
                         self._offset = update.get("update_id", 0) + 1
                         await self._handle_update(update)
@@ -932,7 +937,7 @@ class TelegramAdapter:
         supervisor_ready = False
         
         try:
-            client = await self._get_http_client()
+            client = await self._get_supervisor_client()
             resp = await client.get(f"{self.supervisor_url}/health", timeout=10.0)
             supervisor_ok = resp.status_code == 200
             if supervisor_ok:
@@ -966,7 +971,7 @@ class TelegramAdapter:
         try:
             await self._send_message(chat_id, f"🔍 Đang tìm: {keywords}...")
 
-            client = await self._get_http_client()
+            client = await self._get_supervisor_client()
             response = await client.post(
                 f"{self.supervisor_url}/approvals/{approval_id}/retry-with-kb",
                 json={"keywords": keywords, "requested_by": user_id},
@@ -1056,7 +1061,7 @@ class TelegramAdapter:
         
         # Store feedback in database
         try:
-            client = await self._get_http_client()
+            client = await self._get_supervisor_client()
             await client.post(
                 f"{self.supervisor_url}/feedback",
                 json={
@@ -1257,7 +1262,7 @@ class TelegramAdapter:
         offset = max(0, (page - 1) * page_size)
 
         try:
-            client = await self._get_http_client()
+            client = await self._get_supervisor_client()
             response = await client.get(
                 f"{self.supervisor_url}/knowledge/candidates",
                 params={
@@ -1422,7 +1427,7 @@ class TelegramAdapter:
         }
 
         try:
-            client = await self._get_http_client()
+            client = await self._get_supervisor_client()
             response = await client.post(
                 f"{self.supervisor_url}/knowledge/search",
                 json=payload,
@@ -1447,7 +1452,7 @@ class TelegramAdapter:
             if current_page != page and total > 0:
                 offset = max(0, (current_page - 1) * page_size)
                 payload["offset"] = offset
-                client = await self._get_http_client()
+                client = await self._get_supervisor_client()
                 response = await client.post(
                     f"{self.supervisor_url}/knowledge/search",
                     json=payload,
@@ -1481,7 +1486,7 @@ class TelegramAdapter:
                 days = 1
 
         try:
-            client = await self._get_http_client()
+            client = await self._get_supervisor_client()
             response = await client.get(
                 f"{self.supervisor_url}/metrics/dashboard/boss-report",
                 params={"days": days},
@@ -1757,7 +1762,7 @@ class TelegramAdapter:
         await self._send_verbose_log(f"📥 Nhận tin nhắn: {message[:100]}...")
         
         try:
-            client = await self._get_http_client()
+            client = await self._get_supervisor_client()
             response = await client.post(
                 f"{self.supervisor_url}/chat",
                 json={
@@ -1802,7 +1807,7 @@ class TelegramAdapter:
             "comment": f"Telegram inline {action} by {actor}",
         }
         headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
-        client = await self._get_http_client()
+        client = await self._get_supervisor_client()
         response = await client.post(
             f"{self.supervisor_url}/approvals/{approval_id}/action",
             json=payload,
@@ -1815,20 +1820,18 @@ class TelegramAdapter:
         return response.json()
 
     async def _answer_callback_query(self, callback_query_id: str, text: str, show_alert: bool = False):
-
-        client = await self._get_http_client()
-        await client.post(
-            f"{self.api_base}/answerCallbackQuery",
-            json={
+        """Answer a callback query using requests-based API caller."""
+        await self._telegram_request(
+            "answerCallbackQuery",
+            json_data={
                 "callback_query_id": callback_query_id,
                 "text": text,
                 "show_alert": show_alert,
-            },
+            }
         )
 
     async def _edit_message_text(self, chat_id: str, message_id: Any, text: str, reply_markup: Optional[Dict[str, Any]] = None, parse_mode: Optional[str] = "Markdown"):
-
-        client = await self._get_http_client()
+        """Edit a message using requests-based API caller."""
         payload = {
             "chat_id": chat_id,
             "message_id": message_id,
@@ -1838,14 +1841,10 @@ class TelegramAdapter:
             payload["parse_mode"] = parse_mode
         if reply_markup is not None:
             payload["reply_markup"] = reply_markup
-        await client.post(
-            f"{self.api_base}/editMessageText",
-            json=payload,
-        )
+        await self._telegram_request("editMessageText", json_data=payload)
 
     async def _send_message(self, chat_id: str, text: str, reply_markup: Optional[Dict[str, Any]] = None, parse_mode: Optional[str] = "Markdown"):
-        """Send a message via Telegram"""
-        client = await self._get_http_client()
+        """Send a message via Telegram using requests-based API caller."""
         payload = {
             "chat_id": chat_id,
             "text": text,
@@ -1854,10 +1853,7 @@ class TelegramAdapter:
             payload["parse_mode"] = parse_mode
         if reply_markup is not None:
             payload["reply_markup"] = reply_markup
-        await client.post(
-            f"{self.api_base}/sendMessage",
-            json=payload,
-        )
+        await self._telegram_request("sendMessage", json_data=payload)
 
 
 __all__ = [
