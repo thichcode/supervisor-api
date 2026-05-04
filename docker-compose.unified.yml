@@ -142,6 +142,7 @@ services:
       - http_proxy=${http_proxy:-}
       - https_proxy=${https_proxy:-}
       - NO_PROXY=${NO_PROXY:-localhost,127.0.0.1}
+      - no_proxy=${NO_PROXY:-localhost,127.0.0.1}
     volumes:
       - ./src:/app/src:ro
       - ./config:/app/config:ro
