@@ -1063,7 +1063,7 @@ class TelegramAdapter:
         try:
             client = await self._get_supervisor_client()
             await client.post(
-                f"{self.supervisor_url}/feedback",
+                f"{self.supervisor_url}/webhook/feedback",
                 json={
                     "request_id": request_id,
                     "thread_id": thread_id,

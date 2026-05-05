@@ -5,7 +5,7 @@ from src.core.schemas import FeedbackCreateRequest, FeedbackResponse, UserStyleP
 from src.db.session import get_db
 from src.services.feedback_service import FeedbackService
 
-router = APIRouter(prefix="/feedback", tags=["feedback-learning"])
+router = APIRouter(prefix="/webhook/feedback", tags=["feedback-learning"])
 
 
 @router.post("", response_model=FeedbackResponse)

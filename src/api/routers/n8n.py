@@ -8,7 +8,7 @@ from fastapi import APIRouter, HTTPException
 from src.tools.n8n_connector import get_n8n_connector
 from src.tools.n8n_tool import get_n8n_tool
 
-router = APIRouter(prefix="/n8n", tags=["n8n"])
+router = APIRouter(prefix="/webhook/n8n", tags=["n8n"])
 
 
 @router.get("/actions")
