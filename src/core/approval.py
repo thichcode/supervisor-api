@@ -251,7 +251,13 @@ class ApprovalService:
                     response.raise_for_status()
                 logger.info("Approval notification sent to Telegram", approval_id=approval.id, recipients=chat_ids)
         except httpx.HTTPError as e:
-            logger.warning("Failed to send Telegram approval notification", approval_id=approval.id, error=str(e))
+            # Get more detailed error information
+            error_detail = str(e)
+            if hasattr(e, 'response') and e.response is not None:
+                error_detail = f"{error_detail} - Status: {e.response.status_code}, Body: {e.response.text[:200]}"
+            logger.warning("Failed to send Telegram approval notification", approval_id=approval.id, error=error_detail)
+        except Exception as e:
+            logger.warning("Failed to send Telegram approval notification", approval_id=approval.id, error=str(e), error_type=type(e).__name__)
     
     async def _save_approval(self, approval: ApprovalRequest):
         key = f"approval:{approval.id}"

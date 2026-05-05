@@ -178,8 +178,10 @@ class MemoryRepository:
         summary_text: str,
         unresolved_points: list[str],
     ) -> ConversationSummary:
+        logger.info("Upserting conversation summary", thread_id=conversation_id, summary_length=len(summary_text))
         existing = await self.get_conversation_summary(conversation_id)
         if existing:
+            logger.info("Updating existing summary", thread_id=conversation_id)
             existing.summary_text = summary_text
             existing.unresolved_points = unresolved_points
             existing.updated_at = utc_now()
@@ -187,6 +189,7 @@ class MemoryRepository:
             await self.session.refresh(existing)
             return existing
         else:
+            logger.info("Creating new summary", thread_id=conversation_id)
             summary = ConversationSummary(
                 conversation_id=conversation_id,
                 summary_text=summary_text,
@@ -199,11 +202,15 @@ class MemoryRepository:
 
     async def build_conversation_summary(self, conversation_id: str) -> str:
         """Build a rolling summary from recent messages + current summary."""
+        logger.info("Building conversation summary", thread_id=conversation_id)
         messages = await self.get_conversation_messages(conversation_id, limit=10)
         existing = await self.get_conversation_summary(conversation_id)
 
         if not messages:
+            logger.info("No messages found for summary", thread_id=conversation_id)
             return existing.summary_text if existing else ""
+        
+        logger.info("Building summary from messages", thread_id=conversation_id, message_count=len(messages))
 
         # Build summary from last 10 messages
         user_msgs = [m.content for m in messages if m.direction == "inbound"]
@@ -221,6 +228,7 @@ class MemoryRepository:
         else:
             combined = f"Session started. User: {user_msgs[-1] if user_msgs else 'N/A'}"
 
+        logger.info("Summary built", thread_id=conversation_id, summary_length=len(combined))
         return combined[:2000]  # cap to avoid DB overflow
 
     async def get_conversation_state(self, thread_id: str) -> Optional[ConversationState]:

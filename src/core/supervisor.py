@@ -757,6 +757,9 @@ class Supervisor:
             return self._original_validate(draft, payload, context)
 
         try:
+            # Get settings for LLM model name
+            settings = get_settings()
+            
             # Extract confidence factors
             factors = ConfidenceFactors(
                 context_relevance=min(1.0, len(context.get("user_info", {})) / 3),
@@ -1120,8 +1123,16 @@ class Supervisor:
         
         # Try to get ticket details from n8n/ITC API
         ticket_content = None
-        ticket_subject = None
-        ticket_description = None
+        ticket_info = {
+            "subject": None,
+            "description": None,
+            "status": None,
+            "priority": None,
+            "requester": None,
+            "assigned_to": None,
+            "created_date": None,
+            "updated_date": None,
+        }
         
         # Try n8n first (via connector)
         if hasattr(self, 'n8n_connector') and self.n8n_connector:
@@ -1139,22 +1150,22 @@ class Supervisor:
                     if "ticket_content" in data:
                         ticket_content = data["ticket_content"]
                     # Or return structured data
-                    if "subject" in data:
-                        ticket_subject = data["subject"]
-                    if "description" in data:
-                        ticket_description = data["description"]
+                    for key in ticket_info.keys():
+                        if key in data:
+                            ticket_info[key] = data[key]
                     logger.info("Fetched ticket from n8n", ticket_id=ticket_id, has_content=bool(ticket_content))
                 else:
                     logger.warning("n8n query failed", ticket_id=ticket_id, error=result.get("error"))
             except Exception as e:
                 logger.warning("Failed to fetch ticket from n8n", ticket_id=ticket_id, error=str(e))
         
-        # Try direct ITC API if n8n not available or failed to get subject
-        if not ticket_subject:
+        # Try direct ITC API if n8n not available or failed to get basic info
+        if not ticket_info.get("subject"):
             if not ticket_content:
                 try:
                     # Try direct IT service API call
                     import httpx
+                    from src.config import get_settings
                     settings = get_settings()
                     itc_api_url = getattr(settings, 'itc_api_url', None)
                     if itc_api_url:
@@ -1168,16 +1179,24 @@ class Supervisor:
                 except Exception as e:
                     logger.warning("Failed to fetch ticket directly", ticket_id=ticket_id, error=str(e))
             
-            # Extract subject if we got content (and haven't extracted yet)
-            if ticket_content and not ticket_subject:
-                subject_match = re.search(r'<subject>([^<]+)</subject>', ticket_content, re.IGNORECASE)
-                if subject_match:
-                    ticket_subject = subject_match.group(1).strip()
-                
-                # Try to get description
-                desc_match = re.search(r'<description>([^<]+)</description>', ticket_content, re.IGNORECASE)
-                if desc_match:
-                    ticket_description = desc_match.group(1).strip()
+            # Extract info if we got content
+            if ticket_content:
+                # Extract various fields from XML content
+                field_patterns = {
+                    "subject": r'<subject>([^<]+)</subject>',
+                    "description": r'<description>([^<]+)</description>',
+                    "status": r'<status>([^<]+)</status>',
+                    "priority": r'<priority>([^<]+)</priority>',
+                    "requester": r'<requester>([^<]+)</requester>',
+                    "assigned_to": r'<assignedTo>([^<]+)</assignedTo>',
+                    "created_date": r'<createdDate>([^<]+)</createdDate>',
+                    "updated_date": r'<lastModifiedDate>([^<]+)</lastModifiedDate>',
+                }
+                for field, pattern in field_patterns.items():
+                    if not ticket_info.get(field):
+                        match = re.search(pattern, ticket_content, re.IGNORECASE)
+                        if match:
+                            ticket_info[field] = match.group(1).strip()
         
         # Search KB for related solutions
         kb_suggestions = []
@@ -1198,11 +1217,22 @@ class Supervisor:
         except Exception as e:
             logger.warning("KB search failed", error=str(e))
         
-        # Format response
+        # Format response with full ticket info
         response_parts = [f"🎫 **Ticket #{ticket_id}**"]
         
-        if ticket_subject:
-            response_parts.append(f"**Subject:** {ticket_subject}")
+        # Add all available ticket info
+        if ticket_info.get("subject"):
+            response_parts.append(f"**Subject:** {ticket_info['subject']}")
+        if ticket_info.get("status"):
+            response_parts.append(f"**Status:** {ticket_info['status']}")
+        if ticket_info.get("priority"):
+            response_parts.append(f"**Priority:** {ticket_info['priority']}")
+        if ticket_info.get("requester"):
+            response_parts.append(f"**Requester:** {ticket_info['requester']}")
+        if ticket_info.get("assigned_to"):
+            response_parts.append(f"**Assigned to:** {ticket_info['assigned_to']}")
+        if ticket_info.get("created_date"):
+            response_parts.append(f"**Created:** {ticket_info['created_date']}")
         
         if kb_suggestions:
             response_parts.append("\n📚 **Gợi ý từ Knowledge Base:**")
@@ -1212,9 +1242,24 @@ class Supervisor:
             response_parts.append("\n🔍 Tôi đang phân tích và tìm giải pháp...")
             # Use AI to reason if LLM available
             if self._llm:
-                system_prompt = f"""Bạn là chuyên gia IT support. Dựa vào thông tin ticket #{ticket_id}:
-Subject: {ticket_subject or 'Unknown'}
-Hãy đề xuất giải pháp hoặc các bước tiếp theo."""
+                # Build comprehensive ticket info text
+                ticket_details = f"Ticket #{ticket_id}"
+                if ticket_info.get("subject"):
+                    ticket_details += f"\n- Subject: {ticket_info['subject']}"
+                if ticket_info.get("status"):
+                    ticket_details += f"\n- Status: {ticket_info['status']}"
+                if ticket_info.get("priority"):
+                    ticket_details += f"\n- Priority: {ticket_info['priority']}"
+                if ticket_info.get("description"):
+                    ticket_details += f"\n- Description: {ticket_info['description'][:500]}"
+                else:
+                    ticket_details += "\n- Description: (không có thông tin chi tiết)"
+                
+                system_prompt = f"""Bạn là chuyên gia IT support. Dựa vào thông tin ticket sau:
+
+{ticket_details}
+
+Hãy đề xuất giải pháp hoặc các bước tiếp theo cụ thể."""
                 try:
                     llm_response = await self._llm.complete(system_prompt, "")
                     response_parts.append(f"\n💡 **Gợi ý:**\n{llm_response.content}")
@@ -1222,7 +1267,7 @@ Hãy đề xuất giải pháp hoặc các bước tiếp theo."""
                     logger.warning("LLM reasoning failed", error=str(e))
         
         answer = "\n".join(response_parts)
-        return {"answer": answer, "confidence": 0.85, "ticket_id": ticket_id}
+        return {"answer": answer, "confidence": 0.85, "ticket_id": ticket_id, "ticket_info": ticket_info}
 
     async def _handle_system_query(
         self,
