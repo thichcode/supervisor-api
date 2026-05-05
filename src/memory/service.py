@@ -507,6 +507,7 @@ class MemoryService:
         case_id = payload.case.case_id if payload.case else None
         ticket_id = payload.case.ticket_id if payload.case else None
         ticket_system = payload.case.ticket_system if payload.case else None
+        message_id = payload.message_id if payload.message_id else None
 
         await self.repo.save_message(
             request_id=payload.request_id,
@@ -516,6 +517,7 @@ class MemoryService:
             direction="inbound",
             ticket_id=ticket_id,
             ticket_system=ticket_system,
+            message_id=message_id,
         )
 
         # ← FIX: save assistant reply so subsequent turns can read it
@@ -528,6 +530,7 @@ class MemoryService:
                 direction="outbound",
                 ticket_id=ticket_id,
                 ticket_system=ticket_system,
+                message_id=None,  # assistant reply doesn't have platform message_id (or use request_id?)
             )
 
         await self.repo.upsert_conversation_thread(

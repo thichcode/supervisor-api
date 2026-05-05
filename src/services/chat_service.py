@@ -375,6 +375,7 @@ class ChatService:
                 ticket_system=request.ticket_system,
             ) if (request.case_id or request.ticket_id) else None,
             message=MessageInfo(text=request.message),
+            message_id=request.message_id,  # Truyền platform message_id vào InputPayload
         )
 
         is_group_chat = bool(chat_context.get("group_chat", False))
@@ -797,6 +798,7 @@ class ChatService:
                 ticket_system=request.ticket_system,
             ) if (request.case_id or request.ticket_id) else None,
             message=MessageInfo(text=request.message),
+            message_id=getattr(request, 'message_id', None),  # Truyền platform message_id
         )
 
         async with api_module.async_session() as session:

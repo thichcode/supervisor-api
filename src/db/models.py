@@ -10,6 +10,7 @@ class Message(Base):
     request_id = Column(String(100), nullable=False, index=True)
     user_id = Column(String(100), nullable=False, index=True)
     thread_id = Column(String(100), nullable=False, index=True)
+    message_id = Column(String(100), nullable=True, index=True)
     ticket_id = Column(String(255), nullable=True, index=True)
     ticket_system = Column(String(50), nullable=True, index=True)
     message_text = Column(Text, nullable=False)

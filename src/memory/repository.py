@@ -35,11 +35,13 @@ class MemoryRepository:
         direction: str,
         ticket_id: Optional[str] = None,
         ticket_system: Optional[str] = None,
+        message_id: Optional[str] = None,
     ) -> Message:
         msg = Message(
             request_id=request_id,
             user_id=user_id,
             thread_id=thread_id,
+            message_id=message_id,
             ticket_id=ticket_id,
             ticket_system=ticket_system,
             message_text=message_text,

@@ -108,6 +108,7 @@ class InputPayload(BaseModel):
     conversation_state: Optional[ConversationStateInfo] = None
     case: Optional[CaseInfo] = None
     message: MessageInfo
+    message_id: Optional[str] = None  # Platform message ID (Telegram message_id, etc.)
 
 
 class OutputPayload(BaseModel):
