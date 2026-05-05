@@ -1,3 +1,5 @@
+import structlog
+
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete
 from typing import Optional
@@ -14,6 +16,8 @@ from src.db.models import (
     CaseMemory,
     MemoryItem,
 )
+
+logger = structlog.get_logger(__name__)
 
 
 def utc_now() -> datetime:
