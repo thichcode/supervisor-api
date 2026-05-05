@@ -140,6 +140,19 @@ SYSTEM_ACTIONS: Dict[str, SystemAction] = {
         ],
         description="Cập nhật trạng thái ticket"
     ),
+    # ITC Ticket Fetch (via n8n)
+    "itc_ticket_fetch": SystemAction(
+        name="itc_ticket_fetch",
+        display_name="Lấy thông tin Ticket ITC",
+        system="itc",
+        action_type=ActionType.QUERY,  # Read-only, không cần approval
+        risk_level=RiskLevel.LOW,
+        webhook_path="/webhook/itc/ticket-fetch",
+        parameters=[
+            {"name": "ticket_id", "type": "string", "required": True},
+        ],
+        description="Lấy chi tiết ticket từ hệ thống ITC qua n8n"
+    ),
     
     # Server Management Actions
     "server_restart": SystemAction(

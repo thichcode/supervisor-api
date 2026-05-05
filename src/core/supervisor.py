@@ -1123,44 +1123,61 @@ class Supervisor:
         ticket_subject = None
         ticket_description = None
         
-        try:
-            if hasattr(self, 'n8n_connector') and self.n8n_connector:
-                # Call n8n workflow to fetch ticket
-                ticket_content = await self.n8n_connector.trigger_workflow(
-                    "itc_ticket_fetch",
-                    {"ticket_id": ticket_id}
-                )
-        except Exception as e:
-            logger.warning("Failed to fetch ticket from n8n", ticket_id=ticket_id, error=str(e))
-        
-        # Try direct ITC API if n8n not available
-        if not ticket_content:
+        # Try n8n first (via connector)
+        if hasattr(self, 'n8n_connector') and self.n8n_connector:
             try:
-                # Try direct IT service API call
-                import httpx
-                settings = get_settings()
-                itc_api_url = getattr(settings, 'itc_api_url', None)
-                if itc_api_url:
-                    async with httpx.AsyncClient(timeout=30) as client:
-                        response = await client.get(
-                            f"{itc_api_url}/WorkOrder.do",
-                            params={"woMode": "viewWO", "woID": ticket_id}
-                        )
-                        if response.status_code == 200:
-                            ticket_content = response.text
+                # Use execute_query to fetch ticket from n8n
+                result = await self.n8n_connector.execute_query(
+                    "itc_ticket_fetch",
+                    {"ticket_id": ticket_id},
+                    user_id=payload.user_id or "system"
+                )
+                
+                if result.get("success"):
+                    data = result.get("data", {})
+                    # n8n may return XML content directly or structured JSON
+                    if "ticket_content" in data:
+                        ticket_content = data["ticket_content"]
+                    # Or return structured data
+                    if "subject" in data:
+                        ticket_subject = data["subject"]
+                    if "description" in data:
+                        ticket_description = data["description"]
+                    logger.info("Fetched ticket from n8n", ticket_id=ticket_id, has_content=bool(ticket_content))
+                else:
+                    logger.warning("n8n query failed", ticket_id=ticket_id, error=result.get("error"))
             except Exception as e:
-                logger.warning("Failed to fetch ticket directly", ticket_id=ticket_id, error=str(e))
+                logger.warning("Failed to fetch ticket from n8n", ticket_id=ticket_id, error=str(e))
         
-        # Extract subject if we got content
-        if ticket_content:
-            subject_match = re.search(r'<subject>([^<]+)</subject>', ticket_content, re.IGNORECASE)
-            if subject_match:
-                ticket_subject = subject_match.group(1).strip()
+        # Try direct ITC API if n8n not available or failed to get subject
+        if not ticket_subject:
+            if not ticket_content:
+                try:
+                    # Try direct IT service API call
+                    import httpx
+                    settings = get_settings()
+                    itc_api_url = getattr(settings, 'itc_api_url', None)
+                    if itc_api_url:
+                        async with httpx.AsyncClient(timeout=30) as client:
+                            response = await client.get(
+                                f"{itc_api_url}/WorkOrder.do",
+                                params={"woMode": "viewWO", "woID": ticket_id}
+                            )
+                            if response.status_code == 200:
+                                ticket_content = response.text
+                except Exception as e:
+                    logger.warning("Failed to fetch ticket directly", ticket_id=ticket_id, error=str(e))
             
-            # Try to get description
-            desc_match = re.search(r'<description>([^<]+)</description>', ticket_content, re.IGNORECASE)
-            if desc_match:
-                ticket_description = desc_match.group(1).strip()
+            # Extract subject if we got content (and haven't extracted yet)
+            if ticket_content and not ticket_subject:
+                subject_match = re.search(r'<subject>([^<]+)</subject>', ticket_content, re.IGNORECASE)
+                if subject_match:
+                    ticket_subject = subject_match.group(1).strip()
+                
+                # Try to get description
+                desc_match = re.search(r'<description>([^<]+)</description>', ticket_content, re.IGNORECASE)
+                if desc_match:
+                    ticket_description = desc_match.group(1).strip()
         
         # Search KB for related solutions
         kb_suggestions = []
