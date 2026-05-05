@@ -171,6 +171,7 @@ class ChatRequest(BaseModel):
     display_name: str
     message: str
     thread_id: Optional[str] = None
+    message_id: Optional[str] = None  # Platform message ID (e.g., Telegram message_id)
     case_id: Optional[str] = None
     ticket_id: Optional[str] = None
     ticket_system: Optional[str] = None
@@ -182,6 +183,8 @@ class ChatResponse(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     request_id: str
+    thread_id: Optional[str] = Field(default=None, description="Alias for conversation_id / thread_id")
+    message_id: Optional[str] = Field(default=None, description="Platform message ID (e.g., Telegram message_id)")
     status: str
     customer_reply: str = Field(description="Reply to send to the customer")
     message: str = Field(default="", description="Backward-compatible alias for customer_reply")

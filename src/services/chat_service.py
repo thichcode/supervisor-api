@@ -321,7 +321,9 @@ class ChatService:
         needs_response, skip_reason = self._needs_reply(request.message)
         if not needs_response:
             return ChatResponse(
-                request_id=str(uuid.uuid4()),
+                request_id=request.message_id if request.message_id else str(uuid.uuid4()),
+                thread_id=request.thread_id,
+                message_id=request.message_id,
                 status="skipped",
                 customer_reply="",  # no outbound reply
                 message_type=request.message_type,
@@ -331,9 +333,22 @@ class ChatService:
                 conversation_id=request.thread_id,
             )
 
-        request_id = str(uuid.uuid4())
+        # Determine request_id and message_id
+        platform_message_id = request.message_id if request.message_id else None
+        if platform_message_id:
+            request_id = str(platform_message_id)  # use platform message_id as request_id for clarity
+        else:
+            request_id = str(uuid.uuid4())
+        
         conversation_id = request.thread_id or f"chat-{request.user_id}-{int(time.time())}"
         thread_id = conversation_id  # canonical name
+        
+        # Determine message_id for conversation
+        if platform_message_id:
+            conv_message_id = platform_message_id
+        else:
+            conv_message_id = f"msg-{request_id}"
+        
         chat_context = self._normalize_chat_context(request)
         payload = InputPayload(
             request_id=request_id,
@@ -348,7 +363,7 @@ class ChatService:
             ),
             conversation=ConversationInfo(
                 thread_id=thread_id,
-                message_id=f"msg-{request_id}",
+                message_id=conv_message_id,
                 chat_type=chat_context["chat_type"],
                 chat_scope=chat_context["chat_scope"],
                 group_chat=chat_context["group_chat"],
@@ -403,6 +418,8 @@ class ChatService:
                     await memory_service.commit(payload, memory_snapshot=memory)
                     return ChatResponse(
                         request_id=request_id,
+                        thread_id=thread_id,
+                        message_id=conv_message_id,
                         status="skipped",
                         customer_reply="",
                         message_type=request.message_type,
@@ -414,6 +431,8 @@ class ChatService:
                     await memory_service.commit(payload, memory_snapshot=memory)
                     return ChatResponse(
                         request_id=request_id,
+                        thread_id=thread_id,
+                        message_id=conv_message_id,
                         status="needs_clarification",
                         customer_reply="Chưa rõ message này đang nhắm tới Thuong hay workflow bot. Bạn xác nhận giúp mình?",
                         message_type=request.message_type,
@@ -442,6 +461,8 @@ class ChatService:
                     await memory_service.commit(payload, memory_snapshot=memory)
                     return ChatResponse(
                         request_id=request_id,
+                        thread_id=thread_id,
+                        message_id=conv_message_id,
                         status="skipped",
                         customer_reply="",
                         message_type=request.message_type,
@@ -453,6 +474,8 @@ class ChatService:
                     await memory_service.commit(payload, memory_snapshot=memory)
                     return ChatResponse(
                         request_id=request_id,
+                        thread_id=thread_id,
+                        message_id=conv_message_id,
                         status="needs_clarification",
                         customer_reply="Chưa rõ message này đang nhắm tới Thuong hay workflow bot. Bạn xác nhận giúp mình?",
                         message_type=request.message_type,
@@ -468,6 +491,8 @@ class ChatService:
                 await memory_service.commit(payload, memory_snapshot=memory)
                 return ChatResponse(
                     request_id=request_id,
+                    thread_id=thread_id,
+                    message_id=conv_message_id,
                     status="skipped",
                     customer_reply="",
                     message_type=request.message_type,
@@ -588,6 +613,8 @@ class ChatService:
 
             return ChatResponse(
                 request_id=request_id,
+                thread_id=thread_id,
+                message_id=conv_message_id,
                 status="pending_approval",
                 customer_reply=f"⚠️ Phản hồi AI (confidence: {result.confidence:.0%}) cần được duyệt trước khi gửi cho user.",
                 message_type=request.message_type,
@@ -703,6 +730,8 @@ class ChatService:
 
         return ChatResponse(
             request_id=request_id,
+            thread_id=thread_id,
+            message_id=conv_message_id,
             status=response_status,
             customer_reply=response_text,
             internal_note=internal_note,
@@ -717,9 +746,19 @@ class ChatService:
     async def handle_harness_chat(self, request: ChatRequest, auto_send_callback=None, bridge_getter=None) -> ChatResponse:
         import src.api as api_module
 
-        request_id = str(uuid.uuid4())
+        # Determine request_id and message_id
+        platform_message_id = request.message_id if request.message_id else None
+        if platform_message_id:
+            request_id = str(platform_message_id)
+        else:
+            request_id = str(uuid.uuid4())
         conversation_id = request.thread_id or f"chat-harness-{request.user_id}-{int(time.time())}"
         thread_id = conversation_id  # canonical name
+        # For message_id in conversation
+        if platform_message_id:
+            conv_message_id = platform_message_id
+        else:
+            conv_message_id = f"msg-{request_id}"
         chat_context = self._normalize_chat_context(
             ChatRequest(
                 user_id=request.user_id,
@@ -746,7 +785,7 @@ class ChatService:
             ),
             conversation=ConversationInfo(
                 thread_id=thread_id,
-                message_id=f"msg-{request_id}",
+                message_id=conv_message_id,
                 chat_type=chat_context["chat_type"],
                 chat_scope=chat_context["chat_scope"],
                 group_chat=chat_context["group_chat"],
@@ -860,6 +899,8 @@ class ChatService:
                 await session.commit()
             return ChatResponse(
                 request_id=request_id,
+                thread_id=thread_id,
+                message_id=conv_message_id,
                 status="pending_approval",
                 customer_reply=f"⚠️ Phản hồi AI (confidence: {result.confidence:.0%}) cần được duyệt trước khi gửi cho user.\n\nHarness: {harness_metrics.get('execution_id', 'N/A') if harness_metrics else 'N/A'}",
                 message_type=request.message_type,
@@ -883,6 +924,8 @@ class ChatService:
 
         return ChatResponse(
             request_id=request_id,
+            thread_id=thread_id,
+            message_id=conv_message_id,
             status=result.status,
             customer_reply=result.answer,
             internal_note=internal_note,

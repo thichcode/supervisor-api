@@ -1730,9 +1730,13 @@ class TelegramAdapter:
                 "message_mode": buffer.get("message_mode", "statement"),
             }
         )
+        # Extract message_id from first message if available
+        message_id = None
+        if messages:
+            message_id = messages[0].get("message_id")
 
         try:
-            reply, request_id = await self._call_supervisor(user_id, display_name, merged_text, thread_id, metadata)
+            reply, request_id = await self._call_supervisor(user_id, display_name, merged_text, thread_id, metadata, message_id=message_id)
             if reply:
                 if request_id:
                     rating_keyboard = build_rating_inline_keyboard(request_id, thread_id)
@@ -1752,6 +1756,7 @@ class TelegramAdapter:
         message: str,
         thread_id: str,
         metadata: Dict[str, Any],
+        message_id: Optional[str] = None,
     ) -> Tuple[str, Optional[str]]:
         """Call Supervisor API.
         
@@ -1761,17 +1766,21 @@ class TelegramAdapter:
         # Send verbose log
         await self._send_verbose_log(f"📥 Nhận tin nhắn: {message[:100]}...")
         
+        payload = {
+            "user_id": user_id,
+            "display_name": display_name,
+            "message": message,
+            "thread_id": thread_id,
+            "metadata": metadata,
+        }
+        if message_id:
+            payload["message_id"] = message_id
+        
         try:
             client = await self._get_supervisor_client()
             response = await client.post(
                 f"{self.supervisor_url}/chat",
-                json={
-                    "user_id": user_id,
-                    "display_name": display_name,
-                    "message": message,
-                    "thread_id": thread_id,
-                    "metadata": metadata,
-                },
+                json=payload,
                 headers={"Authorization": f"Bearer {self.api_key}"} if self.api_key else {},
                 timeout=30.0,
             )
