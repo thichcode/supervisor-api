@@ -8,6 +8,10 @@ from src.knowledge.schemas import (
     DocumentCreate,
     FAQCreate,
     GuideCreate,
+    KBPromotionRequest,
+    KBPromotionResponse,
+    KBSearchFailureSuggestionRequest,
+    KBSearchFailureSuggestionResponse,
     KnowledgeSearchRequest,
     PolicyCreate,
 )
@@ -41,6 +45,99 @@ async def search_knowledge(request: KnowledgeSearchRequest):
             limit=request.limit,
             offset=request.offset,
         )
+
+
+@router.post("/search/failure-suggestion", response_model=KBSearchFailureSuggestionResponse)
+async def suggest_kb_from_failed_search(request: KBSearchFailureSuggestionRequest):
+    """Create a review candidate when KB search failed but assistant has a proposed answer."""
+    from datetime import datetime
+    from hashlib import sha256
+
+    from src.db.models import KnowledgeCandidate
+    from src.services.kb_draft_service import candidate_id_from_source_request_id
+
+    normalized = (request.query or "").strip()
+    proposed = (request.proposed_answer or "").strip()
+    if not normalized or not proposed:
+        raise HTTPException(status_code=400, detail="query and proposed_answer are required")
+
+    query_hash = sha256(normalized.lower().encode("utf-8")).hexdigest()[:12]
+    source_request_id = request.request_id or f"kb-search-failure:{query_hash}"
+
+    async with async_session() as session:
+        existing = await session.execute(
+            select(KnowledgeCandidate).where(KnowledgeCandidate.source_request_id == source_request_id)
+        )
+        row = existing.scalar_one_or_none()
+
+        review_note = (
+            f"Auto-suggested from failed KB search | confidence={request.confidence:.2f} | "
+            f"thread={request.thread_id or '-'} user={request.user_id or '-'}"
+        )
+
+        if row:
+            row.extracted_title = normalized[:180]
+            row.extracted_content = proposed[:4000]
+            row.category = request.category or row.category or "general"
+            row.tags = request.tags or row.tags or []
+            row.confidence_score = request.confidence
+            row.status = "pending"
+            row.review_note = review_note
+            row.reviewed_at = None
+            row.promoted_at = None
+            candidate = row
+        else:
+            candidate = KnowledgeCandidate(
+                source_request_id=source_request_id,
+                source_thread_id=request.thread_id,
+                ticket_id=None,
+                ticket_system="supervisor-api",
+                extracted_title=normalized[:180],
+                extracted_content=proposed[:4000],
+                category=request.category or "general",
+                tags=request.tags or [],
+                confidence_score=request.confidence,
+                status="pending",
+                reviewer_id=None,
+                review_note=review_note,
+                created_at=datetime.utcnow(),
+            )
+            session.add(candidate)
+
+        await session.commit()
+        await session.refresh(candidate)
+
+        return KBSearchFailureSuggestionResponse(
+            status="queued_for_review",
+            candidate_id=candidate_id_from_source_request_id(candidate.source_request_id),
+            source_request_id=candidate.source_request_id,
+            review_status=candidate.status,
+        )
+
+
+@router.post("/promote-response", response_model=KBPromotionResponse)
+async def promote_successful_response(request: KBPromotionRequest):
+    """Promote successful response into Knowledge FAQ when confidence is high."""
+    from src.services.kb_promotion_service import KBPromotionService
+
+    service = KBPromotionService(session_factory=async_session, llm=None)
+    result = await service.promote_response_to_kb(
+        question=request.question,
+        answer=request.answer,
+        confidence=request.confidence,
+        source=request.source,
+        user_id=request.user_id,
+        category=request.category,
+        tags=request.tags,
+    )
+
+    return KBPromotionResponse(
+        status="processed" if result.get("created") else "skipped",
+        created=bool(result.get("created", False)),
+        updated=bool(result.get("updated", False)),
+        id=result.get("id"),
+        reason=result.get("reason"),
+    )
 
 
 @router.get("/candidates")

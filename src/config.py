@@ -179,6 +179,12 @@ class Settings(BaseSettings):
     reasoning_loop_max_iterations: int = 3
     reasoning_loop_tool_retry: int = 1
     enable_llm_tool_planning: bool = False  # Hermes-style: LLM picks & calls tools directly
+
+    # Accuracy enhancement features
+    enable_self_consistency: bool = False  # Generate N responses, pick most consistent
+    self_consistency_samples: int = 3       # Number of samples for self-consistency
+    enable_hallucination_detection: bool = True  # Fact-check draft against KB sources
+    enable_kb_reranking: bool = True        # LLM-based reranking of KB search results
     reasoning_loop_rollout_user_percent: int = 100
     reasoning_loop_rollout_team_percent: int = 100
     reasoning_loop_rollout_salt: str = "reasoning-loop-v1"

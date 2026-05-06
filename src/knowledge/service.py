@@ -63,6 +63,12 @@ class KnowledgeRetrievalService:
 
         self._record_search_outcome(primary_search_type, results)
 
+        # LLM-based reranking: if LLM available and we have > 3 results, rerank top results
+        if self.llm and len(results) > 3:
+            results = await self._rerank_with_llm(query, results, top_k=5)
+        elif len(results) > limit:
+            results = results[:limit]
+
         total_results = len(results)
         page_results = results[max(0, offset):max(0, offset) + limit]
         clarification = self.infer_clarification(query, results)
@@ -78,6 +84,84 @@ class KnowledgeRetrievalService:
             template_terms=list(template_match.matched_terms) if template_match else [],
             clarification=clarification,
         )
+
+    async def _rerank_with_llm(
+        self,
+        query: str,
+        results: List[KnowledgeSearchResult],
+        top_k: int = 5,
+    ) -> List[KnowledgeSearchResult]:
+        """Rerank KB search results using LLM relevance judgment.
+        
+        For each result, the LLM scores how relevant it is to the query.
+        Returns top_k results sorted by LLM relevance score.
+        
+        Falls back to original similarity-based sorting if LLM fails.
+        """
+        if not self.llm or not results:
+            return results
+
+        try:
+            # Build prompt for LLM to score relevance
+            candidates_text = ""
+            for i, r in enumerate(results[:min(10, len(results))]):
+                content_preview = (r.content or "")[:300].replace("\n", " ")
+                candidates_text += f"[{i}] Title: {r.title}\n    Content: {content_preview}\n\n"
+
+            rerank_prompt = f"""Bạn là chuyên gia đánh giá mức độ liên quan giữa câu hỏi và tài liệu KB.
+
+Câu hỏi: {query}
+
+Các tài liệu cần đánh giá:
+{candidates_text}
+
+Yêu cầu:
+1. Đánh giá mức độ liên quan (0-10) của từng tài liệu với câu hỏi
+2. 10 = cực kỳ liên quan, trả lời trực tiếp câu hỏi
+3. 5 = có liên quan một phần
+4. 0 = hoàn toàn không liên quan
+
+Trả về JSON (không thêm text):
+{{"scores": [{{"index": 0, "relevance": 8, "reason": "..."}}, ...], "top_indices": [2, 0, 3]}}"""
+
+            response = await self.llm.complete(
+                system_prompt="Bạn là relevance scorer. Chỉ trả về JSON.",
+                user_message=rerank_prompt,
+                temperature=0.1,
+            )
+
+            if not response or not response.content:
+                return results[:top_k]
+
+            match = re.search(r'\{[^{}]*\}', response.content, re.DOTALL)
+            if not match:
+                return results[:top_k]
+
+            import json as json_lib
+            parsed = json_lib.loads(match.group())
+            scores_map = {item["index"]: item["relevance"] for item in parsed.get("scores", [])}
+            top_indices = parsed.get("top_indices", [])
+
+            if not top_indices and not scores_map:
+                return results[:top_k]
+
+            # Apply LLM relevance scores to similarity
+            for idx, r in enumerate(results):
+                if idx in scores_map:
+                    llm_score = scores_map[idx] / 10.0  # Normalize to 0-1
+                    # Blend LLM score with original similarity (70% LLM, 30% original)
+                    r.similarity = round(0.7 * llm_score + 0.3 * r.similarity, 4)
+
+            # Sort by updated similarity
+            results.sort(key=lambda x: x.similarity, reverse=True)
+
+            metrics.record_kb_rerank(query[:50], "success")
+            return results[:top_k]
+
+        except Exception as e:
+            logger.warning("LLM reranking failed, using original sort", error=str(e))
+            metrics.record_kb_rerank(query[:50], "failure")
+            return results[:top_k]
 
     def infer_clarification(
         self,

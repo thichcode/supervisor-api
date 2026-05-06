@@ -17,6 +17,95 @@ class InteractionService:
         self.session = session
         self.feedback_service = FeedbackService(session)
 
+    async def _auto_enqueue_kb_failure_suggestion(
+        self,
+        *,
+        request_id: str,
+        thread_id: str,
+        user_id: str,
+        input_text: str,
+        output_text: str,
+        confidence_score: float,
+        kb_hit_count: int,
+        traffic_class: str,
+    ) -> None:
+        """Auto-create a KB candidate when service-like request misses KB but answer confidence is high."""
+        if kb_hit_count > 0:
+            return
+        if traffic_class != "service_like":
+            return
+        if confidence_score < 0.75:
+            return
+        if not input_text or not output_text:
+            return
+
+        from src.db.models import KnowledgeCandidate
+
+        source_request_id = f"kb-search-failure:{request_id}"
+        existing = await self.session.execute(
+            select(KnowledgeCandidate).where(KnowledgeCandidate.source_request_id == source_request_id)
+        )
+        row = existing.scalar_one_or_none()
+        review_note = (
+            f"auto_from_interaction_miss confidence={confidence_score:.2f} "
+            f"traffic_class={traffic_class}"
+        )
+
+        if row is None:
+            row = KnowledgeCandidate(
+                source_request_id=source_request_id,
+                source_thread_id=thread_id,
+                ticket_id=None,
+                ticket_system="supervisor-api",
+                extracted_title=input_text.strip()[:180],
+                extracted_content=output_text.strip()[:4000],
+                category="general",
+                tags=["auto", "kb_miss", "service_like"],
+                confidence_score=confidence_score,
+                status="pending",
+                reviewer_id=None,
+                review_note=review_note,
+            )
+            self.session.add(row)
+        else:
+            row.extracted_title = input_text.strip()[:180]
+            row.extracted_content = output_text.strip()[:4000]
+            row.confidence_score = confidence_score
+            row.status = "pending"
+            row.review_note = review_note
+            row.reviewed_at = None
+            row.promoted_at = None
+
+    async def _auto_record_kb_usage(
+        self,
+        *,
+        kb_sources: list,
+        confidence_score: float,
+    ) -> None:
+        """Record KB usage for confident answers to improve ranking signals."""
+        if confidence_score < 0.75:
+            return
+        if not kb_sources:
+            return
+
+        from src.db.models import KnowledgeFAQ
+
+        for source in kb_sources[:5]:
+            if not isinstance(source, dict):
+                continue
+            kb_type = source.get("type", source.get("knowledge_type", ""))
+            kb_id = source.get("id")
+            if kb_type != "faq" or not kb_id:
+                continue
+
+            result = await self.session.execute(
+                select(KnowledgeFAQ).where(KnowledgeFAQ.question_id == kb_id)
+            )
+            faq = result.scalar_one_or_none()
+            if faq:
+                faq.usage_count = (faq.usage_count or 0) + 1
+                self.session.add(faq)
+
     async def log_interaction(
         self,
         *,
@@ -76,6 +165,22 @@ class InteractionService:
         log.processing_latency_ms = processing_latency_ms
         log.outcome_status = outcome_status
         log.extra_metadata = metadata
+
+        await self._auto_enqueue_kb_failure_suggestion(
+            request_id=request_id,
+            thread_id=thread_id,
+            user_id=user_id,
+            input_text=input_text,
+            output_text=output_text,
+            confidence_score=confidence_score,
+            kb_hit_count=log.kb_hit_count or 0,
+            traffic_class=normalized_traffic_class,
+        )
+        await self._auto_record_kb_usage(
+            kb_sources=log.kb_sources or [],
+            confidence_score=confidence_score,
+        )
+
         await self.session.flush()
         return log
 

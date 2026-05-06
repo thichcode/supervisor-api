@@ -18,6 +18,7 @@ from src.llm import MultiProviderLLMClient, LLMResponse
 from src.config import get_settings
 from src.core.reasoning_loop import ReasoningLoopOrchestrator
 from src.core.metrics import metrics
+from src.core.confidence_calibrator import ConfidenceCalibrator
 from typing import Optional, Dict, Any
 from hashlib import sha256
 import re
@@ -262,6 +263,9 @@ class Supervisor:
 
                     self.validators = SchemaValidator()
 
+                # Confidence Calibrator - learn from historical feedback
+                self.confidence_calibrator = ConfidenceCalibrator()
+
                 logger.info(
                     "Supervisor v2 enhancements initialized",
                     cache=settings.enable_lru_cache,
@@ -270,6 +274,7 @@ class Supervisor:
                     routing=settings.enable_agent_router,
                     url_fetcher=settings.enable_url_fetcher,
                     tools=settings.enable_tools,
+                    calibrator=True,
                     # Extended tools (disabled by default)
                     rag_pipeline=settings.enable_rag_pipeline,
                     file_processor=settings.enable_file_processor,
@@ -555,11 +560,18 @@ class Supervisor:
                     if url_context:
                         context_with_urls["url_context"] = url_context
 
+                    # Apply self-consistency if enabled
+                    if getattr(settings, 'enable_self_consistency', False):
+                        self.draft_agent._self_consistency_enabled = True
+                        self.draft_agent._self_consistency_samples = getattr(settings, 'self_consistency_samples', 3)
+                    else:
+                        self.draft_agent._self_consistency_enabled = False
+
                     draft = await self.draft_agent.generate(
                         payload, context_with_urls, policy, knowledge, self._llm
                     )
 
-                    # Enhanced validation with Bayesian confidence (v2)
+                    # Enhanced validation with Bayesian confidence (v2) + hallucination detection
                     validation = await self._enhanced_validate(
                         draft, payload, context, policy, knowledge
                     )
@@ -751,16 +763,29 @@ class Supervisor:
     async def _enhanced_validate(
         self, draft: str, payload: InputPayload, context: Dict, policy: Dict, knowledge: Dict
     ) -> Dict:
-        """Enhanced validation with Bayesian confidence"""
+        """Enhanced validation with Bayesian confidence + QA validation + hallucination detection.
+        
+        Combines:
+        1. Bayesian confidence (v2 module)
+        2. QAAgent.validate() - rule-based + LLM validation + hallucination detection
+        3. Fallback to original validation if both fail
+        """
+        # Step 1: Run QA agent validation (includes hallucination detection)
+        qa_validation = await self.qa_agent.validate(
+            draft=draft,
+            payload=payload,
+            context=context,
+            llm=self._llm,
+            knowledge=knowledge if getattr(get_settings(), 'enable_hallucination_detection', True) else None,
+        )
+
         if not NEW_MODULES_AVAILABLE:
-            # Fallback to original validation
-            return self._original_validate(draft, payload, context)
+            # Use QA validation as-is if Bayesian not available
+            return qa_validation
 
         try:
-            # Get settings for LLM model name
+            # Step 2: Bayesian confidence
             settings = get_settings()
-            
-            # Extract confidence factors
             factors = ConfidenceFactors(
                 context_relevance=min(1.0, len(context.get("user_info", {})) / 3),
                 policy_match=1.0 if policy.get("relevant_policies") else 0.45,
@@ -769,27 +794,33 @@ class Supervisor:
                 agent_experience=0.5,
             )
 
-            # Calculate Bayesian confidence
-            confidence, factor_scores = self.bayesian_confidence.calculate_confidence(
+            bayesian_confidence, factor_scores = self.bayesian_confidence.calculate_confidence(
                 factors, getattr(settings, 'llm_model', None) or "llama3.1"
             )
 
-            # Also use ResponseValidator for issues detection
-            validation = {
-                "draft": draft,
-                "confidence": confidence,
-                "factor_scores": factor_scores,
-                "needs_review": confidence < 0.7,
-            }
+            # Step 3: Ensemble confidence = blend Bayesian + QA
+            # QA confidence weighs more (0.6) because it has direct draft analysis + hallucination check
+            blended_confidence = round(0.6 * qa_validation["confidence"] + 0.4 * bayesian_confidence, 4)
 
             logger.debug(
-                "Bayesian validation", confidence=confidence, factors=list(factor_scores.keys())
+                "Ensemble validation",
+                qa_confidence=qa_validation["confidence"],
+                bayesian_confidence=bayesian_confidence,
+                blended_confidence=blended_confidence,
+                hallucination_signals=len(qa_validation.get("hallucination_signals", [])),
             )
 
-            return validation
+            return {
+                "draft": draft,
+                "confidence": blended_confidence,
+                "factor_scores": factor_scores,
+                "issues": qa_validation.get("issues", []),
+                "needs_review": blended_confidence < 0.7 or len(qa_validation.get("hallucination_signals", [])) > 0,
+                "hallucination_signals": qa_validation.get("hallucination_signals", []),
+            }
         except Exception as e:
-            logger.warning("Bayesian validation failed, using original", error=str(e))
-            return self._original_validate(draft, payload, context)
+            logger.warning("Bayesian validation failed, using QA validation", error=str(e))
+            return qa_validation
 
     def _original_validate(self, draft: str, payload: InputPayload, context: Dict) -> Dict:
         """Original QA validation as fallback"""
@@ -1097,106 +1128,116 @@ class Supervisor:
         
         return answer
 
-    async def _handle_itc_ticket_request(self, payload: InputPayload) -> tuple[str, float]:
-        """Handle ITC ticket request - extract ticket ID, fetch from n8n, search KB, suggest solution."""
+    async def _handle_itc_ticket_request(self, payload: InputPayload) -> dict:
+        """Handle ITC ticket request - extract ticket ID, fetch from n8n, search KB, suggest solution.
+        
+        Detects ticket IDs in multiple formats:
+        - #453245 (hash + number, any length)
+        - 453245 (plain number, 4+ digits in a conversation context)
+        - woID=4711234 (query parameter)
+        - ticket: 4711234 / ticket 4711234
+        - "IT Center has received a support request" pattern
+        
+        Uses N8NConnector.get_ticket_detail() which tries:
+        1. n8n webhook /webhook/itc/ticket-detail
+        2. Direct ITC API call (if itc_api_url configured)
+        3. Returns partial info if all fail
+        """
         import re
         
         text = payload.message.text
+        conversation_state = payload.conversation
         
-        # Pattern 1: "IT Center has received a support request" + ticket link
+        # Extended detection patterns - order matters (most specific first)
         ticket_patterns = [
-            r'woID=(\d+)',  # woID=4711234
-            r'woID=(\d+)',  # WorkOrder ID
-            r'ticket[:\s]+(\d+)',  # ticket: 4711234 or ticket 4711234
-            r'#(\d{7,})',  # 7+ digit number (ITC ticket IDs)
+            # Hash + number (any length): #453245, #ITC-123, #INC123
+            (r'#([A-Za-z]{2,6}[-:]?\d{4,})', True),
+            (r'#(\d{4,})', True),
+            # woID query parameter
+            (r'woID=(\d+)', True),
+            r'woid=(\d+)',
+            # Explicit ticket mention
+            r'ticket[:\s]+#?(\d{4,})',
+            r'ticket[:\s]+#?([A-Za-z]+[-:]\d+)',
+            # Common IT service patterns
+            r'wo[:\s]+#?(\d+)',
+            r'incident[:\s]+#?(\d+)',
+            r'request[:\s]+#?(\d+)',
+            r'case[:\s]+#?(\d+)',
+            # ITSM / ServiceNow patterns
+            r'(INC\d{6,})',
+            r'(REQ\d{6,})',
+            r'(CHG\d{6,})',
+            # Jira-style: PROJ-123
+            r'([A-Z]{2,6}-\d{3,})',
         ]
         
         ticket_id = None
+        ticket_system = "itc"  # default system
+        
         for pattern in ticket_patterns:
-            match = re.search(pattern, text, re.IGNORECASE)
+            if isinstance(pattern, tuple):
+                pattern_str, _ = pattern
+            else:
+                pattern_str = pattern
+            match = re.search(pattern_str, text, re.IGNORECASE)
             if match:
                 ticket_id = match.group(1)
+                # Detect system from ID prefix
+                if re.match(r'^INC', ticket_id, re.IGNORECASE):
+                    ticket_system = "itc"
+                elif re.match(r'^[A-Z]{2,6}-', ticket_id):
+                    ticket_system = "jira"
                 break
         
+        # If no structured ID found, try to detect plain number in multi-word messages
+        if not ticket_id and len(text.split()) >= 4:
+            # Look for isolated 5+ digit numbers that aren't dates/times
+            plain_numbers = re.findall(r'\b(\d{5,})\b', text)
+            if plain_numbers:
+                ticket_id = plain_numbers[0]
+        
         if not ticket_id:
-            return {"answer": "Tôi không tìm thấy mã ticket trong tin nhắn. Bạn có thể cung cấp mã ticket không?", "confidence": 0.3, "ticket_id": None}
+            return {
+                "answer": "Mình cần mã ticket để tra cứu (ví dụ: #453245 hoặc INC123456). Bạn cung cấp giúp mình nhé?",
+                "confidence": 0.3,
+                "ticket_id": None
+            }
         
-        # Try to get ticket details from n8n/ITC API
-        ticket_content = None
-        ticket_info = {
-            "subject": None,
-            "description": None,
-            "status": None,
-            "priority": None,
-            "requester": None,
-            "assigned_to": None,
-            "created_date": None,
-            "updated_date": None,
-        }
-        
-        # Try n8n first (via connector)
-        if hasattr(self, 'n8n_connector') and self.n8n_connector:
-            try:
-                # Use execute_query to fetch ticket from n8n
-                result = await self.n8n_connector.execute_query(
-                    "itc_ticket_fetch",
-                    {"ticket_id": ticket_id},
-                    user_id=payload.user_id or "system"
+        # Fetch ticket details using N8NConnector
+        ticket_detail = None
+        try:
+            if hasattr(self, 'n8n_connector') and self.n8n_connector:
+                ticket_detail = await self.n8n_connector.get_ticket_detail(
+                    ticket_id=ticket_id,
+                    system=ticket_system,
                 )
-                
-                if result.get("success"):
-                    data = result.get("data", {})
-                    # n8n may return XML content directly or structured JSON
-                    if "ticket_content" in data:
-                        ticket_content = data["ticket_content"]
-                    # Or return structured data
-                    for key in ticket_info.keys():
-                        if key in data:
-                            ticket_info[key] = data[key]
-                    logger.info("Fetched ticket from n8n", ticket_id=ticket_id, has_content=bool(ticket_content))
-                else:
-                    logger.warning("n8n query failed", ticket_id=ticket_id, error=result.get("error"))
-            except Exception as e:
-                logger.warning("Failed to fetch ticket from n8n", ticket_id=ticket_id, error=str(e))
+                if ticket_detail:
+                    logger.info(
+                        "ticket_detail_fetched",
+                        ticket_id=ticket_id,
+                        system=ticket_system,
+                        source=ticket_detail.get("source", "n8n"),
+                    )
+        except Exception as e:
+            logger.warning("ticket_detail_fetch_failed", ticket_id=ticket_id, error=str(e))
         
-        # Try direct ITC API if n8n not available or failed to get basic info
-        if not ticket_info.get("subject"):
-            if not ticket_content:
-                try:
-                    # Try direct IT service API call
-                    import httpx
-                    from src.config import get_settings
-                    settings = get_settings()
-                    itc_api_url = getattr(settings, 'itc_api_url', None)
-                    if itc_api_url:
-                        async with httpx.AsyncClient(timeout=30) as client:
-                            response = await client.get(
-                                f"{itc_api_url}/WorkOrder.do",
-                                params={"woMode": "viewWO", "woID": ticket_id}
-                            )
-                            if response.status_code == 200:
-                                ticket_content = response.text
-                except Exception as e:
-                    logger.warning("Failed to fetch ticket directly", ticket_id=ticket_id, error=str(e))
-            
-            # Extract info if we got content
-            if ticket_content:
-                # Extract various fields from XML content
-                field_patterns = {
-                    "subject": r'<subject>([^<]+)</subject>',
-                    "description": r'<description>([^<]+)</description>',
-                    "status": r'<status>([^<]+)</status>',
-                    "priority": r'<priority>([^<]+)</priority>',
-                    "requester": r'<requester>([^<]+)</requester>',
-                    "assigned_to": r'<assignedTo>([^<]+)</assignedTo>',
-                    "created_date": r'<createdDate>([^<]+)</createdDate>',
-                    "updated_date": r'<lastModifiedDate>([^<]+)</lastModifiedDate>',
-                }
-                for field, pattern in field_patterns.items():
-                    if not ticket_info.get(field):
-                        match = re.search(pattern, ticket_content, re.IGNORECASE)
-                        if match:
-                            ticket_info[field] = match.group(1).strip()
+        # Extract fields from ticket detail
+        ticket_subject = ticket_detail.get("subject") if ticket_detail else None
+        ticket_description = ticket_detail.get("description") if ticket_detail else None
+        ticket_status = ticket_detail.get("status") if ticket_detail else None
+        ticket_assignee = ticket_detail.get("assignee") if ticket_detail else None
+        ticket_priority = ticket_detail.get("priority") if ticket_detail else None
+        ticket_info = {
+            "subject": ticket_subject,
+            "description": ticket_description,
+            "status": ticket_status,
+            "priority": ticket_priority,
+            "requester": ticket_detail.get("requester") if ticket_detail else None,
+            "assigned_to": ticket_assignee,
+            "created_date": ticket_detail.get("created_date") if ticket_detail else None,
+            "updated_date": ticket_detail.get("updated_date") if ticket_detail else None,
+        }
         
         # Search KB for related solutions
         kb_suggestions = []
@@ -1217,54 +1258,48 @@ class Supervisor:
         except Exception as e:
             logger.warning("KB search failed", error=str(e))
         
-        # Format response with full ticket info
+        # Build response
         response_parts = [f"🎫 **Ticket #{ticket_id}**"]
         
-        # Add all available ticket info
-        if ticket_info.get("subject"):
-            response_parts.append(f"**Subject:** {ticket_info['subject']}")
-        if ticket_info.get("status"):
-            response_parts.append(f"**Status:** {ticket_info['status']}")
-        if ticket_info.get("priority"):
-            response_parts.append(f"**Priority:** {ticket_info['priority']}")
-        if ticket_info.get("requester"):
-            response_parts.append(f"**Requester:** {ticket_info['requester']}")
-        if ticket_info.get("assigned_to"):
-            response_parts.append(f"**Assigned to:** {ticket_info['assigned_to']}")
-        if ticket_info.get("created_date"):
-            response_parts.append(f"**Created:** {ticket_info['created_date']}")
+        if ticket_subject:
+            response_parts.append(f"📌 **Subject:** {ticket_subject}")
+        if ticket_status:
+            status_icon = "✅" if ticket_status.lower() in ("resolved", "closed", "completed") else "🔄"
+            response_parts.append(f"{status_icon} **Status:** {ticket_status}")
+        if ticket_assignee:
+            response_parts.append(f"👤 **Assignee:** {ticket_assignee}")
+        if ticket_priority:
+            priority_icon = "🔴" if ticket_priority.lower() in ("critical", "high") else "🟡"
+            response_parts.append(f"{priority_icon} **Priority:** {ticket_priority}")
+        if ticket_description:
+            # Show first 500 chars of description
+            desc_preview = ticket_description[:500]
+            if len(ticket_description) > 500:
+                desc_preview += "..."
+            response_parts.append(f"\n📝 **Description:**\n{desc_preview}")
         
         if kb_suggestions:
             response_parts.append("\n📚 **Gợi ý từ Knowledge Base:**")
             for i, sugg in enumerate(kb_suggestions, 1):
                 response_parts.append(f"{i}. **{sugg['title']}**\n   {sugg['content']}")
-        else:
-            response_parts.append("\n🔍 Tôi đang phân tích và tìm giải pháp...")
-            # Use AI to reason if LLM available
+        elif not ticket_subject and not ticket_description:
+            # No details fetched and no KB results — try LLM reasoning
+            response_parts.append("\n🔍 Đang phân tích ticket...")
             if self._llm:
-                # Build comprehensive ticket info text
-                ticket_details = f"Ticket #{ticket_id}"
-                if ticket_info.get("subject"):
-                    ticket_details += f"\n- Subject: {ticket_info['subject']}"
-                if ticket_info.get("status"):
-                    ticket_details += f"\n- Status: {ticket_info['status']}"
-                if ticket_info.get("priority"):
-                    ticket_details += f"\n- Priority: {ticket_info['priority']}"
-                if ticket_info.get("description"):
-                    ticket_details += f"\n- Description: {ticket_info['description'][:500]}"
-                else:
-                    ticket_details += "\n- Description: (không có thông tin chi tiết)"
-                
-                system_prompt = f"""Bạn là chuyên gia IT support. Dựa vào thông tin ticket sau:
-
-{ticket_details}
-
-Hãy đề xuất giải pháp hoặc các bước tiếp theo cụ thể."""
+                system_prompt = f"""Bạn là chuyên gia IT support. Ticket #{ticket_id} đã được tạo.
+Dựa vào kinh nghiệm của bạn với các ticket IT tương tự, hãy đề xuất:
+1. Các bước chẩn đoán ban đầu
+2. Thông tin cần thu thập thêm
+3. Hướng xử lý khả thi
+Trả lời ngắn gọn, bằng tiếng Việt."""
                 try:
                     llm_response = await self._llm.complete(system_prompt, "")
-                    response_parts.append(f"\n💡 **Gợi ý:**\n{llm_response.content}")
+                    response_parts.append(f"\n💡 **Gợi ý xử lý:**\n{llm_response.content}")
                 except Exception as e:
                     logger.warning("LLM reasoning failed", error=str(e))
+        
+        if not ticket_detail:
+            response_parts.append("\n\n*⚠️ Chưa lấy được chi tiết từ hệ thống. Hiển thị thông tin cơ bản.*")
         
         answer = "\n".join(response_parts)
         return {"answer": answer, "confidence": 0.85, "ticket_id": ticket_id, "ticket_info": ticket_info}

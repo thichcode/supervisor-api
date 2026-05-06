@@ -109,6 +109,42 @@ class KnowledgeSearchResponse(BaseModel):
     clarification: dict = Field(default_factory=dict)
 
 
+class KBSearchFailureSuggestionRequest(BaseModel):
+    query: str
+    proposed_answer: str
+    confidence: float = 0.0
+    category: Optional[str] = None
+    tags: List[str] = Field(default_factory=list)
+    request_id: Optional[str] = None
+    thread_id: Optional[str] = None
+    user_id: Optional[str] = None
+
+
+class KBSearchFailureSuggestionResponse(BaseModel):
+    status: str
+    candidate_id: str
+    source_request_id: str
+    review_status: str
+
+
+class KBPromotionRequest(BaseModel):
+    question: str
+    answer: str
+    confidence: float = 0.0
+    source: str = "successful_response"
+    user_id: Optional[str] = None
+    category: Optional[str] = None
+    tags: List[str] = Field(default_factory=list)
+
+
+class KBPromotionResponse(BaseModel):
+    status: str
+    created: bool
+    updated: bool = False
+    id: Optional[str] = None
+    reason: Optional[str] = None
+
+
 class KnowledgeStats(BaseModel):
     policies_count: int
     faqs_count: int

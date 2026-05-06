@@ -13,6 +13,7 @@ from src.db import async_session
 from src.db.models import ResponseLearningEvent
 from src.memory.cache import redis_cache
 from src.services.learning_service import LearningService
+from src.services.kb_promotion_service import KBPromotionService
 
 logger = structlog.get_logger()
 settings = get_settings()
@@ -139,6 +140,31 @@ class FeedbackReplayWorker:
             await session.flush()
         return events
 
+    def _apply_feedback_signal(self, *, user_id: str, request_id: str, is_positive: bool, model_name: str) -> None:
+        calculators: list[Any] = []
+        bayes = getattr(self.supervisor, "bayesian_confidence", None)
+        if bayes:
+            calculators.append(bayes)
+        validator = getattr(self.supervisor, "response_validator", None)
+        confidence_calculator = getattr(validator, "confidence_calculator", None) if validator else None
+        if confidence_calculator and confidence_calculator is not bayes:
+            calculators.append(confidence_calculator)
+
+        for calculator in calculators:
+            if hasattr(calculator, "update_with_feedback"):
+                calculator.update_with_feedback(user_id, request_id, is_positive, model_name)
+
+        # NEW: Also update ConfidenceCalibrator with feedback
+        calibrator = getattr(self.supervisor, "confidence_calibrator", None)
+        if calibrator and hasattr(calibrator, "record_feedback"):
+            calibrator.record_feedback(
+                query_type="unknown",  # Will be refined by payload
+                user_id=user_id,
+                model_name=model_name,
+                raw_confidence=0.5,
+                is_positive=is_positive,
+            )
+
     async def _process_event(self, session: AsyncSession, event: ResponseLearningEvent, learning_service: Any) -> None:
         payload = event.event_payload or {}
         user_id = event.user_id or payload.get("user_id")
@@ -164,25 +190,134 @@ class FeedbackReplayWorker:
 
         self._apply_routing_feedback(payload)
 
+        # Auto-promote successful responses to KB when feedback is positive.
+        if is_positive is True:
+            await self._auto_promote_from_positive_feedback(
+                session=session,
+                request_id=request_id,
+                payload=payload,
+                user_id=user_id,
+            )
+
+        # NEW: Auto-upsert KB from negative feedback corrections
+        if is_positive is False and payload.get("edited_output_text"):
+            await self._upsert_kb_from_correction(
+                session=session,
+                payload=payload,
+                user_id=user_id,
+            )
+
         event.processed = True
         # response_learning_events.processed_at is stored as TIMESTAMP WITHOUT TIME ZONE
         # in the legacy schema, so write a naive UTC datetime to avoid asyncpg errors.
         event.processed_at = datetime.now(timezone.utc).replace(tzinfo=None)
         session.add(event)
 
-    def _apply_feedback_signal(self, *, user_id: str, request_id: str, is_positive: bool, model_name: str) -> None:
-        calculators: list[Any] = []
-        bayes = getattr(self.supervisor, "bayesian_confidence", None)
-        if bayes:
-            calculators.append(bayes)
-        validator = getattr(self.supervisor, "response_validator", None)
-        confidence_calculator = getattr(validator, "confidence_calculator", None) if validator else None
-        if confidence_calculator and confidence_calculator is not bayes:
-            calculators.append(confidence_calculator)
+    async def _auto_promote_from_positive_feedback(
+        self,
+        *,
+        session: AsyncSession,
+        request_id: str,
+        payload: dict,
+        user_id: Optional[str],
+    ) -> None:
+        """Promote high-confidence answered interactions into FAQ KB after positive feedback."""
+        from src.db.models import InteractionLog
 
-        for calculator in calculators:
-            if hasattr(calculator, "update_with_feedback"):
-                calculator.update_with_feedback(user_id, request_id, is_positive, model_name)
+        result = await session.execute(
+            select(InteractionLog).where(InteractionLog.request_id == request_id)
+        )
+        interaction = result.scalar_one_or_none()
+        if interaction is None:
+            return
+
+        if (interaction.traffic_class or "") != "service_like":
+            return
+
+        confidence = float(interaction.confidence_score or 0.0)
+        question = (interaction.input_text or "").strip()
+        answer = (interaction.output_text or "").strip()
+        if not question or not answer:
+            return
+
+        promotion_service = KBPromotionService(session_factory=lambda: session, llm=None)
+        await promotion_service.promote_response_to_kb(
+            question=question,
+            answer=answer,
+            confidence=confidence,
+            source="positive_feedback_auto",
+            user_id=user_id,
+            category=(payload.get("category") or None),
+            tags=(payload.get("tags") or []),
+        )
+
+    async def _upsert_kb_from_correction(
+        self,
+        session: AsyncSession,
+        payload: dict,
+        user_id: Optional[str],
+    ) -> None:
+        """Upsert a KB entry from a user correction (negative feedback with edited text).
+        
+        When a user provides a correction (edited output text), this method:
+        1. Creates or updates a response_pattern with the corrected Q&A
+        2. If confidence is high, also upserts into knowledge_base.document for future retrieval
+        """
+        original_question = payload.get("original_message") or payload.get("query", "")
+        corrected_answer = payload.get("edited_output_text", "")
+        
+        if not original_question or not corrected_answer:
+            return
+        
+        try:
+            from src.db.models import ResponsePattern
+            
+            # Check if pattern already exists
+            from sqlalchemy import select
+            result = await session.execute(
+                select(ResponsePattern).where(
+                    ResponsePattern.question == original_question[:500]
+                )
+            )
+            existing = result.scalar_one_or_none()
+            
+            if existing:
+                # Update existing pattern
+                existing.answer_text = corrected_answer
+                existing.usage_count = (existing.usage_count or 0) + 1
+                existing.is_active = True
+                existing.metadata = {
+                    **(existing.metadata or {}),
+                    "last_correction_at": datetime.now(timezone.utc).isoformat(),
+                    "corrected_by": user_id,
+                    "correction_source": "feedback_worker",
+                }
+                session.add(existing)
+            else:
+                # Create new pattern
+                pattern = ResponsePattern(
+                    question=original_question[:500],
+                    answer_text=corrected_answer,
+                    user_id=user_id or "",
+                    is_active=True,
+                    usage_count=1,
+                    metadata={
+                        "created_at": datetime.now(timezone.utc).isoformat(),
+                        "source": "feedback_correction",
+                        "corrected_by": user_id,
+                    },
+                )
+                session.add(pattern)
+            
+            logger.info(
+                "kb_upserted_from_correction",
+                question=original_question[:100],
+                answer_length=len(corrected_answer),
+                is_update=bool(existing),
+            )
+            
+        except Exception as exc:
+            logger.warning("kb_upsert_from_correction_failed", error=str(exc))
 
     async def _apply_style_learning(
         self,

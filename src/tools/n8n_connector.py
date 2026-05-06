@@ -140,18 +140,17 @@ SYSTEM_ACTIONS: Dict[str, SystemAction] = {
         ],
         description="Cập nhật trạng thái ticket"
     ),
-    # ITC Ticket Fetch (via n8n)
-    "itc_ticket_fetch": SystemAction(
-        name="itc_ticket_fetch",
-        display_name="Lấy thông tin Ticket ITC",
-        system="itc",
-        action_type=ActionType.QUERY,  # Read-only, không cần approval
+    "ticket_get": SystemAction(
+        name="ticket_get",
+        display_name="Xem chi tiết Ticket IT",
+        system="itsm",
+        action_type=ActionType.QUERY,
         risk_level=RiskLevel.LOW,
-        webhook_path="/webhook/itc/ticket-fetch",
+        webhook_path="/webhook/itsm/get-ticket",
         parameters=[
             {"name": "ticket_id", "type": "string", "required": True},
         ],
-        description="Lấy chi tiết ticket từ hệ thống ITC qua n8n"
+        description="Lấy thông tin chi tiết của một ticket IT (subject, status, description, assignee)"
     ),
     
     # Server Management Actions
@@ -372,6 +371,18 @@ SYSTEM_ACTIONS: Dict[str, SystemAction] = {
         ],
         description="Lấy danh sách tickets"
     ),
+    "itc_ticket_detail": SystemAction(
+        name="itc_ticket_detail",
+        display_name="ITC Ticket Detail",
+        system="itc",
+        action_type=ActionType.QUERY,
+        risk_level=RiskLevel.LOW,
+        webhook_path="/webhook/itc/ticket-detail",
+        parameters=[
+            {"name": "ticket_id", "type": "string", "required": True},
+        ],
+        description="Lấy thông tin chi tiết ticket ITC theo ID (subject, status, description, assignee, priority)"
+    ),
     "itc_cmdb": SystemAction(
         name="itc_cmdb",
         display_name="ITC CMDB",
@@ -412,796 +423,193 @@ SYSTEM_ACTIONS: Dict[str, SystemAction] = {
         webhook_path="/webhook/jira/projects",
         description="Lấy danh sách projects"
     ),
-    
-    # =============================================================================
-    # Matomo Analytics
-    # =============================================================================
-    "matomo_visitors": SystemAction(
-        name="matomo_visitors",
-        display_name="Matomo Visitors",
-        system="analytics",
+    "jira_issue_detail": SystemAction(
+        name="jira_issue_detail",
+        display_name="Jira Issue Detail",
+        system="jira",
         action_type=ActionType.QUERY,
         risk_level=RiskLevel.LOW,
-        webhook_path="/webhook/matomo/visitors",
+        webhook_path="/webhook/jira/issue-detail",
         parameters=[
-            {"name": "period", "type": "string", "required": False},
-            {"name": "date", "type": "string", "required": False},
-            {"name": "limit", "type": "integer", "required": False},
+            {"name": "issue_key", "type": "string", "required": True},
         ],
-        description="Lấy thông tin visitors"
-    ),
-    "matomo_pageviews": SystemAction(
-        name="matomo_pageviews",
-        display_name="Matomo Page Views",
-        system="analytics",
-        action_type=ActionType.QUERY,
-        risk_level=RiskLevel.LOW,
-        webhook_path="/webhook/matomo/pageviews",
-        parameters=[
-            {"name": "period", "type": "string", "required": False},
-            {"name": "date", "type": "string", "required": False},
-            {"name": "limit", "type": "integer", "required": False},
-        ],
-        description="Lấy thống kê page views"
-    ),
-    "matomo_analytics": SystemAction(
-        name="matomo_analytics",
-        display_name="Matomo Analytics Summary",
-        system="analytics",
-        action_type=ActionType.QUERY,
-        risk_level=RiskLevel.LOW,
-        webhook_path="/webhook/matomo/summary",
-        parameters=[
-            {"name": "period", "type": "string", "required": False},
-            {"name": "date", "type": "string", "required": False},
-        ],
-        description="Lấy tổng quan analytics"
+        description="Lấy thông tin chi tiết issue Jira (summary, description, status, assignee)"
     ),
     
     # =============================================================================
-    # UptimeRobot
+    # Database / SQL
     # =============================================================================
-    "uptimerobot_monitors": SystemAction(
-        name="uptimerobot_monitors",
-        display_name="UptimeRobot Monitors",
-        system="monitoring",
+    "db_query": SystemAction(
+        name="db_query",
+        display_name="Truy vấn Database",
+        system="database",
         action_type=ActionType.QUERY,
-        risk_level=RiskLevel.LOW,
-        webhook_path="/webhook/uptimerobot/monitors",
+        risk_level=RiskLevel.HIGH,
+        webhook_path="/webhook/db/query",
         parameters=[
-            {"name": "status", "type": "string", "required": False},
+            {"name": "query", "type": "string", "required": True},
+            {"name": "database", "type": "string", "required": True},
         ],
-        description="Lấy danh sách monitors"
+        description="Thực thi truy vấn SQL (READ-ONLY)"
     ),
-    "uptimerobot_incidents": SystemAction(
-        name="uptimerobot_incidents",
-        display_name="UptimeRobot Incidents",
-        system="monitoring",
-        action_type=ActionType.QUERY,
-        risk_level=RiskLevel.LOW,
-        webhook_path="/webhook/uptimerobot/incidents",
+    "db_execute": SystemAction(
+        name="db_execute",
+        display_name="Thực thi SQL",
+        system="database",
+        action_type=ActionType.ACTION,
+        risk_level=RiskLevel.CRITICAL,
+        webhook_path="/webhook/db/execute",
         parameters=[
-            {"name": "limit", "type": "integer", "required": False},
+            {"name": "sql", "type": "string", "required": True},
+            {"name": "database", "type": "string", "required": True},
         ],
-        description="Lấy incidents"
+        description="Thực thi câu lệnh SQL (CẢNH BÁO)"
     ),
     
     # =============================================================================
-    # Nginx Log
+    # General / System
     # =============================================================================
-    "nginx_access_log": SystemAction(
-        name="nginx_access_log",
-        display_name="Nginx Access Log",
-        system="infrastructure",
+    "system_status": SystemAction(
+        name="system_status",
+        display_name="System Status",
+        system="system",
         action_type=ActionType.QUERY,
         risk_level=RiskLevel.LOW,
-        webhook_path="/webhook/nginx/access-log",
-        parameters=[
-            {"name": "ip", "type": "string", "required": False},
-            {"name": "path", "type": "string", "required": False},
-            {"name": "limit", "type": "integer", "required": False},
-        ],
-        description="Lấy access log"
+        webhook_path="/webhook/system/status",
+        description="Lấy tổng quan trạng thái hệ thống"
     ),
-    "nginx_error_log": SystemAction(
-        name="nginx_error_log",
-        display_name="Nginx Error Log",
-        system="infrastructure",
+    "system_metrics": SystemAction(
+        name="system_metrics",
+        display_name="System Metrics",
+        system="system",
         action_type=ActionType.QUERY,
         risk_level=RiskLevel.LOW,
-        webhook_path="/webhook/nginx/error-log",
-        parameters=[
-            {"name": "level", "type": "string", "required": False},
-            {"name": "limit", "type": "integer", "required": False},
-        ],
-        description="Lấy error log"
-    ),
-    "nginx_stats": SystemAction(
-        name="nginx_stats",
-        display_name="Nginx Statistics",
-        system="infrastructure",
-        action_type=ActionType.QUERY,
-        risk_level=RiskLevel.LOW,
-        webhook_path="/webhook/nginx/stats",
-        description="Lấy thống kê Nginx"
-    ),
-    
-    # =============================================================================
-    # Domain Info
-    # =============================================================================
-    "domain_whois": SystemAction(
-        name="domain_whois",
-        display_name="Domain WHOIS",
-        system="infrastructure",
-        action_type=ActionType.QUERY,
-        risk_level=RiskLevel.LOW,
-        webhook_path="/webhook/domain/whois",
-        parameters=[
-            {"name": "domain", "type": "string", "required": True},
-        ],
-        description="Lấy thông tin WHOIS domain"
-    ),
-    "domain_dns": SystemAction(
-        name="domain_dns",
-        display_name="Domain DNS Records",
-        system="infrastructure",
-        action_type=ActionType.QUERY,
-        risk_level=RiskLevel.LOW,
-        webhook_path="/webhook/domain/dns",
-        parameters=[
-            {"name": "domain", "type": "string", "required": True},
-            {"name": "record_type", "type": "string", "required": False},
-        ],
-        description="Lấy DNS records"
-    ),
-    "domain_expiry": SystemAction(
-        name="domain_expiry",
-        display_name="Domain Expiry Check",
-        system="infrastructure",
-        action_type=ActionType.QUERY,
-        risk_level=RiskLevel.LOW,
-        webhook_path="/webhook/domain/expiry",
-        parameters=[
-            {"name": "domain", "type": "string", "required": True},
-        ],
-        description="Kiểm tra ngày hết hạn domain"
-    ),
-    
-    # =============================================================================
-    # Cloudflare
-    # =============================================================================
-    "cloudflare_zones": SystemAction(
-        name="cloudflare_zones",
-        display_name="Cloudflare Zones",
-        system="cloud",
-        action_type=ActionType.QUERY,
-        risk_level=RiskLevel.LOW,
-        webhook_path="/webhook/cloudflare/zones",
-        description="Lấy danh sách zones"
-    ),
-    "cloudflare_dns": SystemAction(
-        name="cloudflare_dns",
-        display_name="Cloudflare DNS Records",
-        system="cloud",
-        action_type=ActionType.QUERY,
-        risk_level=RiskLevel.LOW,
-        webhook_path="/webhook/cloudflare/dns",
-        parameters=[
-            {"name": "zone_id", "type": "string", "required": True},
-        ],
-        description="Lấy DNS records từ Cloudflare"
-    ),
-    "cloudflare_analytics": SystemAction(
-        name="cloudflare_analytics",
-        display_name="Cloudflare Analytics",
-        system="cloud",
-        action_type=ActionType.QUERY,
-        risk_level=RiskLevel.LOW,
-        webhook_path="/webhook/cloudflare/analytics",
-        parameters=[
-            {"name": "zone_id", "type": "string", "required": False},
-            {"name": "period", "type": "string", "required": False},
-        ],
-        description="Lấy thống kê traffic"
-    ),
-    "cloudflare_stats": SystemAction(
-        name="cloudflare_stats",
-        display_name="Cloudflare Stats",
-        system="cloud",
-        action_type=ActionType.QUERY,
-        risk_level=RiskLevel.LOW,
-        webhook_path="/webhook/cloudflare/stats",
-        parameters=[
-            {"name": "zone_id", "type": "string", "required": True},
-        ],
-        description="Lấy stats Cloudflare"
-    ),
-    "cloudflare_firewall_rules": SystemAction(
-        name="cloudflare_firewall_rules",
-        display_name="Cloudflare Firewall Rules",
-        system="cloud",
-        action_type=ActionType.QUERY,
-        risk_level=RiskLevel.LOW,
-        webhook_path="/webhook/cloudflare/firewall",
-        parameters=[
-            {"name": "zone_id", "type": "string", "required": False},
-        ],
-        description="Lấy firewall rules"
-    ),
-    
-    # =============================================================================
-    # Veeam Backup Exec
-    # =============================================================================
-    "veeam_jobs": SystemAction(
-        name="veeam_jobs",
-        display_name="Veeam Backup Jobs",
-        system="backup",
-        action_type=ActionType.QUERY,
-        risk_level=RiskLevel.LOW,
-        webhook_path="/webhook/veeam/jobs",
-        description="Lấy danh sách backup jobs"
-    ),
-    "veeam_sessions": SystemAction(
-        name="veeam_sessions",
-        display_name="Veeam Sessions",
-        system="backup",
-        action_type=ActionType.QUERY,
-        risk_level=RiskLevel.LOW,
-        webhook_path="/webhook/veeam/sessions",
-        parameters=[
-            {"name": "limit", "type": "integer", "required": False},
-        ],
-        description="Lấy các phiên backup"
-    ),
-    "veeam_backups": SystemAction(
-        name="veeam_backups",
-        display_name="Veeam Backups",
-        system="backup",
-        action_type=ActionType.QUERY,
-        risk_level=RiskLevel.LOW,
-        webhook_path="/webhook/veeam/backups",
-        description="Lấy danh sách backups"
-    ),
-    "veeam_restore_points": SystemAction(
-        name="veeam_restore_points",
-        display_name="Veeam Restore Points",
-        system="backup",
-        action_type=ActionType.QUERY,
-        risk_level=RiskLevel.LOW,
-        webhook_path="/webhook/veeam/restore-points",
-        parameters=[
-            {"name": "backup_name", "type": "string", "required": False},
-        ],
-        description="Lấy restore points"
-    ),
-    "veeam_repositories": SystemAction(
-        name="veeam_repositories",
-        display_name="Veeam Repositories",
-        system="backup",
-        action_type=ActionType.QUERY,
-        risk_level=RiskLevel.LOW,
-        webhook_path="/webhook/veeam/repositories",
-        description="Lấy danh sách repositories"
-    ),
-    
-    # =============================================================================
-    # Database Monitoring
-    # =============================================================================
-    "db_mysql_status": SystemAction(
-        name="db_mysql_status",
-        display_name="MySQL Status",
-        system="database",
-        action_type=ActionType.QUERY,
-        risk_level=RiskLevel.LOW,
-        webhook_path="/webhook/db/mysql/status",
-        parameters=[
-            {"name": "host", "type": "string", "required": False},
-        ],
-        description="Lấy MySQL status"
-    ),
-    "db_mysql_connections": SystemAction(
-        name="db_mysql_connections",
-        display_name="MySQL Connections",
-        system="database",
-        action_type=ActionType.QUERY,
-        risk_level=RiskLevel.LOW,
-        webhook_path="/webhook/db/mysql/connections",
-        description="Lấy active connections"
-    ),
-    "db_mysql_size": SystemAction(
-        name="db_mysql_size",
-        display_name="MySQL Database Sizes",
-        system="database",
-        action_type=ActionType.QUERY,
-        risk_level=RiskLevel.LOW,
-        webhook_path="/webhook/db/mysql/size",
-        description="Lấy kích thước databases"
-    ),
-    "db_pg_status": SystemAction(
-        name="db_pg_status",
-        display_name="PostgreSQL Status",
-        system="database",
-        action_type=ActionType.QUERY,
-        risk_level=RiskLevel.LOW,
-        webhook_path="/webhook/db/postgresql/status",
-        parameters=[
-            {"name": "host", "type": "string", "required": False},
-        ],
-        description="Lấy PostgreSQL status"
-    ),
-    "db_pg_connections": SystemAction(
-        name="db_pg_connections",
-        display_name="PostgreSQL Connections",
-        system="database",
-        action_type=ActionType.QUERY,
-        risk_level=RiskLevel.LOW,
-        webhook_path="/webhook/db/postgresql/connections",
-        description="Lấy active connections"
-    ),
-    "db_pg_replication": SystemAction(
-        name="db_pg_replication",
-        display_name="PostgreSQL Replication",
-        system="database",
-        action_type=ActionType.QUERY,
-        risk_level=RiskLevel.LOW,
-        webhook_path="/webhook/db/postgresql/replication",
-        description="Lấy trạng thái replication"
-    ),
-    "db_mongo_status": SystemAction(
-        name="db_mongo_status",
-        display_name="MongoDB Status",
-        system="database",
-        action_type=ActionType.QUERY,
-        risk_level=RiskLevel.LOW,
-        webhook_path="/webhook/db/mongodb/status",
-        parameters=[
-            {"name": "host", "type": "string", "required": False},
-        ],
-        description="Lấy MongoDB status"
-    ),
-    "db_mongo_connections": SystemAction(
-        name="db_mongo_connections",
-        display_name="MongoDB Connections",
-        system="database",
-        action_type=ActionType.QUERY,
-        risk_level=RiskLevel.LOW,
-        webhook_path="/webhook/db/mongodb/connections",
-        description="Lấy active connections"
-    ),
-    "db_mongo_size": SystemAction(
-        name="db_mongo_size",
-        display_name="MongoDB Database Sizes",
-        system="database",
-        action_type=ActionType.QUERY,
-        risk_level=RiskLevel.LOW,
-        webhook_path="/webhook/db/mongodb/size",
-        description="Lấy kích thước databases"
-    ),
-    "db_redis_info": SystemAction(
-        name="db_redis_info",
-        display_name="Redis Info",
-        system="database",
-        action_type=ActionType.QUERY,
-        risk_level=RiskLevel.LOW,
-        webhook_path="/webhook/db/redis/info",
-        description="Lấy Redis info"
-    ),
-    "db_redis_keys": SystemAction(
-        name="db_redis_keys",
-        display_name="Redis Keys",
-        system="database",
-        action_type=ActionType.QUERY,
-        risk_level=RiskLevel.LOW,
-        webhook_path="/webhook/db/redis/keys",
-        parameters=[
-            {"name": "pattern", "type": "string", "required": False},
-            {"name": "limit", "type": "integer", "required": False},
-        ],
-        description="Lấy keys trong Redis"
-    ),
-    "db_redis_memory": SystemAction(
-        name="db_redis_memory",
-        display_name="Redis Memory Usage",
-        system="database",
-        action_type=ActionType.QUERY,
-        risk_level=RiskLevel.LOW,
-        webhook_path="/webhook/db/redis/memory",
-        description="Lấy memory usage"
-    ),
-    
-    # =============================================================================
-    # Kubernetes
-    # =============================================================================
-    "k8s_pods": SystemAction(
-        name="k8s_pods",
-        display_name="Kubernetes Pods",
-        system="kubernetes",
-        action_type=ActionType.QUERY,
-        risk_level=RiskLevel.LOW,
-        webhook_path="/webhook/k8s/pods",
-        parameters=[
-            {"name": "namespace", "type": "string", "required": False},
-        ],
-        description="Lấy danh sách pods"
-    ),
-    "k8s_services": SystemAction(
-        name="k8s_services",
-        display_name="Kubernetes Services",
-        system="kubernetes",
-        action_type=ActionType.QUERY,
-        risk_level=RiskLevel.LOW,
-        webhook_path="/webhook/k8s/services",
-        parameters=[
-            {"name": "namespace", "type": "string", "required": False},
-        ],
-        description="Lấy danh sách services"
-    ),
-    "k8s_nodes": SystemAction(
-        name="k8s_nodes",
-        display_name="Kubernetes Nodes",
-        system="kubernetes",
-        action_type=ActionType.QUERY,
-        risk_level=RiskLevel.LOW,
-        webhook_path="/webhook/k8s/nodes",
-        description="Lấy danh sách nodes"
-    ),
-    "k8s_events": SystemAction(
-        name="k8s_events",
-        display_name="Kubernetes Events",
-        system="kubernetes",
-        action_type=ActionType.QUERY,
-        risk_level=RiskLevel.LOW,
-        webhook_path="/webhook/k8s/events",
-        parameters=[
-            {"name": "namespace", "type": "string", "required": False},
-            {"name": "limit", "type": "integer", "required": False},
-        ],
-        description="Lấy events"
+        webhook_path="/webhook/system/metrics",
+        description="Lấy metrics hệ thống"
     ),
 }
 
 
 class N8NConnector:
-    """
-    Connector to n8n webhooks for internal system integration
-    """
+    """n8n webhook connector with approval workflow."""
     
-    def __init__(
-        self,
-        base_url: str = "http://localhost:5678",
-        api_key: Optional[str] = None,
-        timeout: int = 30,
-        approval_store: Optional[Dict[str, ActionRequest]] = None,
-    ):
-        self.base_url = base_url.rstrip("/")
-        self.api_key = api_key
-        self.timeout = timeout
-        self.approval_store = approval_store or {}  # In-memory store
-        
-        # HTTP client
+    def __init__(self, base_url: str = "", api_key: str = "", webhook_secret: str = ""):
+        from src.config import get_settings
+        settings = get_settings()
+        self.base_url = base_url or settings.n8n_base_url or "http://localhost:5678"
+        self.api_key = api_key or settings.n8n_api_key or ""
+        self.webhook_secret = webhook_secret or settings.n8n_webhook_secret or ""
         self._client: Optional[httpx.AsyncClient] = None
     
     async def _get_client(self) -> httpx.AsyncClient:
-        """Get or create HTTP client"""
         if self._client is None:
-            headers = {}
+            headers = {"Content-Type": "application/json"}
             if self.api_key:
-                headers["Authorization"] = f"Bearer {self.api_key}"
-            
-            self._client = httpx.AsyncClient(
-                base_url=self.base_url,
-                headers=headers,
-                timeout=self.timeout,
-            )
+                headers["X-N8N-API-KEY"] = self.api_key
+            if self.webhook_secret:
+                headers["X-Webhook-Secret"] = self.webhook_secret
+            self._client = httpx.AsyncClient(base_url=self.base_url, headers=headers, timeout=30)
         return self._client
     
+    async def trigger_workflow(self, webhook_path: str, payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Trigger an n8n webhook workflow and return the result."""
+        try:
+            client = await self._get_client()
+            response = await client.post(
+                webhook_path,
+                json=payload,
+            )
+            if response.status_code in (200, 201):
+                return response.json()
+            logger.warning("n8n_workflow_failed", path=webhook_path, status=response.status_code)
+            return None
+        except Exception as e:
+            logger.warning("n8n_workflow_error", path=webhook_path, error=str(e))
+            return None
+    
+    async def get_ticket_detail(self, ticket_id: str, system: str = "itc") -> Optional[Dict[str, Any]]:
+        """Get ticket details by ID.
+        
+        Tries:
+        1. n8n webhook (itc_ticket_detail or ticket_get)
+        2. Direct ITC API call if configured
+        3. Returns None if both fail
+        
+        Args:
+            ticket_id: The ticket ID to look up
+            system: Which system to query ("itc", "jira", "itsm")
+            
+        Returns:
+            Dict with ticket details or None
+        """
+        # Map system to appropriate webhook
+        webhooks = {
+            "itc": "/webhook/itc/ticket-detail",
+            "jira": "/webhook/jira/issue-detail",
+            "itsm": "/webhook/itsm/get-ticket",
+        }
+        webhook_path = webhooks.get(system, "/webhook/itc/ticket-detail")
+        
+        # Try n8n first
+        result = await self.trigger_workflow(webhook_path, {"ticket_id": ticket_id})
+        if result:
+            return result
+        
+        # Fallback: try direct ITC API
+        try:
+            from src.config import get_settings
+            settings = get_settings()
+            itc_api_url = getattr(settings, 'itc_api_url', None)
+            if itc_api_url:
+                async with httpx.AsyncClient(timeout=30) as client:
+                    response = await client.get(
+                        f"{itc_api_url}/WorkOrder.do",
+                        params={"woMode": "viewWO", "woID": ticket_id}
+                    )
+                    if response.status_code == 200:
+                        content = response.text
+                        import re
+                        subject = ""
+                        desc = ""
+                        subject_match = re.search(r'<subject>([^<]+)</subject>', content, re.IGNORECASE)
+                        if subject_match:
+                            subject = subject_match.group(1).strip()
+                        desc_match = re.search(r'<description>([^<]+)</description>', content, re.IGNORECASE)
+                        if desc_match:
+                            desc = desc_match.group(1).strip()
+                        if subject or desc:
+                            return {
+                                "ticket_id": ticket_id,
+                                "subject": subject or f"Ticket #{ticket_id}",
+                                "description": desc,
+                                "status": "unknown",
+                                "source": "itc_api_direct",
+                            }
+        except Exception as e:
+            logger.debug("direct_itc_api_failed", ticket_id=ticket_id, error=str(e))
+        
+        return None
+    
     async def close(self):
-        """Close HTTP client"""
         if self._client:
             await self._client.aclose()
             self._client = None
-    
-    async def execute_query(
-        self,
-        action_name: str,
-        parameters: Dict[str, Any],
-        user_id: str = "system",
-    ) -> Dict[str, Any]:
-        """
-        Execute a read-only query (no approval needed)
-        """
-        if action_name not in SYSTEM_ACTIONS:
-            return {
-                "success": False,
-                "error": f"Unknown action: {action_name}",
-            }
-        
-        action_def = SYSTEM_ACTIONS[action_name]
-        
-        if action_def.action_type != ActionType.QUERY:
-            return {
-                "success": False,
-                "error": f"Action {action_name} requires approval. Use request_action() instead.",
-            }
-        
-        return await self._execute_webhook(action_def, parameters, user_id)
-    
-    def request_action(
-        self,
-        action_name: str,
-        parameters: Dict[str, Any],
-        user_id: str,
-        user_display_name: str = "Unknown",
-    ) -> ActionRequest:
-        """
-        Request an action that requires approval
-        Returns an ActionRequest that needs to be approved
-        """
-        if action_name not in SYSTEM_ACTIONS:
-            raise ValueError(f"Unknown action: {action_name}")
-        
-        action_def = SYSTEM_ACTIONS[action_name]
-        
-        if action_def.action_type == ActionType.QUERY:
-            raise ValueError(f"Action {action_name} is a query, no approval needed. Use execute_query() instead.")
-        
-        # Generate request ID
-        import uuid
-        request_id = str(uuid.uuid4())[:8]
-        
-        # Create approval request
-        request = ActionRequest(
-            request_id=request_id,
-            action_type=action_name,
-            system=action_def.system,
-            action=action_def.display_name,
-            parameters=parameters,
-            risk_level=action_def.risk_level,
-            requested_by=user_display_name,
-        )
-        
-        # Store for later approval
-        self.approval_store[request_id] = request
-
-        # ← FIX: notify n8n immediately so external systems know a request is pending
-        try:
-            import asyncio
-            loop = asyncio.get_running_loop()
-            loop.create_task(self._notify_n8n_request(request_id, action_def, parameters, user_display_name))
-        except RuntimeError:
-            asyncio.get_event_loop().run_until_complete(
-                self._notify_n8n_request(request_id, action_def, parameters, user_display_name)
-            )
-
-        logger.info("Action requested",
-                   request_id=request_id,
-                   action=action_name,
-                   risk_level=action_def.risk_level.value,
-                   requested_by=user_display_name)
-
-        return request
-
-    async def _notify_n8n_request(
-        self,
-        request_id: str,
-        action_def,  # SystemAction
-        parameters: Dict[str, Any],
-        user_display_name: str,
-    ):
-        """Fire-and-forget notification to n8n that a request is pending."""
-        try:
-            import httpx
-            async with httpx.AsyncClient(timeout=5.0) as client:
-                await client.post(
-                    f"{self.base_url}/webhook/n8n/action-requested",
-                    json={
-                        "request_id": request_id,
-                        "action": action_def.name,
-                        "system": action_def.system,
-                        "parameters": parameters,
-                        "requested_by": user_display_name,
-                        "risk_level": action_def.risk_level.value,
-                        "status": "pending_approval",
-                    },
-                )
-        except Exception as e:
-            logger.warning("n8n action-requested notification failed", error=str(e))
-    
-    def approve_action(
-        self,
-        request_id: str,
-        approver_name: str = "Admin",
-    ) -> ActionRequest:
-        """
-        Approve a pending action request
-        """
-        if request_id not in self.approval_store:
-            raise ValueError(f"Request not found: {request_id}")
-        
-        request = self.approval_store[request_id]
-        
-        if request.status != "pending":
-            raise ValueError(f"Request already {request.status}")
-        
-        # Get action definition
-        action_def = SYSTEM_ACTIONS.get(request.action_type)
-        if not action_def:
-            raise ValueError(f"Unknown action type: {request.action_type}")
-        
-        # Mark as approved
-        request.status = "approved"
-        request.approved_by = approver_name
-        request.approved_at = datetime.now(timezone.utc)
-        
-        logger.info("Action approved", 
-                   request_id=request_id,
-                   approver=approver_name)
-        
-        return request
-    
-    def reject_action(
-        self,
-        request_id: str,
-        rejector_name: str = "Admin",
-        reason: str = "",
-    ) -> ActionRequest:
-        """
-        Reject a pending action request
-        """
-        if request_id not in self.approval_store:
-            raise ValueError(f"Request not found: {request_id}")
-        
-        request = self.approval_store[request_id]
-        
-        if request.status != "pending":
-            raise ValueError(f"Request already {request.status}")
-        
-        request.status = "rejected"
-        request.result = {"rejected": True, "reason": reason}
-        
-        logger.info("Action rejected", 
-                   request_id=request_id,
-                   rejector=rejector_name,
-                   reason=reason)
-        
-        return request
-    
-    async def execute_approved_action(
-        self,
-        request_id: str,
-    ) -> Dict[str, Any]:
-        """
-        Execute an approved action
-        """
-        if request_id not in self.approval_store:
-            return {
-                "success": False,
-                "error": f"Request not found: {request_id}",
-            }
-        
-        request = self.approval_store[request_id]
-        
-        if request.status != "approved":
-            return {
-                "success": False,
-                "error": f"Request not approved. Status: {request.status}",
-            }
-        
-        # Get action definition
-        action_def = SYSTEM_ACTIONS.get(request.action_type)
-        if not action_def:
-            return {
-                "success": False,
-                "error": f"Unknown action type: {request.action_type}",
-            }
-        
-        # Execute webhook
-        result = await self._execute_webhook(action_def, request.parameters, request.requested_by)
-        
-        # Store result
-        request.result = result
-        request.status = "executed"
-        
-        logger.info("Action executed",
-                   request_id=request_id,
-                   action=request.action_type,
-                   success=result.get("success", False))
-        
-        return result
-    
-    async def _execute_webhook(
-        self,
-        action_def: SystemAction,
-        parameters: Dict[str, Any],
-        user_id: str,
-    ) -> Dict[str, Any]:
-        """Execute n8n webhook"""
-        try:
-            client = await self._get_client()
-            
-            # Build webhook URL
-            url = f"{self.base_url}{action_def.webhook_path}"
-            
-            # Build payload
-            payload = {
-                "action": action_def.name,
-                "system": action_def.system,
-                "parameters": parameters,
-                "triggered_by": user_id,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-            }
-            
-            logger.debug("Executing webhook",
-                        url=url,
-                        action=action_def.name)
-            
-            # Execute
-            response = await client.post(url, json=payload)
-            
-            if response.status_code == 200:
-                return {
-                    "success": True,
-                    "data": response.json() if response.text else {},
-                }
-            else:
-                return {
-                    "success": False,
-                    "error": f"HTTP {response.status_code}",
-                    "details": response.text[:500],
-                }
-                
-        except httpx.ConnectError:
-            return {
-                "success": False,
-                "error": f"Cannot connect to n8n at {self.base_url}",
-            }
-        except Exception as e:
-            logger.error("Webhook execution failed", error=str(e))
-            return {
-                "success": False,
-                "error": str(e),
-            }
-    
-    def get_pending_approvals(
-        self,
-        system: Optional[str] = None,
-        risk_level: Optional[RiskLevel] = None,
-    ) -> List[ActionRequest]:
-        """Get all pending approval requests"""
-        pending = [
-            req for req in self.approval_store.values()
-            if req.status == "pending"
-        ]
-        
-        if system:
-            pending = [req for req in pending if req.system == system]
-        
-        if risk_level:
-            pending = [req for req in pending if req.risk_level == risk_level]
-        
-        return sorted(pending, key=lambda x: x.requested_at)
-    
-    def get_available_actions(self, action_type: Optional[ActionType] = None) -> List[SystemAction]:
-        """Get list of available actions"""
-        actions = list(SYSTEM_ACTIONS.values())
-        
-        if action_type:
-            actions = [a for a in actions if a.action_type == action_type]
-        
-        return actions
-
-
-# Global connector instance (lazy initialization)
-_connector: Optional[N8NConnector] = None
 
 
 def get_n8n_connector() -> N8NConnector:
-    """Get or create global n8n connector"""
-    global _connector
-    if _connector is None:
-        import os
-        _connector = N8NConnector(
-            base_url=os.getenv("N8N_BASE_URL", "http://localhost:5678"),
-            api_key=os.getenv("N8N_API_KEY"),
-        )
-    return _connector
+    """Get or create n8n connector singleton."""
+    from src.config import get_settings
+    settings = get_settings()
+    return N8NConnector(
+        base_url=settings.n8n_base_url,
+        api_key=settings.n8n_api_key,
+        webhook_secret=settings.n8n_webhook_secret,
+    )
+
+
+__all__ = [
+    "N8NConnector", "get_n8n_connector",
+    "SystemAction", "ActionRequest",
+    "ActionType", "RiskLevel",
+    "SYSTEM_ACTIONS",
+]
