@@ -16,6 +16,7 @@ class IntentType(str, Enum):
     EXECUTIVE_REQUEST = "executive_request"
     SYSTEM_QUERY = "system_query"
     GUIDE_REQUEST = "guide_request"
+    UNKNOWN = "unknown"
 
 
 class RiskLevel(str, Enum):

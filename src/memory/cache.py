@@ -155,6 +155,26 @@ class RedisCache:
             logger.warning("Redis SREM failed", key=key, error=str(e))
             return 0
 
+    async def get_info(self) -> dict:
+        """Get Redis server info. Returns {} on failure."""
+        if not self._client:
+            return {}
+        try:
+            return await self._client.info()
+        except redis.RedisError as e:
+            logger.warning("Redis INFO failed", error=str(e))
+            return {}
+
+    async def get_keys_pattern(self, pattern: str) -> list[str]:
+        """Get keys matching a pattern. Returns [] on failure."""
+        if not self._client:
+            return []
+        try:
+            return await self._client.keys(pattern)
+        except redis.RedisError as e:
+            logger.warning("Redis KEYS failed", pattern=pattern, error=str(e))
+            return []
+
     @property
     def is_connected(self) -> bool:
         return self._connected

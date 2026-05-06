@@ -317,7 +317,7 @@ async def test_register_bot_commands_includes_health(monkeypatch):
             raise AssertionError(f"Unexpected GET {url}")
 
     class FakeHttpx:
-        def AsyncClient(self, self_arg=None):
+        def AsyncClient(self, self_arg=None, **kwargs):
             return FakeClient()
 
     monkeypatch.setattr("src.gateway.platforms.telegram.httpx", FakeHttpx())
@@ -374,7 +374,7 @@ async def test_handle_kb_command_search_shows_paginated_results(monkeypatch):
             return FakeResponse()
 
     class FakeHttpx:
-        def AsyncClient(self, self_arg=None):
+        def AsyncClient(self, self_arg=None, **kwargs):
             return FakeClient()
 
     monkeypatch.setattr("src.gateway.platforms.telegram.httpx", FakeHttpx())
@@ -451,7 +451,7 @@ async def test_handle_kb_command_candidates_shows_pending_drafts(monkeypatch):
             return FakeResponse()
 
     class FakeHttpx:
-        def AsyncClient(self, self_arg=None):
+        def AsyncClient(self, self_arg=None, **kwargs):
             return FakeClient()
 
     monkeypatch.setattr("src.gateway.platforms.telegram.httpx", FakeHttpx())
@@ -532,7 +532,7 @@ async def test_handle_kb_callback_pages_results(monkeypatch):
             return FakeResponse()
 
     class FakeHttpx:
-        def AsyncClient(self, self_arg=None):
+        def AsyncClient(self, self_arg=None, **kwargs):
             return FakeClient()
 
     monkeypatch.setattr("src.gateway.platforms.telegram.httpx", FakeHttpx())
@@ -590,7 +590,7 @@ async def test_handle_super_analytics_command_fetches_report(monkeypatch):
             return FakeResponse()
 
     class FakeHttpx:
-        def AsyncClient(self, self_arg=None):
+        def AsyncClient(self, self_arg=None, **kwargs):
             return FakeClient()
 
     monkeypatch.setattr("src.gateway.platforms.telegram.httpx", FakeHttpx())
@@ -642,7 +642,7 @@ async def test_handle_callback_query_approves_and_edits_message(monkeypatch, sam
             return FakeResponse()
 
     class FakeHttpx:
-        def AsyncClient(self, self_arg=None):
+        def AsyncClient(self, self_arg=None, **kwargs):
             return FakeClient()
 
     monkeypatch.setattr("src.gateway.platforms.telegram.httpx", FakeHttpx())
@@ -700,7 +700,7 @@ async def test_handle_callback_query_rejects_with_default_comment(monkeypatch, s
             return FakeResponse()
 
     class FakeHttpx:
-        def AsyncClient(self, self_arg=None):
+        def AsyncClient(self, self_arg=None, **kwargs):
             return FakeClient()
 
     monkeypatch.setattr("src.gateway.platforms.telegram.httpx", FakeHttpx())

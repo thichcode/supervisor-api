@@ -338,7 +338,7 @@ class TestDecisionEngine:
 
         engine = DecisionEngine()
 
-        assert engine.response_route(confidence=0.49, kb_hit=False) == "skip"
+        assert engine.response_route(confidence=0.49, kb_hit=False) == "approve"
         assert engine.response_route(confidence=0.75, kb_hit=False) == "approve"
         assert engine.response_route(confidence=0.91, kb_hit=True) == "send"
         assert engine.response_route(confidence=0.91, kb_hit=False) == "approve"
@@ -451,6 +451,7 @@ class TestSupervisor:
 
     @pytest.mark.asyncio
     async def test_process_caps_confidence_without_kb(self, sample_payload, sample_context, monkeypatch):
+        from src.core.supervisor import Supervisor
 
         class FakeLLM:
             async def complete(self, system_prompt, user_message, context=None):

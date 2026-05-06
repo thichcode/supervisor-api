@@ -4,24 +4,43 @@ from functools import lru_cache
 from typing import Any, Literal
 
 from pydantic import Field
-from pydantic_settings import BaseSettings, EnvSettingsSource, PydanticBaseSettingsSource, SettingsConfigDict
+from pydantic_settings import BaseSettings, EnvSettingsSource, DotEnvSettingsSource, PydanticBaseSettingsSource, SettingsConfigDict
 
 
-class CommaSeparatedEnvSettingsSource(EnvSettingsSource):
+class _CommaSeparatedMixin:
+    """Mixin to parse comma-separated or JSON array fields."""
+
+    _CSV_FIELDS = {"cors_allowed_origins", "extra_hosts"}
+
     def prepare_field_value(self, field_name: str, field: Any, value: Any, value_is_complex: bool):
-        if field_name in {"cors_allowed_origins", "extra_hosts"} and isinstance(value, str):
-            raw = value.strip()
-            if not raw:
+        if field_name in self._CSV_FIELDS:
+            if value is None:
                 default_value = getattr(field, "default", None)
                 return default_value if default_value is not None else []
-            try:
-                parsed = json.loads(raw)
-                if isinstance(parsed, list):
-                    return parsed
-            except Exception:
-                pass
-            return [item.strip() for item in raw.split(",") if item.strip()]
+            if isinstance(value, str):
+                raw = value.strip()
+                if not raw:
+                    default_value = getattr(field, "default", None)
+                    return default_value if default_value is not None else []
+                try:
+                    parsed = json.loads(raw)
+                    if isinstance(parsed, list):
+                        return [str(item) for item in parsed]
+                except Exception:
+                    pass
+                parts = [item.strip() for item in raw.split(",") if item.strip()]
+                return parts if parts else (getattr(field, "default", None) or [])
+            if isinstance(value, list):
+                return [str(item) for item in value]
         return super().prepare_field_value(field_name, field, value, value_is_complex)
+
+
+class CommaSeparatedEnvSettingsSource(_CommaSeparatedMixin, EnvSettingsSource):
+    pass
+
+
+class CommaSeparatedDotEnvSettingsSource(_CommaSeparatedMixin, DotEnvSettingsSource):
+    pass
 
 
 class Settings(BaseSettings):
@@ -241,7 +260,7 @@ class Settings(BaseSettings):
         return (
             init_settings,
             CommaSeparatedEnvSettingsSource(settings_cls),
-            dotenv_settings,
+            CommaSeparatedDotEnvSettingsSource(settings_cls),
             file_secret_settings,
         )
 
