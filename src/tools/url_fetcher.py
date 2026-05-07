@@ -1,15 +1,71 @@
 """
 URL Fetcher - Auto-detect and fetch URLs from user messages
 Useful for identifying internal company resources mentioned in messages
+
+Features:
+- LRU cache với TTL=300s (5 phút)
+- Dùng html.parser thay regex (không cần thêm dependency)
+- Cache key = URL hash
 """
 
 import re
+import asyncio
+import time
+import hashlib
 import httpx
 from typing import Optional, List, Dict, Any
 from urllib.parse import urlparse
+from html.parser import HTMLParser
 import structlog
 
 logger = structlog.get_logger()
+
+URL_CACHE_TTL = 300  # 5 minutes
+
+
+class _URLCacheEntry:
+    """Cache entry với TTL"""
+    def __init__(self, value: Any, expires_at: float):
+        self.value = value
+        self.expires_at = expires_at
+    
+    def is_expired(self) -> bool:
+        return time.time() > self.expires_at
+
+
+class _URLCache:
+    """Simple LRU cache với TTL cho URL fetcher"""
+    def __init__(self, max_size: int = 100, ttl: int = URL_CACHE_TTL):
+        self._cache: Dict[str, _URLCacheEntry] = {}
+        self._max_size = max_size
+        self._ttl = ttl
+    
+    def _make_key(self, url: str) -> str:
+        return hashlib.md5(url.encode()).hexdigest()
+    
+    def get(self, url: str) -> Optional[Any]:
+        key = self._make_key(url)
+        entry = self._cache.get(key)
+        if entry and not entry.is_expired():
+            return entry.value
+        elif entry:
+            del self._cache[key]
+        return None
+    
+    def set(self, url: str, value: Any) -> None:
+        key = self._make_key(url)
+        if len(self._cache) >= self._max_size:
+            oldest_key = min(self._cache.keys(), key=lambda k: self._cache[k].expires_at)
+            del self._cache[oldest_key]
+        self._cache[key] = _URLCacheEntry(value, time.time() + self._ttl)
+    
+    def clear_expired(self) -> None:
+        expired_keys = [k for k, v in self._cache.items() if v.is_expired()]
+        for k in expired_keys:
+            del self._cache[k]
+
+
+_url_fetch_cache = _URLCache()
 
 # Common URL patterns
 URL_PATTERN = re.compile(
@@ -156,8 +212,21 @@ class URLFetcher:
         
         return False
     
-    async def fetch_url(self, url: str) -> URLInfo:
-        """Fetch single URL and extract metadata"""
+    async def fetch_url(self, url: str, use_cache: bool = True) -> URLInfo:
+        """Fetch single URL and extract metadata.
+        
+        Args:
+            url: URL to fetch
+            use_cache: Whether to use LRU cache (default: True)
+        """
+        global _url_fetch_cache
+        
+        if use_cache:
+            cached_result = _url_fetch_cache.get(url)
+            if cached_result is not None:
+                logger.debug("url_fetcher_cache_hit", url=url)
+                return cached_result
+        
         parsed = urlparse(url)
         domain = parsed.netloc
         
@@ -185,13 +254,11 @@ class URLFetcher:
                 if response.status_code == 200:
                     content_type = response.headers.get("content-type", "")
                     
-                    # Parse HTML content
                     if "text/html" in content_type:
                         html = response.text
                         url_info.title = self._extract_title(html)
                         url_info.description = self._extract_description(html)
                     else:
-                        # For non-HTML, just note the content type
                         url_info.description = f"Content-Type: {content_type}"
                 else:
                     url_info.fetch_error = f"HTTP {response.status_code}"
@@ -203,36 +270,85 @@ class URLFetcher:
         except Exception as e:
             url_info.fetch_error = f"Error: {str(e)[:50]}"
         
+        if use_cache:
+            _url_fetch_cache.set(url, url_info)
+        
         return url_info
     
     def _extract_title(self, html: str) -> Optional[str]:
-        """Extract title from HTML"""
+        """Extract title from HTML using html.parser"""
+        class TitleParser(HTMLParser):
+            def __init__(self):
+                super().__init__()
+                self.title = None
+                self.og_title = None
+                self.current_tag = None
+                self.current_attrs = {}
+                
+            def handle_starttag(self, tag: str, attrs: list[tuple[str, str]]) -> None:
+                self.current_tag = tag
+                self.current_attrs = dict(attrs)
+                if tag == "title":
+                    self.title = ""
+                elif tag == "meta":
+                    prop = self.current_attrs.get("property", "") or self.current_attrs.get("name", "")
+                    if prop.lower() == "og:title":
+                        content = self.current_attrs.get("content", "")
+                        if content:
+                            self.og_title = content.strip()
+            
+            def handle_endtag(self, tag: str) -> None:
+                if tag == "title":
+                    self.current_tag = None
+            
+            def handle_data(self, data: str) -> None:
+                if self.current_tag == "title":
+                    self.title = (self.title or "") + data
+        
         try:
-            # Simple regex for title (avoiding lxml/BeautifulSoup dependency)
-            title_match = re.search(r'<title[^>]*>([^<]+)</title>', html, re.IGNORECASE)
-            if title_match:
-                return title_match.group(1).strip()
+            parser = TitleParser()
+            parser.feed(html)
             
-            # Fallback: og:title
-            og_match = re.search(r'<meta[^>]+property=["\']og:title["\'][^>]+content=["\']([^"\']+)["\']', html, re.IGNORECASE)
-            if og_match:
-                return og_match.group(1).strip()
-            
+            if parser.title:
+                return parser.title.strip()
+            if parser.og_title:
+                return parser.og_title.strip()
             return None
         except Exception:
             return None
     
     def _extract_description(self, html: str) -> Optional[str]:
-        """Extract description from HTML"""
-        try:
-            # Meta description
-            desc_match = re.search(
-                r'<meta[^>]+name=["\']description["\'][^>]+content=["\']([^"\']+)["\']',
-                html, re.IGNORECASE
-            )
-            if desc_match:
-                return desc_match.group(1).strip()[:200]
+        """Extract description from HTML using html.parser"""
+        class DescriptionParser(HTMLParser):
+            def __init__(self):
+                super().__init__()
+                self.description = None
+                self.og_description = None
+                self.current_tag = None
+                self.current_attrs = {}
+                
+            def handle_starttag(self, tag: str, attrs: list[tuple[str, str]]) -> None:
+                self.current_tag = tag
+                self.current_attrs = dict(attrs)
+                if tag == "meta":
+                    name = (self.current_attrs.get("name", "") or self.current_attrs.get("property", "")).lower()
+                    content = self.current_attrs.get("content", "")
+                    if name == "description" and content:
+                        self.description = content.strip()
+                    elif name == "og:description" and content:
+                        self.og_description = content.strip()
             
+            def handle_endtag(self, tag: str) -> None:
+                self.current_tag = None
+        
+        try:
+            parser = DescriptionParser()
+            parser.feed(html)
+            
+            if parser.description:
+                return parser.description[:200].strip()
+            if parser.og_description:
+                return parser.og_description[:200].strip()
             return None
         except Exception:
             return None
@@ -281,3 +397,20 @@ class URLFetcher:
 
 # Global instance (can be configured)
 url_fetcher = URLFetcher()
+
+
+def get_url_cache_stats() -> dict:
+    """Get URL cache statistics."""
+    global _url_fetch_cache
+    return {
+        "size": len(_url_fetch_cache._cache),
+        "max_size": _url_fetch_cache._max_size,
+        "ttl_seconds": _url_fetch_cache._ttl,
+    }
+
+
+def clear_url_cache() -> None:
+    """Clear the URL fetch cache."""
+    global _url_fetch_cache
+    _url_fetch_cache._cache.clear()
+    logger.info("url_cache_cleared")

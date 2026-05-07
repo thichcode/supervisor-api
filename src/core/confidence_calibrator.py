@@ -68,7 +68,8 @@ class ConfidenceCalibrator:
     1. Track accuracy per query_type (faq, policy, support_case, etc.)
     2. Track accuracy per user_id (some users may be harder to satisfy)
     3. Track accuracy per model_name (some models may be less reliable)
-    4. Apply calibration factor: calibrated = raw * calibration_factor
+    4. Track accuracy per tool_name (for tool success rate)
+    5. Apply calibration factor: calibrated = raw * calibration_factor
     
     The calibration factor is bounded [0.5, 1.0] to prevent over-penalizing.
     """
@@ -77,6 +78,7 @@ class ConfidenceCalibrator:
         self._stats: dict[str, CalibrationStats] = {}
         self._user_stats: dict[str, CalibrationStats] = {}
         self._model_stats: dict[str, CalibrationStats] = {}
+        self._tool_stats: dict[str, CalibrationStats] = {}  # NEW: tool success rate tracking
         self._decay_half_life_days = 30  # Exponential decay weight for old data
         
     def _get_or_create(self, store: dict, key: str) -> CalibrationStats:
@@ -121,6 +123,29 @@ class ConfidenceCalibrator:
             is_positive=is_positive,
             type_accuracy=stats.recent_accuracy_value,
         )
+    
+    def record_tool_outcome(self, tool_name: str, success: bool) -> None:
+        """Record tool execution outcome for success rate tracking.
+        
+        Args:
+            tool_name: Name of the tool (e.g., 'web_search', 'n8n', 'read_file')
+            success: Whether the tool execution was successful
+        """
+        tool_stats = self._get_or_create(self._tool_stats, tool_name)
+        tool_stats.record_outcome(success)
+        
+        logger.debug(
+            "tool_success_rate_recorded",
+            tool_name=tool_name,
+            success=success,
+            tool_accuracy=tool_stats.recent_accuracy_value,
+        )
+    
+    def get_tool_success_rate(self, tool_name: str) -> float:
+        """Get success rate for a specific tool."""
+        if tool_name not in self._tool_stats:
+            return 0.5  # Default: no data yet
+        return self._tool_stats[tool_name].recent_accuracy_value
     
     def calibrate(self, raw_confidence: float, query_type: str = "unknown", 
                   user_id: Optional[str] = None, model_name: Optional[str] = None) -> float:
@@ -217,6 +242,13 @@ class ConfidenceCalibrator:
                     reverse=True
                 )[:10]
             },
+            "by_tool": {
+                k: v.to_dict() for k, v in sorted(
+                    self._tool_stats.items(),
+                    key=lambda x: x[1].total,
+                    reverse=True
+                )[:10]
+            },
         }
     
     def to_state(self) -> dict:
@@ -225,6 +257,7 @@ class ConfidenceCalibrator:
             "stats": {k: v.to_dict() for k, v in self._stats.items()},
             "user_stats": {k: v.to_dict() for k, v in self._user_stats.items()},
             "model_stats": {k: v.to_dict() for k, v in self._model_stats.items()},
+            "tool_stats": {k: v.to_dict() for k, v in self._tool_stats.items()},
         }
     
     def load_state(self, state: dict) -> None:
@@ -246,6 +279,51 @@ class ConfidenceCalibrator:
             stats.total = data.get("total", 0)
             stats.correct = data.get("correct", 0)
             stats.incorrect = data.get("incorrect", 0)
+        
+        for key, data in state.get("tool_stats", {}).items():
+            stats = self._get_or_create(self._tool_stats, key)
+            stats.total = data.get("total", 0)
+            stats.correct = data.get("correct", 0)
+            stats.incorrect = data.get("incorrect", 0)
+    
+    async def persist_to_redis(self, redis_cache, ttl_seconds: int = 86400 * 7) -> bool:
+        """Persist calibrator state to Redis.
+        
+        Args:
+            redis_cache: RedisCache instance
+            ttl_seconds: Time to live in seconds (default: 7 days)
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            state = self.to_state()
+            await redis_cache.set_json("confidence_calibrator_state", state, ttl=ttl_seconds)
+            logger.info("confidence_calibrator_persisted", ttl_seconds=ttl_seconds)
+            return True
+        except Exception as e:
+            logger.warning("confidence_calibrator_persist_failed", error=str(e))
+            return False
+    
+    async def load_from_redis(self, redis_cache) -> bool:
+        """Load calibrator state from Redis.
+        
+        Args:
+            redis_cache: RedisCache instance
+            
+        Returns:
+            True if loaded successfully, False otherwise
+        """
+        try:
+            state = await redis_cache.get_json("confidence_calibrator_state")
+            if state:
+                self.load_state(state)
+                logger.info("confidence_calibrator_loaded", keys=len(state))
+                return True
+            return False
+        except Exception as e:
+            logger.warning("confidence_calibrator_load_failed", error=str(e))
+            return False
 
 
 __all__ = ["ConfidenceCalibrator", "CalibrationStats"]

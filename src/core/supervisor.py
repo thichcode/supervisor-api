@@ -27,6 +27,37 @@ import structlog
 
 logger = structlog.get_logger()
 
+_intent_cache: Dict[str, IntentClassification] = {}
+_intent_cache_ttl = 300  # 5 minutes
+_intent_cache_max_size = 200
+
+
+def _get_intent_cache_key(text: str, user_id: str) -> str:
+    """Generate cache key for intent classification."""
+    return sha256(f"{text[:100]}:{user_id}".encode()).hexdigest()
+
+
+def _get_cached_intent(text: str, user_id: str) -> Optional[IntentClassification]:
+    """Get cached intent classification result."""
+    key = _get_intent_cache_key(text, user_id)
+    result = _intent_cache.get(key)
+    if result:
+        logger.debug("intent_cache_hit", key=key[:8])
+    return result
+
+
+def _set_cached_intent(text: str, user_id: str, result: IntentClassification) -> None:
+    """Set cached intent classification result."""
+    global _intent_cache
+    if len(_intent_cache) >= _intent_cache_max_size:
+        keys_to_remove = list(_intent_cache.keys())[:_intent_cache_max_size // 4]
+        for k in keys_to_remove:
+            del _intent_cache[k]
+    
+    key = _get_intent_cache_key(text, user_id)
+    _intent_cache[key] = result
+    logger.debug("intent_cache_set", key=key[:8])
+
 
 # Import NEW modules (v2 enhancements)
 try:
@@ -85,22 +116,22 @@ class DecisionEngine:
     def response_route(self, confidence: float, kb_hit: bool = False) -> str:
         """Classify how a response should be delivered.
 
+        Multi-level routing:
+        - skip: confidence < 0.5 (no meaningful answer)
+        - approve: 0.5 <= confidence < 0.9 (needs human approval)
+        - send: confidence >= 0.9 AND kb_hit (auto-send with KB evidence)
+        
         Returns one of:
-        - "skip": do not send the response (only for very low confidence < 0.3)
-        - "approve": keep the response pending human approval
+        - "skip": do not send the response
+        - "approve": keep the response pending human approval  
         - "send": send immediately
-
-        High-confidence responses only auto-send when they are backed by KB.
         """
-        # Very low confidence: skip entirely (no meaningful answer)
-        if confidence < 0.3:
+        if confidence < 0.5:
             return "skip"
 
-        # High confidence + KB hit: auto-send
         if confidence >= 0.9 and kb_hit:
             return "send"
 
-        # Everything else: needs approval (always provide some answer)
         return "approve"
 
     def needs_human_review(
@@ -876,10 +907,22 @@ class Supervisor:
     async def _classify_intent(
         self, payload: InputPayload, memory: MemoryContextModel
     ) -> IntentClassification:
+        message_text = payload.message.text or ""
+        
+        cached_result = _get_cached_intent(message_text, payload.user.id)
+        if cached_result:
+            logger.info("intent_classification_cached", user_id=payload.user.id)
+            return cached_result
+        
         from src.core.intent_classifier import IntentClassifier
 
         classifier = IntentClassifier(llm=self._llm, preferred_model=getattr(get_settings(), "primary_llm_model", None))
-        return await classifier.classify(payload, memory)
+        result = await classifier.classify(payload, memory)
+        
+        if result.confidence > 0.5:
+            _set_cached_intent(message_text, payload.user.id, result)
+        
+        return result
 
     def _evaluate_risk(self, payload: InputPayload, memory: MemoryContextModel) -> RiskEvaluation:
         from src.core.risk_evaluator import RiskEvaluator

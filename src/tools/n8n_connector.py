@@ -2,16 +2,30 @@
 n8n Connector - Connect to internal systems via n8n webhooks
 Supports both query (read) and action (write/execute) operations
 with approval workflow for actions
+
+Features:
+- Exponential backoff retry (base_delay=1s, retries=3)
+- Circuit breaker integration
+- Approval workflow for write operations
 """
 
+import asyncio
 import httpx
 from typing import Optional, List, Dict, Any
 from enum import Enum
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import structlog
+from src.core.circuit_breaker import get_circuit_breaker, CircuitBreakerError
 
 logger = structlog.get_logger()
+
+N8N_RETRY_CONFIG = {
+    "base_delay": 1.0,
+    "max_delay": 10.0,
+    "retries": 3,
+    "exponential_base": 2,
+}
 
 
 class ActionType(str, Enum):
@@ -491,7 +505,12 @@ SYSTEM_ACTIONS: Dict[str, SystemAction] = {
 
 
 class N8NConnector:
-    """n8n webhook connector with approval workflow."""
+    """n8n webhook connector with approval workflow.
+    
+    Features:
+    - Exponential backoff retry (base_delay=1s, retries=3)
+    - Circuit breaker integration for fault tolerance
+    """
     
     def __init__(self, base_url: str = "", api_key: str = "", webhook_secret: str = ""):
         from src.config import get_settings
@@ -500,6 +519,7 @@ class N8NConnector:
         self.api_key = api_key or settings.n8n_api_key or ""
         self.webhook_secret = webhook_secret or settings.n8n_webhook_secret or ""
         self._client: Optional[httpx.AsyncClient] = None
+        self._circuit_breaker = get_circuit_breaker("n8n")
     
     async def _get_client(self) -> httpx.AsyncClient:
         if self._client is None:
@@ -511,19 +531,63 @@ class N8NConnector:
             self._client = httpx.AsyncClient(base_url=self.base_url, headers=headers, timeout=30)
         return self._client
     
+    async def _retry_with_backoff(
+        self,
+        func,
+        *args,
+        base_delay: float = N8N_RETRY_CONFIG["base_delay"],
+        max_delay: float = N8N_RETRY_CONFIG["max_delay"],
+        max_retries: int = N8N_RETRY_CONFIG["retries"],
+        **kwargs
+    ):
+        """Execute function with exponential backoff retry."""
+        last_exception = None
+        
+        for attempt in range(max_retries + 1):
+            try:
+                return await func(*args, **kwargs)
+            except Exception as e:
+                last_exception = e
+                if attempt < max_retries:
+                    delay = min(base_delay * (N8N_RETRY_CONFIG["exponential_base"] ** attempt), max_delay)
+                    logger.warning(
+                        "n8n_retry_attempt",
+                        attempt=attempt + 1,
+                        max_retries=max_retries,
+                        delay=delay,
+                        error=str(e)
+                    )
+                    await asyncio.sleep(delay)
+                else:
+                    logger.error(
+                        "n8n_retry_exhausted",
+                        attempts=max_retries + 1,
+                        error=str(e)
+                    )
+        
+        raise last_exception
+    
     async def trigger_workflow(self, webhook_path: str, payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """Trigger an n8n webhook workflow and return the result."""
-        try:
+        """Trigger an n8n webhook workflow with retry and circuit breaker."""
+        if not await self._circuit_breaker.can_execute():
+            logger.warning("n8n_circuit_breaker_open", path=webhook_path)
+            return None
+        
+        async def _do_request():
             client = await self._get_client()
-            response = await client.post(
-                webhook_path,
-                json=payload,
-            )
+            response = await client.post(webhook_path, json=payload)
             if response.status_code in (200, 201):
+                await self._circuit_breaker.record_success()
                 return response.json()
+            await self._circuit_breaker.record_failure()
             logger.warning("n8n_workflow_failed", path=webhook_path, status=response.status_code)
             return None
+        
+        try:
+            result = await self._retry_with_backoff(_do_request)
+            return result
         except Exception as e:
+            await self._circuit_breaker.record_failure()
             logger.warning("n8n_workflow_error", path=webhook_path, error=str(e))
             return None
     
