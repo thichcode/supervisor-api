@@ -98,6 +98,83 @@ LLM_COST = Counter(
 # Rate Limiting Metrics
 RATE_LIMIT_EXCEEDED = Counter(
     'supervisor_rate_limit_exceeded_total',
+
+# ============================================================================
+# Connection Pool Metrics
+# ============================================================================
+
+# DB Connection Pool Metrics
+DB_POOL_SIZE = Gauge(
+    'supervisor_db_pool_size',
+    'Database connection pool size',
+    ['pool_metric']
+)
+
+DB_POOL_CHECKOUTS = Counter(
+    'supervisor_db_pool_checkouts_total',
+    'Total database connection checkouts'
+)
+
+DB_POOL_CHECKINS = Counter(
+    'supervisor_db_pool_checkins_total',
+    'Total database connection checkins'
+)
+
+DB_POOL_CONNECTIONS_CREATED = Counter(
+    'supervisor_db_pool_connections_created_total',
+    'Total database connections created'
+)
+
+# Redis Connection Pool Metrics
+REDIS_POOL_SIZE = Gauge(
+    'supervisor_redis_pool_size',
+    'Redis connection pool max size'
+)
+
+REDIS_POOL_CREATED = Counter(
+    'supervisor_redis_pool_created_total',
+    'Redis connection pool creation events'
+)
+
+# ============================================================================
+# Pool Metric Recorder Functions
+# ============================================================================
+
+def record_db_connection_checkout():
+    """Record a connection checkout from DB pool."""
+    DB_POOL_CHECKOUTS.inc()
+
+def record_db_connection_checkin():
+    """Record a connection checkin to DB pool."""
+    DB_POOL_CHECKINS.inc()
+
+def record_db_connection_created():
+    """Record a new DB connection created."""
+    DB_POOL_CONNECTIONS_CREATED.inc()
+
+def record_db_pool_size(size: int):
+    """Record DB pool size metrics."""
+    DB_POOL_SIZE.labels('current').set(size)
+
+def record_redis_pool_created(max_connections: int):
+    """Record Redis pool creation."""
+    REDIS_POOL_SIZE.set(max_connections)
+    REDIS_POOL_CREATED.inc()
+
+def get_db_pool_metrics() -> dict:
+    """Return DB pool metrics as dict."""
+    return {
+        "checkouts": DB_POOL_CHECKOUTS._value.get(),
+        "checkins": DB_POOL_CHECKINS._value.get(),
+        "connections_created": DB_POOL_CONNECTIONS_CREATED._value.get(),
+    }
+
+def get_redis_pool_metrics() -> dict:
+    """Return Redis pool metrics as dict."""
+    return {
+        "max_pool_size": REDIS_POOL_SIZE._value.get(),
+        "creation_count": REDIS_POOL_CREATED._value.get(),
+    }
     'Rate limit exceeded count'
 )
 

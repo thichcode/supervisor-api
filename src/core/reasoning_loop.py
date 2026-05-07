@@ -262,9 +262,9 @@ class ReasoningLoopOrchestrator:
             while current_turn < max_turns:
                 current_turn += 1
 
-                response = await self.supervisor._llm.complete(
-                    system_prompt=system_prompt,
-                    user_message="",  # messages already has the full conversation
+                # Pass the full conversation messages to the LLM
+                response = await self.supervisor._llm.complete_with_messages(
+                    messages=messages,
                     tools=schemas,
                     temperature=0.3,
                 )

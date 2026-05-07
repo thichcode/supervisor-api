@@ -74,7 +74,7 @@
 
 ---
 
-## Bước 2: Setup Trigger
+## Bước 2: Setup Trigger (Updated for Image Support)
 
 ### Option A: Manual Trigger (Testing)
 ```
@@ -88,13 +88,14 @@ Thêm input:
 
 ### Option B: When Teams Message Received (Production)
 
-**Trigger: When a new channel message is added**
+**Trigger: When a new channel message is added (with image support)**
 
 ```
 1. Trigger: When a channel message contains specific words
    - Channel: [Chọn Teams channel của bạn]
-   - Trigger Condition: contains(toLower(body()?['body']?['content']), 'approve') 
-                       or contains(toLower(body()?['body']?['content']), 'reject')
+   - Trigger Condition: 
+     - Message contains 'approve' OR 'reject' OR has attachments
+   - Advanced: Include attachments = Yes
 ```
 
 **Hoặc dùng Request trigger cho webhook:**

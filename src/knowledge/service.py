@@ -1,5 +1,8 @@
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 import re
+import hashlib
+import json
+from datetime import datetime, timedelta
 from sqlalchemy.ext.asyncio import AsyncSession
 import structlog
 
@@ -17,11 +20,36 @@ logger = structlog.get_logger()
 
 
 class KnowledgeRetrievalService:
+    # Simple in-memory cache: cache_key -> (timestamp, KnowledgeSearchResponse)
+    _cache: Dict[str, tuple[datetime, Any]] = {}
+    _cache_ttl_seconds = 30  # Cache results for 30 seconds
+
     def __init__(self, session: AsyncSession, llm: Optional[MultiProviderLLMClient] = None):
         self.session = session
         self.repo = KnowledgeBaseRepository(session)
         self.llm = llm
         self.template_mapper = KBCategoryTemplateMapper()
+
+    def _get_cache_key(
+        self,
+        query: str,
+        search_type: Optional[str] = None,
+        category: Optional[str] = None,
+        tags: Optional[List[str]] = None,
+        limit: int = 5,
+        offset: int = 0,
+    ) -> str:
+        """Generate a cache key from normalized search parameters."""
+        key_data = {
+            "query": re.sub(r"\s+", " ", query).strip().lower()[:512],
+            "search_type": search_type or "all",
+            "category": category,
+            "tags": tuple(sorted(tags or [])),
+            "limit": limit,
+            "offset": offset,
+        }
+        key_str = json.dumps(key_data, sort_keys=True)
+        return hashlib.md5(key_str.encode()).hexdigest()
 
     async def search(
         self,
@@ -32,6 +60,23 @@ class KnowledgeRetrievalService:
         limit: int = 5,
         offset: int = 0,
     ) -> KnowledgeSearchResponse:
+        # Check cache first
+        cache_key = self._get_cache_key(query, search_type, category, tags, limit, offset)
+        now = datetime.now()
+        
+        if cache_key in self._cache:
+            cached_time, cached_response = self._cache[cache_key]
+            if now - cached_time < timedelta(seconds=self._cache_ttl_seconds):
+                logger.debug("KB search cache hit", key=cache_key[:8], query=query[:50])
+                metrics.record_kb_cache("hit")
+                return cached_response
+            else:
+                # Expired, remove from cache
+                del self._cache[cache_key]
+                metrics.record_kb_cache("expired")
+        
+        metrics.record_kb_cache("miss")
+        
         results: List[KnowledgeSearchResult] = []
 
         normalized_query = re.sub(r"\s+", " ", query).strip()
@@ -73,7 +118,7 @@ class KnowledgeRetrievalService:
         page_results = results[max(0, offset):max(0, offset) + limit]
         clarification = self.infer_clarification(query, results)
 
-        return KnowledgeSearchResponse(
+        response = KnowledgeSearchResponse(
             results=page_results,
             total=total_results,
             search_type=search_type or "all",
@@ -84,6 +129,12 @@ class KnowledgeRetrievalService:
             template_terms=list(template_match.matched_terms) if template_match else [],
             clarification=clarification,
         )
+        
+        # Store in cache
+        self._cache[cache_key] = (datetime.now(), response)
+        logger.debug("KB search cached", key=cache_key[:8], query=query[:50])
+        
+        return response
 
     async def _rerank_with_llm(
         self,

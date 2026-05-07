@@ -311,8 +311,8 @@ class ChatService:
         # Ticket/case update without question → no reply needed
         if any(k in t for k in ["đã cập nhật", "đã tạo", "ticket #", "case #", "đóng case"]):
             return False, "system_event"
-        # Default: user sent text but unclear intent → ask for clarification
-        return True, "unclear_intent"
+        # Default: if no clear intent to respond, do not reply
+        return False, "unclear_intent_no_need"
 
     async def handle_chat(self, request: ChatRequest, auto_send_callback=None) -> ChatResponse:
         import src.api as api_module
@@ -388,15 +388,22 @@ class ChatService:
             interaction_service = InteractionService(session)
             memory = await memory_service.retrieve(payload)
 
-            # ← HINDSIGHT: Recall relevant memories before processing
+            # ← HINDSIGHT: Recall relevant memories before processing with timeout
             if self.hindsight.enabled:
-                hindsight_memories = await self.hindsight.recall(
-                    query=request.message,
-                    limit=5,
-                )
-                if hindsight_memories:
-                    memory.external_memory = hindsight_memories
-                    logger.debug(f"Hindsight recall: '{request.message[:50]}...' -> {len(hindsight_memories)} memories")
+                try:
+                    hindsight_memories = await asyncio.wait_for(
+                        self.hindsight.recall(
+                            query=request.message,
+                            limit=5,
+                        ),
+                        timeout=2.0,  # 2 second timeout to avoid blocking
+                    )
+                    if hindsight_memories:
+                        memory.external_memory = hindsight_memories
+                        logger.debug(f"Hindsight recall: '{request.message[:50]}...' -> {len(hindsight_memories)} memories")
+                except asyncio.TimeoutError:
+                    logger.warning("Hindsight recall timed out after 2 seconds", query=request.message[:50])
+                    # Continue without external memories
 
             history_texts = [*memory.recent_messages, memory.conversation_summary or ""]
             routing_metadata = {}

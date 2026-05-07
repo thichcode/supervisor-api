@@ -22,6 +22,10 @@ class RedisCache:
             decode_responses=True,
         )
         self._client = redis.Redis(connection_pool=self._pool)
+        
+        # Track pool metrics
+        from src.core.metrics import metrics
+        metrics.record_redis_pool_created(settings.redis_pool_size)
         try:
             await self._client.ping()
             self._connected = True

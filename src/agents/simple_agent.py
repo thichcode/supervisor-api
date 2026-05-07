@@ -9,6 +9,11 @@ from src.core import InputPayload
 from src.memory import MemoryContext
 from src.llm import MultiProviderLLMClient, LLMResponse
 from src.db import async_session
+from src.core.support_utils import (
+    looks_like_support_request,
+    build_support_clarification,
+    looks_generic_support_reply,
+)
 import structlog
 from typing import Optional
 
@@ -22,42 +27,6 @@ class SimpleAgent:
     - Fallback to LLM generation
     - Direct answer, no validation loop
     """
-
-    def _looks_like_support_request(self, payload: InputPayload, memory: MemoryContext) -> bool:
-        text = (payload.message.text or "").lower()
-        message_mode = (memory.conversation_state or {}).get("last_user_message_mode", "").lower()
-        support_keywords = [
-            "support", "case", "ticket", "issue", "problem", "bug", "error", "crash",
-            "not working", "broken", "help", "hỗ trợ", "vấn đề", "sự cố", "lỗi", "hỏng",
-            "không được", "bị lỗi", "treo", "đơ", "cần giúp", "giúp tôi", "sửa", "fix",
-            "login", "đăng nhập", "credential", "auth", "authentication", "publickey",
-        ]
-        return message_mode == "problem" or any(keyword in text for keyword in support_keywords)
-
-    def _build_support_clarification(self, text: str) -> str:
-        text_lower = (text or "").lower()
-        if any(keyword in text_lower for keyword in ["git", "github", "gitlab", "bitbucket", "ssh", "https", "credential", "publickey", "auth", "đăng nhập", "login"]):
-            return (
-                "Mình cần 3 thông tin để chẩn đoán nhanh: bạn đang dùng GitHub/GitLab/Bitbucket, "
-                "đang login bằng HTTPS hay SSH, và nguyên lỗi hiển thị là gì?"
-            )
-        return (
-            "Bạn cho mình biết hệ thống/dịch vụ nào đang lỗi, bạn đang kẹt ở bước nào, và có mã lỗi hoặc ảnh chụp màn hình không?"
-        )
-
-    def _looks_generic_support_reply(self, answer: str) -> bool:
-        text = (answer or "").lower()
-        generic_phrases = [
-            "bạn cần tôi hỗ trợ gì",
-            "vui lòng cho tôi biết yêu cầu của bạn",
-            "bạn cần hỗ trợ gì",
-            "mình có thể giúp gì",
-            "tôi là trợ lý",
-            "cho mình biết vấn đề",
-            "bạn xác nhận",
-            "nếu cần mình hỗ trợ",
-        ]
-        return any(phrase in text for phrase in generic_phrases)
 
     async def answer(
         self,
@@ -80,7 +49,7 @@ class SimpleAgent:
 
         if not llm:
             fallback_answer = self._fallback_answer(payload, memory)
-            fallback_confidence = 0.6 if self._looks_like_support_request(payload, memory) else 0.4
+            fallback_confidence = 0.6 if looks_like_support_request(payload.message.text, memory.conversation_state) else 0.4
             return fallback_answer, fallback_confidence
 
         context = self._build_context(payload, memory)
@@ -175,7 +144,7 @@ class SimpleAgent:
         memory: MemoryContext,
     ) -> str:
         """Generate answer - replaces PolicyAgent + KnowledgeAgent + DraftAgent"""
-        support_request = self._looks_like_support_request(payload, memory)
+        support_request = looks_like_support_request(payload.message.text, memory.conversation_state)
         system_prompt = """Bạn là trợ lý IT Support thân thiện.
 Trả lời ngắn gọn, hữu ích, bằng tiếng Việt.
 Nếu người dùng đang báo lỗi/sự cố, không được trả lời chung chung kiểu 'bạn cần tôi hỗ trợ gì'.
@@ -194,16 +163,16 @@ Trả lời câu hỏi trên."""
 
         response: LLMResponse = await llm.complete(system_prompt, user_prompt)
         answer = response.content
-        if support_request and self._looks_generic_support_reply(answer):
-            return self._build_support_clarification(payload.message.text)
+        if support_request and looks_generic_support_reply(answer):
+            return build_support_clarification(payload.message.text)
         return answer
 
     def _fallback_answer(self, payload: InputPayload, memory: MemoryContext) -> str:
         """Fallback when no LLM available"""
         text_lower = (payload.message.text or "").lower()
 
-        if self._looks_like_support_request(payload, memory):
-            return self._build_support_clarification(payload.message.text)
+        if looks_like_support_request(payload.message.text, memory.conversation_state):
+            return build_support_clarification(payload.message.text)
 
         greetings = ["xin chào", "hello", "hi", "chào", "hey"]
         if any(g in text_lower for g in greetings):

@@ -600,6 +600,9 @@ class MultiProviderLLMClient:
         self._total_cost += cost
         self._total_tokens += usage_dict.get("total_tokens", 0)
 
+        # Truncate response content for logging (first 500 chars)
+        content_preview = content[:500] + "..." if len(content) > 500 else content
+        
         logger.debug(
             "LLM completion",
             provider=target_provider.value,
@@ -607,6 +610,8 @@ class MultiProviderLLMClient:
             tokens=usage_dict.get("total_tokens", 0),
             cost_usd=round(cost, 6),
             tool_calls=len(tool_calls),
+            content_length=len(content),
+            content_preview=content_preview,
         )
 
         return LLMResponse(

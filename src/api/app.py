@@ -408,8 +408,59 @@ async def _maybe_draft_image_case_candidate(
 async def lifespan(app: FastAPI):
 
     import structlog
+    import signal
 
     logger = structlog.get_logger()
+    
+    # Graceful shutdown flag
+    shutting_down = False
+    
+    async def _graceful_shutdown():
+        nonlocal shutting_down
+        if shutting_down:
+            return
+        shutting_down = True
+        logger.info("Graceful shutdown initiated")
+        
+        # Cancel background tasks
+        if feedback_worker_task:
+            feedback_worker_task.cancel()
+            try:
+                await asyncio.wait_for(feedback_worker_task, timeout=10.0)
+            except (asyncio.CancelledError, asyncio.TimeoutError):
+                logger.warning("Feedback worker shutdown timeout")
+        
+        # Shutdown harness
+        harness_bridge = get_harness_bridge()
+        if harness_bridge:
+            try:
+                await asyncio.wait_for(harness_bridge.harness.shutdown(), timeout=5.0)
+            except asyncio.TimeoutError:
+                logger.warning("Harness shutdown timeout")
+        
+        # Close LLM client
+        try:
+            await asyncio.wait_for(llm_client.close(), timeout=5.0)
+        except asyncio.TimeoutError:
+            logger.warning("LLM client shutdown timeout")
+        
+        # Close Redis
+        try:
+            await asyncio.wait_for(redis_cache.close(), timeout=5.0)
+        except asyncio.TimeoutError:
+            logger.warning("Redis shutdown timeout")
+        
+        # Close DB
+        try:
+            await asyncio.wait_for(close_db(), timeout=10.0)
+        except asyncio.TimeoutError:
+            logger.warning("Database shutdown timeout")
+        
+        logger.info("Graceful shutdown complete")
+    
+    def _signal_handler():
+        asyncio.create_task(_graceful_shutdown())
+    
     logger.info("Starting up Multi-Agent Supervisor System")
     await init_db()
     await redis_cache.connect()
@@ -449,27 +500,20 @@ async def lifespan(app: FastAPI):
     feedback_worker_task = asyncio.create_task(feedback_worker.start(interval_seconds=60))
     logger.info("Feedback learning worker started", interval_seconds=60)
     
+    # Register signal handlers
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        loop.add_signal_handler(sig, _signal_handler)
+    
     metrics.record_memory("startup", "success")
     yield
-    logger.info("Shutting down Multi-Agent Supervisor System")
+    logger.info("Shutting down Multi-Agent Supervisor System (normal)")
     
-    # Shutdown learning worker
-    if feedback_worker_task:
-        feedback_worker_task.cancel()
-        try:
-            await feedback_worker_task
-        except asyncio.CancelledError:
-            pass
-        feedback_worker_task = None
+    # Remove signal handlers
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        loop.remove_signal_handler(sig)
     
-    # Shutdown harness
-    harness_bridge = get_harness_bridge()
-    if harness_bridge:
-        await harness_bridge.harness.shutdown()
-    
-    await llm_client.close()
-    await redis_cache.close()
-    await close_db()
+    await _graceful_shutdown()
 
 
 app = FastAPI(

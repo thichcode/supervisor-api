@@ -1,5 +1,7 @@
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy import event
+from src.core.metrics import metrics
 from sqlalchemy import text
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
@@ -19,6 +21,29 @@ engine = create_async_engine(
     pool_recycle=3600,
     echo=settings.app_debug,
 )
+
+# Add connection pool metrics
+@event.listens_for(engine.sync_engine.pool, 'checkout')
+def receive_checkout(dbapi_conn, conn_record, conn_proxy):
+    metrics.record_db_connection_checkout()
+
+@event.listens_for(engine.sync_engine.pool, 'checkin')
+def receive_checkin(dbapi_conn, conn_record):
+    metrics.record_db_connection_checkin()
+
+@event.listens_for(engine.sync_engine.pool, 'connect')
+def receive_connect(dbapi_conn, conn_record):
+    metrics.record_db_connection_created()
+
+def get_pool_status():
+    """Return current connection pool status."""
+    pool = engine.sync_engine.pool
+    return {
+        "size": pool.size(),
+        "checked_in": pool.checkedin(),
+        "overflow": pool.overflow(),
+        "total": pool.total(),
+    }
 
 async_session = async_sessionmaker(
     engine,

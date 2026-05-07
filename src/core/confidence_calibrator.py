@@ -71,7 +71,10 @@ class ConfidenceCalibrator:
     4. Track accuracy per tool_name (for tool success rate)
     5. Apply calibration factor: calibrated = raw * calibration_factor
     
-    The calibration factor is bounded [0.5, 1.0] to prevent over-penalizing.
+         The calibration factor is bounded [0.5, 1.5] to allow both penalty and boost.
+         - If historical accuracy > 0.5 → factor > 1.0 (boost)
+         - If historical accuracy < 0.5 → factor < 1.0 (penalty)
+         - If historical accuracy = 0.5 → factor = 1.0 (no change)
     """
     
     def __init__(self):
@@ -185,8 +188,11 @@ class ConfidenceCalibrator:
         else:
             calibration_factor = type_acc
         
-        # Bounds: prevent extreme calibration
-        calibration_factor = max(0.5, min(1.0, calibration_factor))
+        # Bounds: centered around 1.0 so calibration can both increase and decrease
+        # If historical accuracy > 0.5 → factor > 1.0 (boost)
+        # If historical accuracy < 0.5 → factor < 1.0 (penalty)
+        # If historical accuracy = 0.5 → factor = 1.0 (no change)
+        calibration_factor = max(0.5, min(1.5, calibration_factor))
         
         # Apply calibration (if factor is 1.0, no change)
         calibrated = raw_confidence * calibration_factor

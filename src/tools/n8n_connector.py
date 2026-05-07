@@ -99,7 +99,7 @@ SYSTEM_ACTIONS: Dict[str, SystemAction] = {
         ],
         description="Khôi phục dữ liệu từ backup"
     ),
-    
+
     # Monitoring Service Actions
     "monitor_status": SystemAction(
         name="monitor_status",
@@ -123,7 +123,7 @@ SYSTEM_ACTIONS: Dict[str, SystemAction] = {
         ],
         description="Acknowledge một alert"
     ),
-    
+
     # IT Service / Ticket Actions
     "ticket_create": SystemAction(
         name="ticket_create",
@@ -166,7 +166,7 @@ SYSTEM_ACTIONS: Dict[str, SystemAction] = {
         ],
         description="Lấy thông tin chi tiết của một ticket IT (subject, status, description, assignee)"
     ),
-    
+
     # Server Management Actions
     "server_restart": SystemAction(
         name="server_restart",
@@ -190,7 +190,7 @@ SYSTEM_ACTIONS: Dict[str, SystemAction] = {
         webhook_path="/webhook/infra/server-status",
         description="Xem trạng thái server"
     ),
-    
+
     # Account Management
     "account_unlock": SystemAction(
         name="account_unlock",
@@ -216,7 +216,7 @@ SYSTEM_ACTIONS: Dict[str, SystemAction] = {
         ],
         description="Reset password của user"
     ),
-    
+
     # =============================================================================
     # GitLab Integration
     # =============================================================================
@@ -248,186 +248,6 @@ SYSTEM_ACTIONS: Dict[str, SystemAction] = {
         ],
         description="Lấy danh sách Issues"
     ),
-    "gitlab_pipelines": SystemAction(
-        name="gitlab_pipelines",
-        display_name="GitLab Pipelines",
-        system="gitlab",
-        action_type=ActionType.QUERY,
-        risk_level=RiskLevel.LOW,
-        webhook_path="/webhook/gitlab/pipelines",
-        parameters=[
-            {"name": "project_id", "type": "string", "required": True},
-            {"name": "status", "type": "string", "required": False},
-        ],
-        description="Lấy danh sách Pipelines"
-    ),
-    "gitlab_members": SystemAction(
-        name="gitlab_members",
-        display_name="GitLab Project Members",
-        system="gitlab",
-        action_type=ActionType.QUERY,
-        risk_level=RiskLevel.LOW,
-        webhook_path="/webhook/gitlab/members",
-        parameters=[
-            {"name": "project_id", "type": "string", "required": True},
-        ],
-        description="Lấy danh sách thành viên project"
-    ),
-    
-    # =============================================================================
-    # Active Directory (AD)
-    # =============================================================================
-    "ad_user_info": SystemAction(
-        name="ad_user_info",
-        display_name="AD User Info",
-        system="ad",
-        action_type=ActionType.QUERY,
-        risk_level=RiskLevel.LOW,
-        webhook_path="/webhook/ad/user-info",
-        parameters=[
-            {"name": "username", "type": "string", "required": True},
-        ],
-        description="Lấy thông tin user từ AD"
-    ),
-    "ad_group_members": SystemAction(
-        name="ad_group_members",
-        display_name="AD Group Members",
-        system="ad",
-        action_type=ActionType.QUERY,
-        risk_level=RiskLevel.LOW,
-        webhook_path="/webhook/ad/group-members",
-        parameters=[
-            {"name": "group_name", "type": "string", "required": True},
-        ],
-        description="Lấy danh sách thành viên group"
-    ),
-    "ad_locked_users": SystemAction(
-        name="ad_locked_users",
-        display_name="AD Locked Users",
-        system="ad",
-        action_type=ActionType.QUERY,
-        risk_level=RiskLevel.LOW,
-        webhook_path="/webhook/ad/locked-users",
-        description="Lấy danh sách user bị lock"
-    ),
-    
-    # =============================================================================
-    # Zabbix Monitoring
-    # =============================================================================
-    "zabbix_alerts": SystemAction(
-        name="zabbix_alerts",
-        display_name="Zabbix Alerts",
-        system="monitoring",
-        action_type=ActionType.QUERY,
-        risk_level=RiskLevel.LOW,
-        webhook_path="/webhook/zabbix/alerts",
-        parameters=[
-            {"name": "host", "type": "string", "required": False},
-            {"name": "severity", "type": "integer", "required": False},
-            {"name": "limit", "type": "integer", "required": False},
-        ],
-        description="Lấy alerts đang active"
-    ),
-    "zabbix_hosts": SystemAction(
-        name="zabbix_hosts",
-        display_name="Zabbix Hosts",
-        system="monitoring",
-        action_type=ActionType.QUERY,
-        risk_level=RiskLevel.LOW,
-        webhook_path="/webhook/zabbix/hosts",
-        parameters=[
-            {"name": "group", "type": "string", "required": False},
-            {"name": "status", "type": "integer", "required": False},
-        ],
-        description="Lấy danh sách hosts"
-    ),
-    "zabbix_triggers": SystemAction(
-        name="zabbix_triggers",
-        display_name="Zabbix Triggers",
-        system="monitoring",
-        action_type=ActionType.QUERY,
-        risk_level=RiskLevel.LOW,
-        webhook_path="/webhook/zabbix/triggers",
-        parameters=[
-            {"name": "host", "type": "string", "required": False},
-            {"name": "status", "type": "string", "required": False},
-        ],
-        description="Lấy danh sách triggers"
-    ),
-    
-    # =============================================================================
-    # ITC / ServiceNow
-    # =============================================================================
-    "itc_incidents": SystemAction(
-        name="itc_incidents",
-        display_name="ITC Incidents",
-        system="itc",
-        action_type=ActionType.QUERY,
-        risk_level=RiskLevel.LOW,
-        webhook_path="/webhook/itc/incidents",
-        parameters=[
-            {"name": "state", "type": "string", "required": False},
-            {"name": "assigned_to", "type": "string", "required": False},
-            {"name": "limit", "type": "integer", "required": False},
-        ],
-        description="Lấy danh sách incidents"
-    ),
-    "itc_tickets": SystemAction(
-        name="itc_tickets",
-        display_name="ITC Tickets",
-        system="itc",
-        action_type=ActionType.QUERY,
-        risk_level=RiskLevel.LOW,
-        webhook_path="/webhook/itc/tickets",
-        parameters=[
-            {"name": "category", "type": "string", "required": False},
-            {"name": "priority", "type": "string", "required": False},
-        ],
-        description="Lấy danh sách tickets"
-    ),
-    "itc_ticket_detail": SystemAction(
-        name="itc_ticket_detail",
-        display_name="ITC Ticket Detail",
-        system="itc",
-        action_type=ActionType.QUERY,
-        risk_level=RiskLevel.LOW,
-        webhook_path="/webhook/itc/ticket-detail",
-        parameters=[
-            {"name": "ticket_id", "type": "string", "required": True},
-        ],
-        description="Lấy thông tin chi tiết ticket ITC theo ID (subject, status, description, assignee, priority)"
-    ),
-    "itc_cmdb": SystemAction(
-        name="itc_cmdb",
-        display_name="ITC CMDB",
-        system="itc",
-        action_type=ActionType.QUERY,
-        risk_level=RiskLevel.LOW,
-        webhook_path="/webhook/itc/cmdb",
-        parameters=[
-            {"name": "ci_type", "type": "string", "required": False},
-            {"name": "name", "type": "string", "required": False},
-        ],
-        description="Lấy thông tin từ CMDB"
-    ),
-    
-    # =============================================================================
-    # Jira
-    # =============================================================================
-    "jira_issues": SystemAction(
-        name="jira_issues",
-        display_name="Jira Issues",
-        system="jira",
-        action_type=ActionType.QUERY,
-        risk_level=RiskLevel.LOW,
-        webhook_path="/webhook/jira/issues",
-        parameters=[
-            {"name": "project", "type": "string", "required": False},
-            {"name": "status", "type": "string", "required": False},
-            {"name": "assignee", "type": "string", "required": False},
-        ],
-        description="Lấy danh sách issues"
-    ),
     "jira_projects": SystemAction(
         name="jira_projects",
         display_name="Jira Projects",
@@ -449,7 +269,7 @@ SYSTEM_ACTIONS: Dict[str, SystemAction] = {
         ],
         description="Lấy thông tin chi tiết issue Jira (summary, description, status, assignee)"
     ),
-    
+
     # =============================================================================
     # Database / SQL
     # =============================================================================
@@ -479,7 +299,7 @@ SYSTEM_ACTIONS: Dict[str, SystemAction] = {
         ],
         description="Thực thi câu lệnh SQL (CẢNH BÁO)"
     ),
-    
+
     # =============================================================================
     # General / System
     # =============================================================================
@@ -506,12 +326,12 @@ SYSTEM_ACTIONS: Dict[str, SystemAction] = {
 
 class N8NConnector:
     """n8n webhook connector with approval workflow.
-    
+
     Features:
     - Exponential backoff retry (base_delay=1s, retries=3)
     - Circuit breaker integration for fault tolerance
     """
-    
+
     def __init__(self, base_url: str = "", api_key: str = "", webhook_secret: str = ""):
         from src.config import get_settings
         settings = get_settings()
@@ -520,7 +340,7 @@ class N8NConnector:
         self.webhook_secret = webhook_secret or settings.n8n_webhook_secret or ""
         self._client: Optional[httpx.AsyncClient] = None
         self._circuit_breaker = get_circuit_breaker("n8n")
-    
+
     async def _get_client(self) -> httpx.AsyncClient:
         if self._client is None:
             headers = {"Content-Type": "application/json"}
@@ -530,7 +350,7 @@ class N8NConnector:
                 headers["X-Webhook-Secret"] = self.webhook_secret
             self._client = httpx.AsyncClient(base_url=self.base_url, headers=headers, timeout=30)
         return self._client
-    
+
     async def _retry_with_backoff(
         self,
         func,
@@ -542,7 +362,7 @@ class N8NConnector:
     ):
         """Execute function with exponential backoff retry."""
         last_exception = None
-        
+
         for attempt in range(max_retries + 1):
             try:
                 return await func(*args, **kwargs)
@@ -564,15 +384,15 @@ class N8NConnector:
                         attempts=max_retries + 1,
                         error=str(e)
                     )
-        
+
         raise last_exception
-    
+
     async def trigger_workflow(self, webhook_path: str, payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Trigger an n8n webhook workflow with retry and circuit breaker."""
         if not await self._circuit_breaker.can_execute():
             logger.warning("n8n_circuit_breaker_open", path=webhook_path)
             return None
-        
+
         async def _do_request():
             client = await self._get_client()
             response = await client.post(webhook_path, json=payload)
@@ -582,7 +402,7 @@ class N8NConnector:
             await self._circuit_breaker.record_failure()
             logger.warning("n8n_workflow_failed", path=webhook_path, status=response.status_code)
             return None
-        
+
         try:
             result = await self._retry_with_backoff(_do_request)
             return result
@@ -590,19 +410,19 @@ class N8NConnector:
             await self._circuit_breaker.record_failure()
             logger.warning("n8n_workflow_error", path=webhook_path, error=str(e))
             return None
-    
+
     async def get_ticket_detail(self, ticket_id: str, system: str = "itc") -> Optional[Dict[str, Any]]:
         """Get ticket details by ID.
-        
+
         Tries:
         1. n8n webhook (itc_ticket_detail or ticket_get)
         2. Direct ITC API call if configured
         3. Returns None if both fail
-        
+
         Args:
             ticket_id: The ticket ID to look up
             system: Which system to query ("itc", "jira", "itsm")
-            
+
         Returns:
             Dict with ticket details or None
         """
@@ -613,12 +433,12 @@ class N8NConnector:
             "itsm": "/webhook/itsm/get-ticket",
         }
         webhook_path = webhooks.get(system, "/webhook/itc/ticket-detail")
-        
+
         # Try n8n first
         result = await self.trigger_workflow(webhook_path, {"ticket_id": ticket_id})
         if result:
             return result
-        
+
         # Fallback: try direct ITC API
         try:
             from src.config import get_settings
@@ -651,9 +471,9 @@ class N8NConnector:
                             }
         except Exception as e:
             logger.debug("direct_itc_api_failed", ticket_id=ticket_id, error=str(e))
-        
+
         return None
-    
+
     async def close(self):
         if self._client:
             await self._client.aclose()
@@ -676,4 +496,5 @@ __all__ = [
     "SystemAction", "ActionRequest",
     "ActionType", "RiskLevel",
     "SYSTEM_ACTIONS",
+
 ]

@@ -19,6 +19,11 @@ from src.config import get_settings
 from src.core.reasoning_loop import ReasoningLoopOrchestrator
 from src.core.metrics import metrics
 from src.core.confidence_calibrator import ConfidenceCalibrator
+from src.core.support_utils import (
+    looks_like_support_request,
+    build_support_clarification,
+    looks_generic_support_reply,
+)
 from typing import Optional, Dict, Any
 from hashlib import sha256
 import re
@@ -37,8 +42,28 @@ def _get_intent_cache_key(text: str, user_id: str) -> str:
     return sha256(f"{text[:100]}:{user_id}".encode()).hexdigest()
 
 
+def _evict_stale_intent_cache():
+    """Remove entries older than TTL to prevent stale classifications."""
+    global _intent_cache
+    now = time.time()
+    # Evict stale entries by checking TTL for all entries
+    stale_keys = []
+    for k, v in _intent_cache.items():
+        if hasattr(v, '_cached_at') and (now - v._cached_at) > _intent_cache_ttl:
+            stale_keys.append(k)
+        # For entries without _cached_at (legacy), treat as stale and remove
+        elif not hasattr(v, '_cached_at'):
+            stale_keys.append(k)
+    
+    for k in stale_keys:
+        del _intent_cache[k]
+    if stale_keys:
+        logger.debug("intent_cache_ttl_evicted", count=len(stale_keys))
+
+
 def _get_cached_intent(text: str, user_id: str) -> Optional[IntentClassification]:
     """Get cached intent classification result."""
+    _evict_stale_intent_cache()
     key = _get_intent_cache_key(text, user_id)
     result = _intent_cache.get(key)
     if result:
@@ -47,13 +72,16 @@ def _get_cached_intent(text: str, user_id: str) -> Optional[IntentClassification
 
 
 def _set_cached_intent(text: str, user_id: str, result: IntentClassification) -> None:
-    """Set cached intent classification result."""
+    """Set cached intent classification result with timestamp."""
     global _intent_cache
+    _evict_stale_intent_cache()
+    
     if len(_intent_cache) >= _intent_cache_max_size:
         keys_to_remove = list(_intent_cache.keys())[:_intent_cache_max_size // 4]
         for k in keys_to_remove:
             del _intent_cache[k]
     
+    result._cached_at = time.time()
     key = _get_intent_cache_key(text, user_id)
     _intent_cache[key] = result
     logger.debug("intent_cache_set", key=key[:8])
@@ -527,6 +555,8 @@ class Supervisor:
         )
         risk = self._evaluate_risk(payload, memory)
 
+        pattern_result = await self._check_patterns(payload)
+
         if self.decision_engine.should_use_subagents(intent, risk, payload):
             decision = "subagents"
 
@@ -578,7 +608,6 @@ class Supervisor:
                 agents_used.append("system_query")
                 kb_hit = True
             else:
-                pattern_result = await self._check_patterns(payload)
                 if pattern_result:
                     answer, similarity = pattern_result
                     final_confidence = min(1.0, similarity + 0.05)
@@ -620,7 +649,6 @@ class Supervisor:
                     qa_needs_review = bool(validation.get("needs_review"))
         else:
             # Check patterns first (SimpleAgent logic)
-            pattern_result = await self._check_patterns(payload)
             if pattern_result:
                 answer, similarity = pattern_result
                 final_confidence = min(1.0, similarity + 0.05)
@@ -1048,22 +1076,6 @@ class Supervisor:
             0.4,
         )
 
-    def _normalize_final_confidence(
-        self,
-        confidence: float,
-        kb_hit: bool,
-        qa_needs_review: bool,
-    ) -> float:
-        """Keep confidence conservative unless KB evidence and QA both support 0.9."""
-        confidence = max(0.0, min(1.0, confidence))
-        if not kb_hit:
-            return min(confidence, 0.49)
-        if kb_hit and not qa_needs_review and confidence >= 0.85:
-            return 0.9
-        if confidence >= 0.9:
-            return 0.89
-        return round(confidence, 2)
-
     def _calculate_dynamic_confidence(
         self,
         kb_sources: list,
@@ -1353,10 +1365,55 @@ Trả lời ngắn gọn, bằng tiếng Việt."""
         memory: MemoryContextModel,
         query_type: str,
     ) -> Dict:
-        return {"result": "system query result", "confidence": 0.9}
+        """Handle system queries via n8n connector or fallback.
+        
+        Args:
+            payload: Input payload
+            memory: Memory context
+            query_type: Type of system query (status, metrics, n8n, itc, workflow)
+            
+        Returns:
+            Dict with result and confidence, or error info
+        """
+        try:
+            if hasattr(self, 'n8n_connector') and self.n8n_connector:
+                # Route query type to appropriate n8n webhook
+                webhook_paths = {
+                    "status": "/webhook/system/status",
+                    "metrics": "/webhook/system/metrics",
+                    "n8n": "/webhook/n8n/status",
+                    "itc": "/webhook/itc/status",
+                    "workflow": "/webhook/n8n/workflows",
+                }
+                path = webhook_paths.get(query_type.lower())
+                if path:
+                    result = await self.n8n_connector.trigger_workflow(path, {
+                        "request_id": payload.request_id,
+                        "user_id": payload.user.id,
+                        "query_type": query_type,
+                    })
+                    if result:
+                        return {"result": result, "confidence": 0.9}
+                       
+            logger.warning("system_query_fallback", query_type=query_type)
+            return {
+                "result": {"status": "unavailable", "message": f"System query '{query_type}' not available. N8N connector not configured or query failed."},
+                "confidence": 0.4,
+            }
+        except Exception as e:
+            logger.warning("system_query_error", query_type=query_type, error=str(e))
+            return {
+                "result": {"status": "error", "message": f"System query error: {str(e)}"},
+                "confidence": 0.3,
+            }
 
     def _format_system_query_response(self, query_result: Dict) -> str:
-        return f"System query result: {query_result.get('result', 'N/A')}"
+        result = query_result.get("result", {})
+        if isinstance(result, dict):
+            status = result.get("status", "unknown")
+            message = result.get("message", "") or result.get("result", "")
+            return f"**System Status:** {status}\n\n{message}"
+        return f"System query result: {result}"
 
     def _build_kb_clarification_question(self, kb_source: Dict, missing_fields: list[str]) -> str:
         labels = {
@@ -1564,51 +1621,6 @@ Trả lời ngắn gọn, bằng tiếng Việt."""
         except Exception as e:
             logger.warning("Failed to log audit", error=str(e))
 
-    def _looks_like_support_request(self, message: str, conversation_state: dict | None = None) -> bool:
-        text = (message or "").lower()
-        state = conversation_state or {}
-        message_mode = (state.get("last_user_message_mode") or "").lower()
-        support_keywords = [
-            "support", "case", "ticket", "issue", "problem", "bug", "error", "crash",
-            "not working", "broken", "help", "hỗ trợ", "vấn đề", "sự cố", "lỗi", "hỏng",
-            "không được", "bị lỗi", "treo", "đơ", "cần giúp", "giúp tôi", "sửa", "fix",
-            "login", "đăng nhập", "credential", "auth", "authentication", "publickey",
-        ]
-        if message_mode == "problem":
-            return True
-        return any(keyword in text for keyword in support_keywords)
-
-    def _build_support_clarification(self, message: str) -> str:
-        text = (message or "").lower()
-        if any(keyword in text for keyword in ["git", "github", "gitlab", "bitbucket", "ssh", "https", "credential", "publickey", "auth", "đăng nhập", "login"]):
-            return (
-                "Mình cần 3 thông tin để chẩn đoán nhanh: bạn đang dùng GitHub/GitLab/Bitbucket, "
-                "đang login bằng HTTPS hay SSH, và nguyên lỗi hiển thị là gì?"
-            )
-
-        if any(keyword in text for keyword in ["mật khẩu", "password", "sso", "ldap", "vpn", "email", "outlook"]):
-            return (
-                "Bạn cho mình biết hệ thống nào đang lỗi, bạn đang làm ở bước nào, và nguyên thông báo lỗi/mã lỗi là gì?"
-            )
-
-        return (
-            "Bạn cho mình biết hệ thống/dịch vụ nào đang lỗi, bạn đang kẹt ở bước nào, và có mã lỗi hoặc ảnh chụp màn hình không?"
-        )
-
-    def _looks_generic_support_reply(self, answer: str) -> bool:
-        text = (answer or "").lower()
-        generic_phrases = [
-            "bạn cần tôi hỗ trợ gì",
-            "vui lòng cho tôi biết yêu cầu của bạn",
-            "bạn cần hỗ trợ gì",
-            "mình có thể giúp gì",
-            "tôi là trợ lý",
-            "cho mình biết vấn đề",
-            "bạn xác nhận",
-            "nếu cần mình hỗ trợ",
-        ]
-        return any(phrase in text for phrase in generic_phrases)
-
     async def _generate_direct_answer(
         self,
         payload: InputPayload,
@@ -1645,8 +1657,8 @@ Trả lời ngắn gọn, bằng tiếng Việt."""
             persona_lines.append(f"Image case signature: {image_case_context.get('issue_signature') or image_case_context.get('issue_summary')}")
 
         conversation_state = memory.conversation_state or {}
-        support_request = self._looks_like_support_request(message, conversation_state)
-        support_clarification = self._build_support_clarification(message) if support_request else ""
+        support_request = looks_like_support_request(message, conversation_state)
+        support_clarification = build_support_clarification(message) if support_request else ""
 
         state_lines = []
         chat_type = payload.conversation.chat_type or conversation_state.get("chat_type")
@@ -1706,7 +1718,7 @@ Trả lời ngắn gọn, bằng tiếng Việt."""
                 context=merged_context,
             )
             answer = response.content
-            if support_request and self._looks_generic_support_reply(answer):
+            if support_request and looks_generic_support_reply(answer):
                 answer = support_clarification or answer
                 confidence = min(response.confidence, 0.58)
                 return answer, confidence
