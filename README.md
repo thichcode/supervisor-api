@@ -14,6 +14,7 @@ AI agent system with long-term memory for Microsoft Teams integration. Designed 
 | Core API | ✅ Production Ready | v1.2.0 |
 | SimpleAgent | ✅ Unified agent (1 call) | v1.2.0 |
 | Pattern Learning | ✅ Learn from approvals | v1.2.0 |
+| Hindsight Memory | ✅ MemPalace vector memory | v1.2.0+ |
 | Multi-Provider LLM | ✅ Ollama/Azure/OpenAI | v1.2.0+ |
 | Knowledge Base | ✅ Policies/FAQs/Guides/Documents | v1.1.0 |
 | Approval System | ✅ Telegram + Power Automate | v1.2.0 |
@@ -22,6 +23,24 @@ AI agent system with long-term memory for Microsoft Teams integration. Designed 
 | Reasoning Loop | ✅ Plan/Act/Observe + Rollout | v1.2.0+ |
 
 **Production Readiness Score: 9.5/10** ✅
+
+### Memory Architecture Details
+
+The system uses **Hindsight Memory** for long-term context:
+
+| Layer | Technology | Purpose |
+|-------|-----------|---------|
+| **L1 Cache** | In-memory LRU | Frequently accessed memories (TTL: 5 min) |
+| **L2 Cache** | Redis | Persistent cache across restarts |
+| **Vector Store** | PostgreSQL pgvector | Semantic similarity search |
+| **Fact Store** | PostgreSQL | Structured facts with embeddings |
+
+**Memory retrieval process:**
+1. Query → Vectorize using configured embedder
+2. Search pgvector for top-k similar memories (k=5-10)
+3. Re-rank using cross-encoder (if enabled)
+4. Apply time decay to prioritize recent interactions
+5. Return context window for LLM
 
 ---
 
@@ -35,6 +54,16 @@ AI agent system with long-term memory for Microsoft Teams integration. Designed 
                                  ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                         Supervisor API                                      │
+│                                                                             │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │                      Hindsight Memory (MemPalace)                    │   │
+│  │  ┌────────────┐  ┌────────────┐  ┌────────────────────────────┐   │   │
+│  │  │ PostgreSQL │  │   Redis    │  │ Vector Search (pgvector)   │   │   │
+│  │  │ (facts)    │  │ (cache)    │  │ Similarity + Reranking     │   │   │
+│  │  └────────────┘  └────────────┘  └────────────────────────────┘   │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                                    │                                        │
+│                                    ▼                                        │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────────────────┐    │
 │  │ Memory      │→ │ SimpleAgent │→ │ Pattern Match (>90%)?           │    │
 │  │ Service     │  │ (1 call)   │  │ YES → Use stored answer         │    │
@@ -52,9 +81,19 @@ AI agent system with long-term memory for Microsoft Teams integration. Designed 
 
 ### Key Features
 
-1. **SimpleAgent** - Unified agent, 1 LLM call (replaces 5-agent pipeline)
-2. **Pattern Learning** - Learn from approved responses, auto-match similar questions
-3. **Telegram Approval** - Managers approve via Telegram inline buttons
+1. **Hindsight Memory (MemPalace)** - Long-term vector memory with:
+   - PostgreSQL + pgvector for semantic search
+   - Redis for hot cache (L1/L2 multi-tier)
+   - Automatic memory consolidation and summarization
+   - Similarity-based retrieval with configurable thresholds
+
+2. **SimpleAgent** - Unified agent, 1 LLM call (replaces 5-agent pipeline)
+
+3. **Pattern Learning** - Learn from approved responses, auto-match similar questions
+
+4. **Telegram Approval** - Managers approve via Telegram inline buttons
+
+5. **Knowledge Base** - Policies, FAQs, guides with hybrid search (BM25 + vector)
 
 ---
 
