@@ -3,8 +3,11 @@ import os
 from functools import lru_cache
 from typing import Any, Literal
 
+import structlog
 from pydantic import Field
 from pydantic_settings import BaseSettings, EnvSettingsSource, DotEnvSettingsSource, PydanticBaseSettingsSource, SettingsConfigDict
+
+logger = structlog.get_logger()
 
 
 class _CommaSeparatedMixin:
@@ -114,10 +117,13 @@ class Settings(BaseSettings):
     llm_healthcheck_enabled: bool = False
     
     # Ollama Configuration (for self-hosted Vietnamese models)
-    ollama_base_url: str = Field(default_factory=lambda: os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"))
+    ollama_base_url: str = Field(default_factory=lambda: os.getenv("OLLAMA_BASE_URL", ""))
     ollama_default_model: str = Field(default_factory=lambda: os.getenv("OLLAMA_DEFAULT_MODEL", ""))
     ollama_timeout: int = 320
-    
+
+    # llama.cpp Configuration (for GGUF models)
+    llamacpp_base_url: str = Field(default_factory=lambda: os.getenv("LLAMACPP_BASE_URL", ""))
+
     # Image Processing Model (separate from main LLM for OCR/tasks)
     ollama_image_model: str = Field(default_factory=lambda: os.getenv("OLLAMA_IMAGE_MODEL", ""))
 
@@ -138,7 +144,10 @@ class Settings(BaseSettings):
     def model_post_init(self, __context) -> None:
         """Populate recommended_models based on ollama_default_model if not set"""
         if not self.recommended_models:
-            model = self.ollama_default_model or "gemma4:e4b"
+            model = self.ollama_default_model or self.llm_model
+            if not model:
+                logger.warning("No LLM model configured in LLM_MODEL or OLLAMA_DEFAULT_MODEL env vars")
+                model = ""  # Empty - will cause errors if used without proper config
             self.recommended_models = {
                 "faq": model,
                 "policy": model,
@@ -270,7 +279,8 @@ class Settings(BaseSettings):
         if isinstance(raw, str):
             value = raw.strip()
             if not value:
-                return ["gemma4:e4b"]
+                logger.warning("LLM_MODEL env var is empty - no model candidates available")
+                return []
             try:
                 parsed = json.loads(value)
                 if isinstance(parsed, list):
@@ -279,15 +289,22 @@ class Settings(BaseSettings):
                 pass
             candidates = [item.strip() for item in value.replace("\n", ",").replace(";", ",").replace("|", ",").split(",")]
             candidates = [item for item in candidates if item]
-            return candidates or ["gemma4:e4b"]
+            return candidates or []
         if isinstance(raw, list):
             candidates = [str(item).strip() for item in raw if str(item).strip()]
-            return candidates or ["gemma4:e4b"]
-        return [str(raw).strip()] if str(raw).strip() else ["gemma4:e4b"]
+            return candidates or []
+        result = [str(raw).strip()] if str(raw).strip() else []
+        if not result:
+            logger.warning("No LLM model configured in LLM_MODEL env var")
+        return result
 
     @property
     def primary_llm_model(self) -> str:
-        return self.llm_model_candidates[0]
+        candidates = self.llm_model_candidates
+        if not candidates:
+            logger.warning("No LLM model configured - primary_llm_model is empty")
+            return ""
+        return candidates[0]
 
     @property
     def model_name_for_display(self) -> str:

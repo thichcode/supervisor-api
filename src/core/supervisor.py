@@ -490,7 +490,17 @@ class Supervisor:
 
         # Check for ITC ticket request pattern early
         text_lower = (payload.message.text or "").lower()
-        if "itc" in text_lower and ("support request" in text_lower or "ticket" in text_lower or "woid" in text_lower):
+        has_itc_keywords = "itc" in text_lower or "support request" in text_lower or "woid" in text_lower
+        has_ticket_pattern = bool(re.search(r'(#\d{4,}|#INC\d{4,}|woID=\d{4,}|ticket\s*#?\d{4,})', text_lower))
+        if has_itc_keywords or has_ticket_pattern:
+            logger.info(
+                "itc_ticket_trigger",
+                has_itc_keywords=has_itc_keywords,
+                has_ticket_pattern=has_ticket_pattern,
+                text_preview=text_lower[:150],
+                match_reason="itc_keywords" if has_itc_keywords else "ticket_pattern",
+                hint="Triggering ITC ticket handler because message contains ticket-related patterns",
+            )
             itc_result = await self._handle_itc_ticket_request(payload)
             itc_answer = itc_result.get("answer")
             itc_confidence = itc_result.get("confidence", 0.85)
@@ -854,7 +864,7 @@ class Supervisor:
             )
 
             bayesian_confidence, factor_scores = self.bayesian_confidence.calculate_confidence(
-                factors, getattr(settings, 'llm_model', None) or "llama3.1"
+                factors, getattr(settings, 'llm_model', None) or getattr(settings, 'ollama_default_model', None)
             )
 
             # Step 3: Ensemble confidence = blend Bayesian + QA
@@ -1109,15 +1119,21 @@ class Supervisor:
         - ticket: 4711234 / ticket 4711234
         - "IT Center has received a support request" pattern
         
-        Uses N8NConnector.get_ticket_detail() which tries:
-        1. n8n webhook /webhook/itc/ticket-detail
-        2. Direct ITC API call (if itc_api_url configured)
-        3. Returns partial info if all fail
+        Uses N8NConnector.get_ticket_detail() to fetch ticket data via n8n webhook.
+        Falls back to partial info display if n8n unavailable.
         """
         import re
         
         text = payload.message.text
         conversation_state = payload.conversation
+        request_id = payload.request_id
+        
+        logger.info(
+            "itc_handler_start",
+            request_id=request_id,
+            text_preview=text[:200] if text else "(empty)",
+            thread_id=conversation_state.thread_id,
+        )
         
         # Extended detection patterns - order matters (most specific first)
         ticket_patterns = [
@@ -1128,13 +1144,13 @@ class Supervisor:
             (r'woID=(\d+)', True),
             r'woid=(\d+)',
             # Explicit ticket mention
-            r'ticket[:\s]+#?(\d{4,})',
-            r'ticket[:\s]+#?([A-Za-z]+[-:]\d+)',
+            r'ticket[:\\s]+#?(\d{4,})',
+            r'ticket[:\\s]+#?([A-Za-z]+[-:]\d+)',
             # Common IT service patterns
-            r'wo[:\s]+#?(\d+)',
-            r'incident[:\s]+#?(\d+)',
-            r'request[:\s]+#?(\d+)',
-            r'case[:\s]+#?(\d+)',
+            r'wo[:\\s]+#?(\d+)',
+            r'incident[:\\s]+#?(\d+)',
+            r'request[:\\s]+#?(\d+)',
+            r'case[:\\s]+#?(\d+)',
             # ITSM / ServiceNow patterns
             r'(INC\d{6,})',
             r'(REQ\d{6,})',
@@ -1146,7 +1162,7 @@ class Supervisor:
         ticket_id = None
         ticket_system = "itc"  # default system
         
-        for pattern in ticket_patterns:
+        for i, pattern in enumerate(ticket_patterns):
             if isinstance(pattern, tuple):
                 pattern_str, _ = pattern
             else:
@@ -1159,6 +1175,14 @@ class Supervisor:
                     ticket_system = "itc"
                 elif re.match(r'^[A-Z]{2,6}-', ticket_id):
                     ticket_system = "jira"
+                logger.info(
+                    "itc_ticket_detected",
+                    request_id=request_id,
+                    pattern_index=i,
+                    pattern=pattern_str[:50],
+                    ticket_id=ticket_id,
+                    ticket_system=ticket_system,
+                )
                 break
         
         # If no structured ID found, try to detect plain number in multi-word messages
@@ -1167,13 +1191,34 @@ class Supervisor:
             plain_numbers = re.findall(r'\b(\d{5,})\b', text)
             if plain_numbers:
                 ticket_id = plain_numbers[0]
+                ticket_system = "itc"
+                logger.info(
+                    "itc_ticket_plain_number",
+                    request_id=request_id,
+                    ticket_id=ticket_id,
+                    hint="Extracted plain number from message as ticket ID",
+                )
         
         if not ticket_id:
+            logger.info(
+                "itc_ticket_no_id_found",
+                request_id=request_id,
+                text_preview=text[:200],
+                hint="No ticket ID found in message. Returning help prompt.",
+            )
             return {
                 "answer": "Mình cần mã ticket để tra cứu (ví dụ: #453245 hoặc INC123456). Bạn cung cấp giúp mình nhé?",
                 "confidence": 0.3,
                 "ticket_id": None
             }
+        
+        logger.info(
+            "itc_ticket_fetch_start",
+            request_id=request_id,
+            ticket_id=ticket_id,
+            ticket_system=ticket_system,
+            n8n_connector_available=hasattr(self, 'n8n_connector') and self.n8n_connector is not None,
+        )
         
         # Fetch ticket details using N8NConnector
         ticket_detail = None
@@ -1185,13 +1230,39 @@ class Supervisor:
                 )
                 if ticket_detail:
                     logger.info(
-                        "ticket_detail_fetched",
+                        "itc_ticket_fetch_success",
+                        request_id=request_id,
                         ticket_id=ticket_id,
                         system=ticket_system,
                         source=ticket_detail.get("source", "n8n"),
+                        ticket_subject=ticket_detail.get("subject", "(empty)")[:100],
+                        ticket_status=ticket_detail.get("status", "unknown"),
+                        has_description=bool(ticket_detail.get("description")),
                     )
+                else:
+                    logger.warning(
+                        "itc_ticket_fetch_returned_none",
+                        request_id=request_id,
+                        ticket_id=ticket_id,
+                        system=ticket_system,
+                        hint="get_ticket_detail() returned None. Check n8n or ITC API config.",
+                    )
+            else:
+                logger.warning(
+                    "itc_ticket_no_connector",
+                    request_id=request_id,
+                    ticket_id=ticket_id,
+                    hint="n8n_connector not initialized on supervisor. Cannot fetch ticket detail.",
+                )
         except Exception as e:
-            logger.warning("ticket_detail_fetch_failed", ticket_id=ticket_id, error=str(e))
+            logger.error(
+                "itc_ticket_fetch_exception",
+                request_id=request_id,
+                ticket_id=ticket_id,
+                error=str(e),
+                error_type=type(e).__name__,
+                hint="Exception during get_ticket_detail(). Check n8n connector and network.",
+            )
         
         # Extract fields from ticket detail
         ticket_subject = ticket_detail.get("subject") if ticket_detail else None
@@ -1210,10 +1281,29 @@ class Supervisor:
             "updated_date": ticket_detail.get("updated_date") if ticket_detail else None,
         }
         
+        # Log extracted fields summary
+        logger.info(
+            "itc_ticket_extracted_fields",
+            request_id=request_id,
+            ticket_id=ticket_id,
+            has_subject=bool(ticket_subject),
+            has_description=bool(ticket_description),
+            has_status=bool(ticket_status),
+            has_assignee=bool(ticket_assignee),
+            has_priority=bool(ticket_priority),
+            source=ticket_detail.get("source") if ticket_detail else None,
+        )
+        
         # Search KB for related solutions
         kb_suggestions = []
         search_query = ticket_subject or f"ticket {ticket_id}"
         
+        logger.info(
+            "itc_kb_search_start",
+            request_id=request_id,
+            ticket_id=ticket_id,
+            search_query=search_query[:200],
+        )
         try:
             from src.db import async_session
             from src.knowledge.service import KnowledgeRetrievalService
@@ -1226,8 +1316,21 @@ class Supervisor:
                         "content": r.content[:300],
                         "similarity": r.similarity
                     })
+                logger.info(
+                    "itc_kb_search_result",
+                    request_id=request_id,
+                    ticket_id=ticket_id,
+                    kb_hits=len(kb_suggestions),
+                    kb_suggestion_titles=[s["title"] for s in kb_suggestions],
+                )
         except Exception as e:
-            logger.warning("KB search failed", error=str(e))
+            logger.warning(
+                "itc_kb_search_failed",
+                request_id=request_id,
+                ticket_id=ticket_id,
+                error=str(e),
+                error_type=type(e).__name__,
+            )
         
         # Build response
         response_parts = [f"🎫 **Ticket #{ticket_id}**"]
@@ -1253,9 +1356,21 @@ class Supervisor:
             response_parts.append("\n📚 **Gợi ý từ Knowledge Base:**")
             for i, sugg in enumerate(kb_suggestions, 1):
                 response_parts.append(f"{i}. **{sugg['title']}**\n   {sugg['content']}")
+            logger.info(
+                "itc_ticket_response_kb_available",
+                request_id=request_id,
+                ticket_id=ticket_id,
+                kb_count=len(kb_suggestions),
+            )
         elif not ticket_subject and not ticket_description:
             # No details fetched and no KB results — try LLM reasoning
             response_parts.append("\n🔍 Đang phân tích ticket...")
+            logger.info(
+                "itc_ticket_llm_reasoning_start",
+                request_id=request_id,
+                ticket_id=ticket_id,
+                reason="No ticket_detail from n8n/ITC API and no KB hits. Falling back to LLM reasoning.",
+            )
             if self._llm:
                 system_prompt = f"""Bạn là chuyên gia IT support. Ticket #{ticket_id} đã được tạo.
 Dựa vào kinh nghiệm của bạn với các ticket IT tương tự, hãy đề xuất:
@@ -1266,13 +1381,44 @@ Trả lời ngắn gọn, bằng tiếng Việt."""
                 try:
                     llm_response = await self._llm.complete(system_prompt, "")
                     response_parts.append(f"\n💡 **Gợi ý xử lý:**\n{llm_response.content}")
+                    logger.info(
+                        "itc_ticket_llm_reasoning_success",
+                        request_id=request_id,
+                        ticket_id=ticket_id,
+                        response_length=len(llm_response.content) if llm_response and llm_response.content else 0,
+                        response_preview=llm_response.content[:200] if llm_response and llm_response.content else "(empty)",
+                    )
                 except Exception as e:
-                    logger.warning("LLM reasoning failed", error=str(e))
+                    logger.error(
+                        "itc_ticket_llm_reasoning_failed",
+                        request_id=request_id,
+                        ticket_id=ticket_id,
+                        error=str(e),
+                        error_type=type(e).__name__,
+                    )
+            else:
+                logger.warning(
+                    "itc_ticket_no_llm",
+                    request_id=request_id,
+                    ticket_id=ticket_id,
+                    hint="LLM not available on supervisor, cannot generate reasoning fallback.",
+                )
         
         if not ticket_detail:
             response_parts.append("\n\n*⚠️ Chưa lấy được chi tiết từ hệ thống. Hiển thị thông tin cơ bản.*")
         
         answer = "\n".join(response_parts)
+        
+        logger.info(
+            "itc_handler_final",
+            request_id=request_id,
+            ticket_id=ticket_id,
+            confidence=0.85,
+            response_length=len(answer),
+            has_ticket_detail=bool(ticket_detail),
+            response_preview=answer[:300],
+        )
+        
         return {"answer": answer, "confidence": 0.85, "ticket_id": ticket_id, "ticket_info": ticket_info}
 
     async def _handle_system_query(

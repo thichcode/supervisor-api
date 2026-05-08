@@ -15,6 +15,7 @@ KBs are still used for technical answers, Hindsight supplements with:
 - Entity relationships
 """
 
+from __future__ import annotations
 from typing import Optional
 import os
 import structlog

@@ -27,7 +27,6 @@ from src.core.circuit_breaker import (
     CircuitState,
 )
 
-settings = get_settings()
 logger = structlog.get_logger()
 
 T = TypeVar('T')
@@ -40,6 +39,7 @@ class LLMProvider(Enum):
     AZURE = "azure"
     ANYSCALE = "anyscale"
     LOCALAI = "localai"
+    LLAMACPP = "llamacpp"
 
 
 @dataclass
@@ -195,6 +195,7 @@ class MultiProviderLLMClient:
         base_url: Optional[str] = None,
         timeout: Optional[int] = None,
     ):
+        settings = get_settings()  # Get fresh settings
         self._clients: dict[LLMProvider, AsyncOpenAI] = {}
         # Read model from constructor param, then settings (LLM_MODEL / OLLAMA_DEFAULT_MODEL), then fallback
         settings_model = getattr(settings, 'llm_model', None) or ""
@@ -204,7 +205,12 @@ class MultiProviderLLMClient:
                 settings_model = settings.primary_llm_model
             except Exception:
                 settings_model = ""
-        self._active_model: str = model or settings_model or "Llama-3.1-8B-Instruct-Q4_K_M.gguf"
+        
+        if not model and not settings_model:
+            logger.error("No LLM model configured. Set LLM_MODEL or OLLAMA_DEFAULT_MODEL env var")
+        self._active_model: str = model or settings_model
+        if not self._active_model:
+            logger.warning("LLM _active_model is empty - LLM calls will fail until configured")
 
         # Set explicit provider override from config or constructor param
         if provider:
@@ -216,8 +222,11 @@ class MultiProviderLLMClient:
             self._active_provider = self._explicit_provider
         self._temperature: float = settings.llm_temperature or 0.7
         self._max_tokens: int = settings.llm_max_tokens or 2000
-        # Use ollama_timeout if set, otherwise agent_timeout or constructor param
-        self._timeout: int = timeout or getattr(settings, 'ollama_timeout', None) or settings.agent_timeout or 60
+        # Use ollama_timeout if set, otherwise agent_timeout from settings
+        ollama_timeout = getattr(settings, 'ollama_timeout', None)
+        self._timeout: int = timeout or ollama_timeout or settings.agent_timeout
+        if not self._timeout:
+            logger.warning("No timeout configured for LLM client")
 
         # Circuit breaker
         self._circuit_breaker = get_circuit_breaker(
@@ -241,8 +250,10 @@ class MultiProviderLLMClient:
             "gpt-3.5-turbo": {"input": 0.0005, "output": 0.0015},
         }
 
-        # Ollama base URL - override from constructor or settings
-        self._ollama_base_url = base_url or getattr(settings, 'ollama_base_url', 'http://localhost:11434')
+        # Ollama base URL - must be set via OLLAMA_BASE_URL env var
+        self._ollama_base_url = base_url or settings.ollama_base_url
+        if not self._ollama_base_url:
+            logger.warning("OLLAMA_BASE_URL not set - Ollama client may fail")
 
     def _split_model_candidates(self, model_value: Any) -> list[str]:
         if model_value is None:
@@ -266,6 +277,7 @@ class MultiProviderLLMClient:
         return [value] if value else []
 
     def _resolve_model_candidates(self, model: Optional[str] = None) -> list[str]:
+        settings = get_settings()  # Get fresh settings
         candidates = self._split_model_candidates(model)
         if not candidates:
             candidates = self._split_model_candidates(settings.llm_model)
@@ -274,8 +286,12 @@ class MultiProviderLLMClient:
             try:
                 candidates = [settings.primary_llm_model]
             except Exception:
-                # Ultimate fallback - should match llama.cpp served model
-                candidates = [settings.ollama_default_model or "Llama-3.1-8B-Instruct-Q4_K_M.gguf"]
+                # Try ollama_default_model as last resort from env
+                if settings.ollama_default_model:
+                    candidates = [settings.ollama_default_model]
+                else:
+                    logger.error("No LLM model configured. Set LLM_MODEL or OLLAMA_DEFAULT_MODEL env var")
+                    candidates = []
         unique_candidates: list[str] = []
         seen: set[str] = set()
         for candidate in candidates:
@@ -294,14 +310,23 @@ class MultiProviderLLMClient:
 
     def _detect_provider(self, model: str) -> LLMProvider:
         """Auto-detect provider from model name"""
+        settings = get_settings()  # Get fresh settings
         model_lower = (model or "").lower()
+
+        # Check explicit provider setting first
+        if settings.llm_provider == "llamacpp":
+            return LLMProvider.LLAMACPP
+
+        # llama.cpp models (GGUF format)
+        if ".gguf" in model_lower or "llamacpp" in model_lower:
+            return LLMProvider.LLAMACPP
 
         # Ollama models
         ollama_models = [
             "llama", "mistral", "mixtral", "phi", "qwen",
             "codellama", "vicuna", "orca", "wizard", "falcon",
             "stablelm", "neural", "tinydolphin", "dolphin",
-            "aya", "command", "nemo", "solar", "gemma", " Gemma"
+            "aya", "command", "nemo", "solar", "gemma", "gemma"
         ]
         if any(m in model_lower for m in ollama_models):
             # Check if it's not OpenAI's official model
@@ -317,11 +342,26 @@ class MultiProviderLLMClient:
 
     def _get_client(self, provider: LLMProvider) -> AsyncOpenAI:
         """Get or create client for provider"""
+        settings = get_settings()  # Get fresh settings
         if provider not in self._clients:
             if provider == LLMProvider.OLLAMA:
+                if not self._ollama_base_url:
+                    logger.error("OLLAMA_BASE_URL not configured")
+                    raise ValueError("OLLAMA_BASE_URL environment variable is required")
                 self._clients[provider] = AsyncOpenAI(
                     base_url=f"{self._ollama_base_url}/v1",
                     api_key="ollama",  # Ollama doesn't need real key
+                    timeout=self._timeout,
+                    http_client=httpx.AsyncClient(timeout=httpx.Timeout(self._timeout)),
+                )
+            elif provider == LLMProvider.LLAMACPP:
+                llamacpp_url = settings.llamacpp_base_url
+                if not llamacpp_url:
+                    logger.error("LLAMACPP_BASE_URL not configured")
+                    raise ValueError("LLAMACPP_BASE_URL environment variable is required")
+                self._clients[provider] = AsyncOpenAI(
+                    base_url=f"{llamacpp_url}/v1",
+                    api_key="llamacpp",  # llama.cpp doesn't need real key
                     timeout=self._timeout,
                     http_client=httpx.AsyncClient(timeout=httpx.Timeout(self._timeout)),
                 )
@@ -332,7 +372,7 @@ class MultiProviderLLMClient:
                     api_version=settings.azure_openai_api_version or "2024-02-01",
                     timeout=self._timeout,
                 )
-            else:  # OPENAI
+            else:  # OPENAI, ANYSCALE, LOCALAI
                 self._clients[provider] = AsyncOpenAI(
                     api_key=settings.openai_api_key,
                     timeout=self._timeout,
@@ -342,6 +382,7 @@ class MultiProviderLLMClient:
 
     async def initialize(self):
         """Initialize clients based on configuration"""
+        settings = get_settings()  # Get fresh settings
         # Determine active model
         candidates = self._resolve_model_candidates(settings.llm_model)
         configured_model = candidates[0]
@@ -412,14 +453,15 @@ class MultiProviderLLMClient:
             logger.info("Ollama base URL updated", url=self._ollama_base_url)
         else:
             # For OpenAI/Azure, we need to recreate client with new base_url
+            settings = get_settings()  # Get fresh settings
             if prov in self._clients:
                 del self._clients[prov]
             # Get API key from settings or use placeholder
             api_key = "not-provided"
             if prov == LLMProvider.OPENAI:
-                api_key = getattr(self._settings, 'openai_api_key', None) or "not-provided"
+                api_key = settings.openai_api_key or "not-provided"
             elif prov == LLMProvider.AZURE:
-                api_key = getattr(self._settings, 'azure_openai_key', None) or "not-provided"
+                api_key = settings.azure_openai_key or "not-provided"
             
             self._clients[prov] = AsyncOpenAI(
                 base_url=f"{url.rstrip('/')}/v1",

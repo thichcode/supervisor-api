@@ -10,6 +10,7 @@ Features:
 """
 
 import asyncio
+import os
 import httpx
 from typing import Optional, List, Dict, Any
 from enum import Enum
@@ -19,6 +20,38 @@ import structlog
 from src.core.circuit_breaker import get_circuit_breaker, CircuitBreakerError
 
 logger = structlog.get_logger()
+
+
+def _is_running_in_docker() -> bool:
+    """Detect if we're running inside a Docker container."""
+    # Method 1: /.dockerenv marker file
+    if os.path.exists('/.dockerenv'):
+        return True
+    # Method 2: Check /proc/1/cgroup for 'docker' keyword
+    try:
+        with open('/proc/1/cgroup', 'rt') as f:
+            content = f.read()
+            if 'docker' in content or 'containerd' in content:
+                return True
+    except (FileNotFoundError, IOError):
+        pass
+    return False
+
+
+def _resolve_n8n_base_url(base_url: str) -> str:
+    """Resolve n8n base URL, handling Docker networking."""
+    resolved = base_url or "http://localhost:5678"
+    if _is_running_in_docker() and 'localhost' in resolved:
+        docker_resolved = resolved.replace('localhost', 'host.docker.internal')
+        logger.info(
+            "n8n_docker_network_detected",
+            original_base_url=resolved,
+            resolved_base_url=docker_resolved,
+            hint="Using host.docker.internal because we're inside a Docker container"
+        )
+        return docker_resolved
+    return resolved
+
 
 N8N_RETRY_CONFIG = {
     "base_delay": 1.0,
@@ -335,9 +368,19 @@ class N8NConnector:
     def __init__(self, base_url: str = "", api_key: str = "", webhook_secret: str = ""):
         from src.config import get_settings
         settings = get_settings()
-        self.base_url = base_url or settings.n8n_base_url or "http://localhost:5678"
+        raw_url = base_url or settings.n8n_base_url or "http://localhost:5678"
+        self.base_url = _resolve_n8n_base_url(raw_url)
         self.api_key = api_key or settings.n8n_api_key or ""
         self.webhook_secret = webhook_secret or settings.n8n_webhook_secret or ""
+
+        # Log startup config (redact secrets)
+        logger.info(
+            "n8n_connector_init",
+            base_url=self.base_url,
+            api_key_present=bool(self.api_key),
+            webhook_secret_present=bool(self.webhook_secret),
+            running_in_docker=_is_running_in_docker(),
+        )
         self._client: Optional[httpx.AsyncClient] = None
         self._circuit_breaker = get_circuit_breaker("n8n")
 
@@ -389,35 +432,89 @@ class N8NConnector:
 
     async def trigger_workflow(self, webhook_path: str, payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Trigger an n8n webhook workflow with retry and circuit breaker."""
+        full_url = f"{self.base_url.rstrip('/')}{webhook_path}"
+        payload_preview = {k: (v if k != "api_key" else "***REDACTED***") for k, v in payload.items()}
+
+        # Check circuit breaker state
         if not await self._circuit_breaker.can_execute():
-            logger.warning("n8n_circuit_breaker_open", path=webhook_path)
+            logger.warning(
+                "n8n_circuit_breaker_open",
+                path=webhook_path,
+                full_url=full_url,
+                hint="Circuit breaker is open — all n8n calls blocked. Reset circuit breaker or check n8n server health."
+            )
             return None
+
+        logger.info(
+            "n8n_trigger_workflow_start",
+            path=webhook_path,
+            full_url=full_url,
+            payload_keys=list(payload.keys()),
+            payload_preview=str(payload_preview)[:200],
+        )
 
         async def _do_request():
             client = await self._get_client()
+            logger.info(
+                "n8n_http_request",
+                method="POST",
+                full_url=full_url,
+                payload_size=len(str(payload)),
+            )
             response = await client.post(webhook_path, json=payload)
+            logger.info(
+                "n8n_http_response",
+                path=webhook_path,
+                status_code=response.status_code,
+                response_size=len(response.text) if response.text else 0,
+                response_preview=response.text[:300] if response.text else "(empty)",
+            )
             if response.status_code in (200, 201):
                 await self._circuit_breaker.record_success()
                 return response.json()
             await self._circuit_breaker.record_failure()
-            logger.warning("n8n_workflow_failed", path=webhook_path, status=response.status_code)
+            logger.warning(
+                "n8n_workflow_failed",
+                path=webhook_path,
+                full_url=full_url,
+                status=response.status_code,
+                response_body=response.text[:500] if response.text else "(empty)",
+                hint="n8n workflow returned non-200 status. Check n8n workflow is active and webhook path is correct."
+            )
             return None
 
         try:
             result = await self._retry_with_backoff(_do_request)
+            if result:
+                logger.info(
+                    "n8n_workflow_success",
+                    path=webhook_path,
+                    result_keys=list(result.keys()),
+                    result_preview=str(result)[:300],
+                )
+            else:
+                logger.warning(
+                    "n8n_workflow_returned_none",
+                    path=webhook_path,
+                    hint="n8n returned None after all retries. Check n8n server and webhook workflow."
+                )
             return result
         except Exception as e:
             await self._circuit_breaker.record_failure()
-            logger.warning("n8n_workflow_error", path=webhook_path, error=str(e))
+            logger.error(
+                "n8n_workflow_error",
+                path=webhook_path,
+                full_url=full_url,
+                error=str(e),
+                error_type=type(e).__name__,
+                hint="Exception during n8n webhook call. Common causes: n8n server down, wrong port, network issue."
+            )
             return None
 
     async def get_ticket_detail(self, ticket_id: str, system: str = "itc") -> Optional[Dict[str, Any]]:
         """Get ticket details by ID.
 
-        Tries:
-        1. n8n webhook (itc_ticket_detail or ticket_get)
-        2. Direct ITC API call if configured
-        3. Returns None if both fail
+        Calls n8n webhook for ticket details only.
 
         Args:
             ticket_id: The ticket ID to look up
@@ -433,45 +530,63 @@ class N8NConnector:
             "itsm": "/webhook/itsm/get-ticket",
         }
         webhook_path = webhooks.get(system, "/webhook/itc/ticket-detail")
+        full_url = f"{self.base_url.rstrip('/')}{webhook_path}"
 
-        # Try n8n first
+        logger.info(
+            "get_ticket_detail_start",
+            ticket_id=ticket_id,
+            system=system,
+            webhook_path=webhook_path,
+            n8n_base_url=self.base_url,
+            full_n8n_url=full_url,
+            circuit_breaker_closed=await self._circuit_breaker.can_execute(),
+        )
+
+        # Step 1: Try n8n first
+        logger.info(
+            "get_ticket_detail_step_n8n",
+            ticket_id=ticket_id,
+            step=1,
+            description="Calling n8n webhook for ticket detail",
+            webhook_url=full_url,
+        )
         result = await self.trigger_workflow(webhook_path, {"ticket_id": ticket_id})
         if result:
+            logger.info(
+                "get_ticket_detail_n8n_success",
+                ticket_id=ticket_id,
+                source="n8n",
+                has_subject=bool(result.get("subject")),
+                has_description=bool(result.get("description")),
+                result_keys=list(result.keys()),
+                result_preview=str(result)[:400],
+            )
+            # Validate: check if returned ticket_id matches requested
+            returned_id = result.get("ticket_id") or result.get("id")
+            if returned_id and returned_id != ticket_id:
+                logger.warning(
+                    "get_ticket_detail_id_mismatch",
+                    ticket_id=ticket_id,
+                    returned_id=returned_id,
+                    hint="n8n returned data for a different ticket. The n8n workflow might be returning hardcoded test data.",
+                )
             return result
 
-        # Fallback: try direct ITC API
-        try:
-            from src.config import get_settings
-            settings = get_settings()
-            itc_api_url = getattr(settings, 'itc_api_url', None)
-            if itc_api_url:
-                async with httpx.AsyncClient(timeout=30) as client:
-                    response = await client.get(
-                        f"{itc_api_url}/WorkOrder.do",
-                        params={"woMode": "viewWO", "woID": ticket_id}
-                    )
-                    if response.status_code == 200:
-                        content = response.text
-                        import re
-                        subject = ""
-                        desc = ""
-                        subject_match = re.search(r'<subject>([^<]+)</subject>', content, re.IGNORECASE)
-                        if subject_match:
-                            subject = subject_match.group(1).strip()
-                        desc_match = re.search(r'<description>([^<]+)</description>', content, re.IGNORECASE)
-                        if desc_match:
-                            desc = desc_match.group(1).strip()
-                        if subject or desc:
-                            return {
-                                "ticket_id": ticket_id,
-                                "subject": subject or f"Ticket #{ticket_id}",
-                                "description": desc,
-                                "status": "unknown",
-                                "source": "itc_api_direct",
-                            }
-        except Exception as e:
-            logger.debug("direct_itc_api_failed", ticket_id=ticket_id, error=str(e))
+        logger.warning(
+            "get_ticket_detail_n8n_failed",
+            ticket_id=ticket_id,
+            step=1,
+            hint="n8n webhook returned no data. No ticket detail available.",
+        )
 
+        # All attempts failed
+        logger.error(
+            "get_ticket_detail_all_failed",
+            ticket_id=ticket_id,
+            system=system,
+            steps_tried=["n8n_webhook"],
+            hint="n8n webhook failed. No ticket detail available for LLM reasoning fallback.",
+        )
         return None
 
     async def close(self):

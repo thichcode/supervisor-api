@@ -66,7 +66,7 @@ async def auto_send_to_power_automate(payload) -> bool:
 
     pa_payload = {
         "request_id": getattr(payload, "request_id", ""),
-        "message": payload.message.text if payload.message else "",
+        "message": payload.message if payload.message else "",  # Now it's the text string directly
         "answer": payload.answer,
         "confidence": payload.confidence,
         "intent": meta.get("intent", "unknown"),

@@ -11,11 +11,29 @@ class TestMultiProviderLLMClient:
     @pytest.fixture
     def client(self):
         """Create a fresh client for each test"""
+        import os
+        from src.config import get_settings
+        
+        # Set env vars to override .env file (empty string = disable)
+        os.environ["LLM_MODEL"] = "test-model.gguf"
+        os.environ["LLM_PROVIDER"] = ""  # Override .env file
+        os.environ["OLLAMA_DEFAULT_MODEL"] = ""  # Override .env file
+        
+        get_settings.cache_clear()
         return MultiProviderLLMClient()
 
     def test_client_initialization(self, client):
-        """Test client initializes with correct defaults"""
-        assert client._active_model == "llama3"
+        """Test client initializes with correct values from env"""
+        import os
+        from src.config import get_settings
+        
+        # Debug: print current state
+        print(f"DEBUG: LLM_MODEL env = {os.environ.get('LLM_MODEL')}")
+        settings = get_settings()
+        print(f"DEBUG: settings.llm_model = {settings.llm_model!r}")
+        print(f"DEBUG: client._active_model = {client._active_model!r}")
+        
+        assert client._active_model == "test-model.gguf"
         assert client._temperature == 0.7
         assert client._max_tokens == 2000
         # Timeout defaults to settings.agent_timeout (10) if not specified

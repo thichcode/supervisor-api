@@ -413,6 +413,9 @@ async def lifespan(app: FastAPI):
 
     logger = structlog.get_logger()
     
+    # Load settings from environment
+    settings = get_settings()
+    
     # Graceful shutdown flag
     shutting_down = False
     

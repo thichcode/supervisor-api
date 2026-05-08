@@ -4,7 +4,7 @@ Uses probabilistic methods to calculate and improve response confidence
 """
 
 import math
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass, field
 from collections import defaultdict
 import structlog
@@ -156,7 +156,7 @@ class BayesianConfidence:
     def calculate_confidence(
         self,
         factors: ConfidenceFactors,
-        model_name: str = "llama3",
+        model_name: Optional[str] = None,
         prior_strength: float = 1.0
     ) -> Tuple[float, Dict[str, float]]:
         """
@@ -164,12 +164,21 @@ class BayesianConfidence:
         
         Args:
             factors: Individual confidence factors
-            model_name: LLM model being used
+            model_name: LLM model being used (reads from settings if not provided)
             prior_strength: Strength of prior belief (1.0 = neutral)
             
         Returns:
             Tuple of (overall_confidence, factor_scores)
         """
+        # If model_name not provided, get from settings (LLM_MODEL env var)
+        if not model_name:
+            from src.config import get_settings
+            settings = get_settings()
+            model_name = settings.llm_model or settings.ollama_default_model or ""
+            if not model_name:
+                logger = logging.getLogger(__name__)
+                logger.warning("No LLM model configured for confidence calculation")
+        
         # Get model performance as prior
         model_prior = self.model_performance.get(
             model_name, 
@@ -229,9 +238,19 @@ class BayesianConfidence:
         user_id: str,
         response_id: str,
         is_positive: bool,
-        model_name: str = "llama3"
+        model_name: Optional[str] = None
     ) -> None:
         """Update confidence model with user feedback."""
+        # If model_name not provided, get from settings
+        if not model_name:
+            from src.config import get_settings
+            settings = get_settings()
+            model_name = settings.llm_model or settings.ollama_default_model or ""
+            if not model_name:
+                logger = logging.getLogger(__name__)
+                logger.warning("No LLM model configured for feedback update")
+                return
+        
         # Update user feedback history
         self.user_feedback[user_id].append(is_positive)
         
@@ -251,7 +270,11 @@ class BayesianConfidence:
         models = list(self.model_performance.keys())
         
         if len(models) < 2:
-            return {"recommended": models[0] if models else "llama3", "reason": "single_model"}
+            # If no models in performance dict, try to get from settings
+            from src.config import get_settings
+            settings = get_settings()
+            fallback_model = settings.llm_model or settings.ollama_default_model or ""
+            return {"recommended": models[0] if models else fallback_model, "reason": "single_model"}
         
         # Compare all pairs
         best_model = None
@@ -276,8 +299,14 @@ class BayesianConfidence:
                     best_prob = 1 - prob
                     best_model = model_b
         
+        # If no best_model determined, try settings
+        if not best_model:
+            from src.config import get_settings
+            settings = get_settings()
+            best_model = settings.llm_model or settings.ollama_default_model or ""
+        
         return {
-            "recommended": best_model or "llama3",
+            "recommended": best_model,
             "confidence": best_prob,
             "comparisons": comparisons,
             "all_models": {
@@ -315,7 +344,7 @@ class ResponseValidator:
         context: Dict,
         policy: Dict,
         knowledge: Dict,
-        model_name: str = "llama3"
+        model_name: Optional[str] = None
     ) -> Dict:
         """
         Validate a response and calculate confidence scores.
@@ -323,6 +352,15 @@ class ResponseValidator:
         Returns:
             Validation result with confidence, issues, and suggestions
         """
+        # If model_name not provided, get from settings
+        if not model_name:
+            from src.config import get_settings
+            settings = get_settings()
+            model_name = settings.llm_model or settings.ollama_default_model or ""
+            if not model_name:
+                logger = logging.getLogger(__name__)
+                logger.warning("No LLM model configured for response validation")
+        
         factors = self._extract_factors(response, query, context, policy, knowledge)
         
         confidence, factor_scores = self.confidence_calculator.calculate_confidence(
@@ -564,7 +602,7 @@ if __name__ == "__main__":
         agent_experience=0.8
     )
     
-    confidence, factor_scores = calc.calculate_confidence(factors, "llama3")
+    confidence, factor_scores = calc.calculate_confidence(factors, model_name=None)  # Will read from settings
     print(f"Calculated Confidence: {confidence:.3f}")
     print(f"Factor Scores: {factor_scores}\n")
     

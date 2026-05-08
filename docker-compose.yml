@@ -28,17 +28,19 @@ services:
       - APP_DEBUG=${APP_DEBUG:-false}
       - APP_WORKERS=${APP_WORKERS:-4}
       - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-}
-      # LLM Configuration
-      - LLM_PROVIDER=${LLM_PROVIDER:-ollama}
-      - LLM_MODEL=${LLM_MODEL:-llama3}
+      # LLM Configuration - phải set trong .env, không có default
+      - LLM_PROVIDER=${LLM_PROVIDER}
+      - LLM_MODEL=${LLM_MODEL}
       # Point to llama.cpp running on the host network
-      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://localhost:8088}
-      - OLLAMA_DEFAULT_MODEL=${OLLAMA_DEFAULT_MODEL:-llama3}
-      - OLLAMA_TIMEOUT=${OLLAMA_TIMEOUT:-320}
-      - OLLAMA_IMAGE_MODEL=${OLLAMA_IMAGE_MODEL:-llama3.1-vision}
-      - LLM_TEMPERATURE=${LLM_TEMPERATURE:-0.7}
-      - LLM_MAX_TOKENS=${LLM_MAX_TOKENS:-2000}
-      - LLM_HEALTHCHECK_ENABLED=${LLM_HEALTHCHECK_ENABLED:-false}
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL}
+      - OLLAMA_DEFAULT_MODEL=${OLLAMA_DEFAULT_MODEL}
+      - OLLAMA_TIMEOUT=${OLLAMA_TIMEOUT}
+      - OLLAMA_IMAGE_MODEL=${OLLAMA_IMAGE_MODEL}
+      - LLM_TEMPERATURE=${LLM_TEMPERATURE}
+      - LLM_MAX_TOKENS=${LLM_MAX_TOKENS}
+      - LLM_HEALTHCHECK_ENABLED=${LLM_HEALTHCHECK_ENABLED}
+      # llama.cpp support
+      - LLAMACPP_BASE_URL=${LLAMACPP_BASE_URL}
       # Optional: OpenAI (fallback if Ollama unavailable)
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       # Azure OpenAI (optional)

@@ -50,23 +50,23 @@ class TestConfigEnvLoading:
         assert s.llm_model_candidates == ["gemma-4-E4B-it-Q4_K_M.gguf"]
 
     def test_llm_model_empty_fallsback_to_default(self):
-        """Nếu LLM_MODEL rỗng → llm_model_candidates trả về ["gemma4:e4b"]"""
+        """Nếu LLM_MODEL rỗng → llm_model_candidates trả về [] (không có default)"""
         os.environ["LLM_MODEL"] = ""
         from src.config import get_settings
         get_settings.cache_clear()
         s = get_settings()
         assert s.llm_model == ""  # Empty string
-        assert s.llm_model_candidates == ["gemma4:e4b"]  # HARDCODED fallback!
+        assert s.llm_model_candidates == []  # No default - empty list
 
     def test_llm_model_unset_fallsback_to_default(self):
-        """Nếu LLM_MODEL không set và không có .env → fallback gemma4:e4b"""
+        """Nếu LLM_MODEL không set và không có .env → trả về [] (không có default)"""
         if "LLM_MODEL" in os.environ:
             del os.environ["LLM_MODEL"]
         from src.config import get_settings
         get_settings.cache_clear()
         s = get_settings()
         assert s.llm_model == ""
-        assert s.llm_model_candidates == ["gemma4:e4b"]
+        assert s.llm_model_candidates == []  # No default
 
     def test_ollama_default_model_independent(self):
         """OLLAMA_DEFAULT_MODEL chỉ ảnh hưởng recommended_models, KHÔNG ảnh hưởng llm_model"""
@@ -106,7 +106,7 @@ class TestConfigEnvLoading:
         assert candidates[1] == 'model-b.gguf"'
 
     def test_none_ollama_default_model_still_fallsback(self):
-        """Nếu cả LLM_MODEL và OLLAMA_DEFAULT_MODEL đều rỗng"""
+        """Nếu cả LLM_MODEL và OLLAMA_DEFAULT_MODEL đều rỗng → trả về []"""
         os.environ["LLM_MODEL"] = ""
         os.environ["OLLAMA_DEFAULT_MODEL"] = ""
         from src.config import get_settings
@@ -114,19 +114,19 @@ class TestConfigEnvLoading:
         s = get_settings()
         assert s.llm_model == ""
         assert s.ollama_default_model == ""
-        # llm_model_candidates fallback về gemma4:e4b
-        assert s.llm_model_candidates == ["gemma4:e4b"]
+        # llm_model_candidates trả về [] (không có default)
+        assert s.llm_model_candidates == []
 
     def test_ollama_default_model_alone_doesnt_affect_primary(self):
-        """Nếu chỉ set OLLAMA_DEFAULT_MODEL mà không set LLM_MODEL, primary vẫn gemma4:e4b"""
+        """Nếu chỉ set OLLAMA_DEFAULT_MODEL mà không set LLM_MODEL → llm_model_candidates = []"""
         if "LLM_MODEL" in os.environ:
             del os.environ["LLM_MODEL"]
         os.environ["OLLAMA_DEFAULT_MODEL"] = "gemma-4-E4B-it-Q4_K_M.gguf"
         from src.config import get_settings
         get_settings.cache_clear()
         s = get_settings()
-        # llm_model rỗng → llm_model_candidates = gemma4:e4b
-        assert s.llm_model_candidates == ["gemma4:e4b"]
+        # llm_model rỗng → llm_model_candidates = [] (không có default)
+        assert s.llm_model_candidates == []
         # OLLAMA_DEFAULT_MODEL chỉ dùng cho recommended_models
         assert s.recommended_models["faq"] == "gemma-4-E4B-it-Q4_K_M.gguf"
 
@@ -204,10 +204,10 @@ class TestConfigEnvLoading:
         from src.config import get_settings
         get_settings.cache_clear()
         s = get_settings()
-        # User muốn gemma-4-E4B-it-Q4_K_M.gguf
+        # ollama_default_model được set
         assert s.ollama_default_model == "gemma-4-E4B-it-Q4_K_M.gguf"
-        # Nhưng primary model là gemma4:e4b!
-        assert s.primary_llm_model == "gemma4:e4b"
+        # Nhưng primary model rỗng vì LLM_MODEL không set (không có default)
+        assert s.primary_llm_model == ""
         # recommended_models thì đúng
         assert s.recommended_models["faq"] == "gemma-4-E4B-it-Q4_K_M.gguf"
-        # Nhưng LLM thực tế chạy là primary_llm_model = gemma4:e4b
+        # LLM thực tế chạy sẽ rỗng - cần set LLM_MODEL để sử dụng

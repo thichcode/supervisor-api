@@ -308,42 +308,36 @@ class ChatService:
         # Question or request → needs reply
         if any(q in t for q in ["?", "là gì", "sao", "làm sao", "tại sao", "muốn", "cần", "yêu cầu", "hỗ trợ", "giúp", "where", "how", "what", "why"]):
             return True, "question_or_request"
+        # Action verbs: user is requesting something (check, view, search, etc.)
+        if any(t.startswith(prefix) for prefix in ["kiểm tra", "xem", "tra cứu", "tìm", "check", "mở", "cho tôi", "cho mình", "gửi", "cập nhật"]):
+            return True, "action_request"
+        # Also detect ticket/woid patterns (e.g. "#4731003", "ticket 4731003", "woid 12345")
+        if re.search(r'(?:\#|ticket[\s#]*|woid[\s#]*|inc[\s#]*)\d{5,}', t):
+            return True, "ticket_lookup"
         # Ticket/case update without question → no reply needed
-        if any(k in t for k in ["đã cập nhật", "đã tạo", "ticket #", "case #", "đóng case"]):
+        if any(k in t for k in ["đã cập nhật", "đã tạo", "đóng case"]):
             return False, "system_event"
         # Default: if no clear intent to respond, do not reply
         return False, "unclear_intent_no_need"
 
     async def handle_chat(self, request: ChatRequest, auto_send_callback=None) -> ChatResponse:
         import src.api as api_module
+        from src.config import get_settings
+        settings = get_settings()
 
         # ← FIX v2: skip processing for ack/emoji/no-op messages
         needs_response, skip_reason = self._needs_reply(request.message)
-        if not needs_response:
-            return ChatResponse(
-                request_id=request.message_id if request.message_id else str(uuid.uuid4()),
-                thread_id=request.thread_id,
-                message_id=request.message_id,
-                status="skipped",
-                customer_reply="",  # no outbound reply
-                message_type=request.message_type,
-                confidence=0.0,
-                metadata={"skip_reason": skip_reason, "conversation_id": request.thread_id},
-                delivery_status="skipped",
-                conversation_id=request.thread_id,
-            )
-
+        
         # Determine request_id and message_id
         platform_message_id = request.message_id if request.message_id else None
         if platform_message_id:
-            request_id = str(platform_message_id)  # use platform message_id as request_id for clarity
+            request_id = str(platform_message_id)
         else:
             request_id = str(uuid.uuid4())
         
         conversation_id = request.thread_id or f"chat-{request.user_id}-{int(time.time())}"
-        thread_id = conversation_id  # canonical name
+        thread_id = conversation_id
         
-        # Determine message_id for conversation
         if platform_message_id:
             conv_message_id = platform_message_id
         else:
@@ -375,8 +369,43 @@ class ChatService:
                 ticket_system=request.ticket_system,
             ) if (request.case_id or request.ticket_id) else None,
             message=MessageInfo(text=request.message),
-            message_id=request.message_id,  # Truyền platform message_id vào InputPayload
+            message_id=request.message_id,
         )
+        
+        # For style_learning users: save to DB even if skipping
+        if not needs_response and settings.enable_user_style_learning and settings.should_learn_user_style(request.user_id):
+            async with api_module.async_session() as session:
+                memory_service = MemoryService(session, api_module.redis_cache)
+                await memory_service.commit(payload, memory_snapshot=None)
+                await session.commit()
+            return ChatResponse(
+                request_id=request_id,
+                thread_id=thread_id,
+                message_id=conv_message_id,
+                status="skipped",
+                customer_reply="",
+                message="",
+                message_type=request.message_type,
+                confidence=0.0,
+                metadata={"skip_reason": skip_reason, "conversation_id": conversation_id, "style_learning": True},
+                delivery_status="skipped",
+                conversation_id=conversation_id,
+            )
+        
+        if not needs_response:
+            return ChatResponse(
+                request_id=request_id,
+                thread_id=thread_id,
+                message_id=conv_message_id,
+                status="skipped",
+                customer_reply="",
+                message="",
+                message_type=request.message_type,
+                confidence=0.0,
+                metadata={"skip_reason": skip_reason, "conversation_id": conversation_id},
+                delivery_status="skipped",
+                conversation_id=conversation_id,
+            )
 
         is_group_chat = bool(chat_context.get("group_chat", False))
         is_teams_message = request.metadata.get("source") == "ms_teams" or request.metadata.get("platform") == "teams" or any(
@@ -655,7 +684,11 @@ class ChatService:
                 webhook_payload = type('obj', (object,), {
                     'answer': grounded_answer,
                     'confidence': result.confidence,
-                    'metadata': webhook_metadata
+                    'metadata': webhook_metadata,
+                    'message': request.message,  # The message text (string)
+                    'status': result.status,
+                    'risk_level': result.risk_level,
+                    'request_id': request_id,
                 })()
                 try:
                     await auto_send_callback(webhook_payload)
@@ -675,6 +708,26 @@ class ChatService:
         # Extract kb_hit for threshold gating
         kb_hit = result.metadata.get("kb_hit", False) if result.metadata else False
         kb_sources = result.metadata.get("kb_sources", []) if result.metadata else []
+
+        # ITC ticket lookups bypass confidence gating — deliver directly
+        if result.metadata and result.metadata.get("itc_ticket"):
+            return ChatResponse(
+                request_id=request_id,
+                thread_id=thread_id,
+                message_id=conv_message_id,
+                status=result.status or "completed",
+                customer_reply=result.answer,
+                message=result.answer,
+                internal_note=result.metadata.get("internal_note", ""),
+                message_type=request.message_type or "text",
+                confidence=result.confidence,
+                metadata={
+                    **(result.metadata or {}),
+                    "itc_ticket": True,
+                    "delivery_status": "direct_with_itc",
+                },
+                conversation_id=conversation_id,
+            )
 
         # ← FIX v3: Use entity-based clarification or 4W1H fallback
         if confidence < 0.5:

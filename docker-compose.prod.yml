@@ -20,11 +20,15 @@ services:
       - REDIS_HOST=localhost
       - REDIS_PORT=6379
       - REDIS_PASSWORD=${REDIS_PASSWORD:-}
-      # LLM
-      - LLM_PROVIDER=ollama
-      - OLLAMA_BASE_URL=http://localhost:8088
-      - OLLAMA_DEFAULT_MODEL=llama3
-      - OLLAMA_TIMEOUT=320
+      # LLM - phải set trong .env, không hardcode
+      - LLM_MODEL=${LLM_MODEL}
+      - LLM_PROVIDER=${LLM_PROVIDER}
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL}
+      - OLLAMA_DEFAULT_MODEL=${OLLAMA_DEFAULT_MODEL}
+      - OLLAMA_TIMEOUT=${OLLAMA_TIMEOUT}
+      - LLAMACPP_BASE_URL=${LLAMACPP_BASE_URL}
+      # Style Learning
+      - USER_STYLE_LEARNING_USER_IDS=${USER_STYLE_LEARNING_USER_IDS}
       # Hindsight
       - HINDSIGHT_ENABLED=true
       - HINDSIGHT_BASE_URL=http://hindsight:8000
@@ -72,11 +76,11 @@ services:
       - "8888:8888"  # API
       - "9999:9999"  # UI (Control Plane)
     environment:
-      # LLM - dùng llama.cpp trên host
-      - HINDSIGHT_API_LLM_PROVIDER=ollama
-      - HINDSIGHT_API_LLM_BASE_URL=http://localhost:8088
-      - HINDSIGHT_API_LLM_MODEL=llama3
-      - HINDSIGHT_API_LLM_TIMEOUT=60
+      # LLM - dùng llama.cpp trên host (phải set trong .env)
+      - HINDSIGHT_API_LLM_PROVIDER=${HINDSIGHT_LLM_PROVIDER}
+      - HINDSIGHT_API_LLM_BASE_URL=${HINDSIGHT_LLM_BASE_URL}
+      - HINDSIGHT_API_LLM_MODEL=${HINDSIGHT_LLM_MODEL}
+      - HINDSIGHT_API_LLM_TIMEOUT=${HINDSIGHT_LLM_TIMEOUT}
       # Database - PostgreSQL riêng cho Hindsight
       - HINDSIGHT_DB_HOST=localhost
       - HINDSIGHT_DB_PORT=5433
