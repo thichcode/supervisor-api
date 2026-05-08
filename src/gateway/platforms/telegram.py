@@ -82,6 +82,7 @@ def build_approval_message_text(approval, compact: Optional[bool] = None) -> str
     kb_evidence = metadata.get("kb_evidence", [])
     user_id = getattr(approval, "user_id", "") or metadata.get("user_id", "")
     display_name = getattr(approval, "display_name", "") or metadata.get("display_name", "")
+    conversation_summary = metadata.get("conversation_summary", "") or ""
 
     is_group_chat = group_chat is True
     is_compact = compact if compact is not None else is_group_chat
@@ -138,6 +139,7 @@ def build_approval_message_text(approval, compact: Optional[bool] = None) -> str
             + "\n".join(context_lines)
             + f"\nRisk: {risk_level or 'N/A'}\n"
             + f"Confidence: {confidence_pct}% (threshold: {threshold_pct}%)"
+            + (f"💬 Summary:\n{_truncate_text(conversation_summary, 100)}" if conversation_summary else "")
             + (f"\n\n{scope_note}" if scope_note else "")
             + f"\n\nOriginal (preview):\n{summary_original or 'N/A'}"
             + f"\n\nAI (preview):\n{summary_ai or 'N/A'}\n\n"
@@ -150,13 +152,18 @@ def build_approval_message_text(approval, compact: Optional[bool] = None) -> str
 
     note_section = f"\n\n{scope_note}" if scope_note else ""
 
+    summary_section = _truncate_text(conversation_summary, 240) if conversation_summary else ""
+    if summary_section:
+        summary_section = f"💬 Conversation Summary:\n{summary_section}\n\n"
+
     return (
         f"{header}\n\n"
         + "\n".join(context_lines)
         + f"\nRisk: {risk_level or 'N/A'}\n"
         + f"Confidence: {confidence_pct}% (threshold: {threshold_pct}%)"
         + note_section
-        + f"\n\nOriginal:\n{approval.original_message}\n\n"
+        + f"\n\n{summary_section}"
+        + f"Original:\n{approval.original_message}\n\n"
         + f"AI Response:\n{approval.ai_response}{kb_section}\n\n"
         + "Use the buttons below to approve or reject."
     )

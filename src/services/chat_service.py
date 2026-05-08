@@ -571,6 +571,7 @@ class ChatService:
                 action_type="send_message",
                 metadata={
                     "thread_id": thread_id,
+                    "conversation_summary": getattr(memory, "conversation_summary", None) or "",
                     "case_id": request.case_id,
                     "ticket_id": request.ticket_id,
                     "ticket_system": request.ticket_system,
@@ -862,6 +863,7 @@ class ChatService:
                 action_type="send_message",
                 metadata={
                     "thread_id": thread_id,
+                    "conversation_summary": getattr(memory, "conversation_summary", None) or "",
                     "case_id": request.case_id,
                     "ticket_id": request.ticket_id,
                     "ticket_system": request.ticket_system,

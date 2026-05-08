@@ -687,6 +687,7 @@ async def receive_webhook(
                     metadata={
                         **(result.metadata or {}),
                         "thread_id": payload.conversation.thread_id,
+                        "conversation_summary": getattr(memory, "conversation_summary", None) or "",
                         "approval_required": True,
                         "threshold": 0.5,
                         **chat_context,
@@ -700,19 +701,8 @@ async def receive_webhook(
                     "approval_required": True,
                     "threshold": 0.5,
                 }
-                
-                # Send to Telegram for review/approve
-                from src.api.routers.approvals import send_telegram_message
-                tg_chat_ids = settings.telegram_approval_chat_ids.split(",")
-                if tg_chat_ids:
-                    review_message = f"⚠️ **Cần duyệt**\n\n**User:** {payload.user.display_name}\n**Confidence:** {result.confidence:.0%}\n\n**Câu hỏi:**\n{result.answer[:500]}..." if len(result.answer) > 500 else f"⚠️ **Cần duyệt**\n\n**User:** {payload.user.display_name}\n**Confidence:** {result.confidence:.0%}\n\n**Câu hỏi:**\n{result.answer}"
-                    for tg_id in tg_chat_ids:
-                        tg_id = tg_id.strip()
-                        if tg_id:
-                            try:
-                                await send_telegram_message(tg_id, review_message)
-                            except Exception as e:
-                                logger.warning("Failed to send approval to Telegram", chat_id=tg_id, error=str(e))
+                # Note: Telegram notification is handled by approval_service.create_approval()
+                # → _notify_telegram_approval_request() sends the rich card with buttons
             elif result.status == "completed" and settings.power_automate_webhook_url:
                 await _auto_send_to_power_automate(result)
 
