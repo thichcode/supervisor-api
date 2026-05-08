@@ -47,7 +47,14 @@ class CommaSeparatedDotEnvSettingsSource(_CommaSeparatedMixin, DotEnvSettingsSou
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    # Compute absolute path to .env file alongside this config.py
+    _env_file_abs = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+    
+    model_config = SettingsConfigDict(
+        env_file=[".env", _env_file_abs], 
+        env_file_encoding="utf-8", 
+        extra="ignore",
+    )
 
     app_name: str = "Multi-Agent Supervisor System"
     app_version: str = "1.0.0"
@@ -111,21 +118,21 @@ class Settings(BaseSettings):
     # LLM Provider Configuration
     llm_provider: str = ""  # "ollama", "openai", or "azure" (auto-detect if empty)
     openai_api_key: str = ""
-    llm_model: str = Field(default_factory=lambda: os.getenv("LLM_MODEL", ""))
+    llm_model: str = ""  # No default - must come from LLM_MODEL env var or .env file
     llm_temperature: float = 0.7
     llm_max_tokens: int = 2000
     llm_healthcheck_enabled: bool = False
     
     # Ollama Configuration (for self-hosted Vietnamese models)
-    ollama_base_url: str = Field(default_factory=lambda: os.getenv("OLLAMA_BASE_URL", ""))
-    ollama_default_model: str = Field(default_factory=lambda: os.getenv("OLLAMA_DEFAULT_MODEL", ""))
+    ollama_base_url: str = ""  # Must come from OLLAMA_BASE_URL env var or .env file
+    ollama_default_model: str = ""  # Must come from OLLAMA_DEFAULT_MODEL env var or .env file
     ollama_timeout: int = 320
 
     # llama.cpp Configuration (for GGUF models)
-    llamacpp_base_url: str = Field(default_factory=lambda: os.getenv("LLAMACPP_BASE_URL", ""))
+    llamacpp_base_url: str = ""  # Must come from LLAMACPP_BASE_URL env var or .env file
 
     # Image Processing Model (separate from main LLM for OCR/tasks)
-    ollama_image_model: str = Field(default_factory=lambda: os.getenv("OLLAMA_IMAGE_MODEL", ""))
+    ollama_image_model: str = ""  # Must come from OLLAMA_IMAGE_MODEL env var or .env file
 
     # Azure OpenAI Configuration (optional)
     azure_openai_endpoint: str = ""
