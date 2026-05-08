@@ -95,7 +95,7 @@ async def approve_or_reject(approval_id: str, action: ApprovalActionRequest):
 
         # Send final response to user via Power Automate webhook
         # Only send if confidence >= 0.9, otherwise Telegram only
-        from src.api.app import _auto_send_to_power_automate
+        from src.services.power_automate_service import auto_send_to_power_automate
         from src.core.schemas import OutputPayload
 
         output_payload = OutputPayload(
@@ -108,7 +108,7 @@ async def approve_or_reject(approval_id: str, action: ApprovalActionRequest):
         # Only auto-send when confidence >= 0.9 and this is not a tool approval
         if approval.confidence >= 0.9 and not is_tool_approval:
             try:
-                await _auto_send_to_power_automate(output_payload)
+                await auto_send_to_power_automate(output_payload)
             except Exception as e:
                 logger.warning("Failed to send to Power Automate", error=str(e))
 

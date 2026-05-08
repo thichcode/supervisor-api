@@ -5,6 +5,7 @@ import asyncio
 import csv
 import json
 import re
+import structlog
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, Iterable
@@ -12,6 +13,7 @@ from typing import Any, Iterable
 from src.db import async_session, init_db
 from src.db.models import KnowledgeDocument, KnowledgeFAQ, KnowledgeGuide, KnowledgePolicy
 
+logger = structlog.get_logger(__name__)
 
 _KNOWN_KINDS = {"policy", "faq", "guide", "document"}
 _LIST_SPLIT_RE = re.compile(r"[;,|\n\r]+")
@@ -373,7 +375,7 @@ async def _amain(args: argparse.Namespace) -> int:
         encoding=args.encoding,
         dry_run=args.dry_run,
     )
-    print(json.dumps(summary, ensure_ascii=False, indent=2))
+    logger.info("Import summary", summary=summary)
     return 0 if not summary["errors"] else 1
 
 

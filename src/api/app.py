@@ -36,6 +36,7 @@ from src.memory import redis_cache
 from src.memory.service import MemoryService
 from src.services.interaction_service import InteractionService
 from src.services.feedback_learning_worker import FeedbackReplayWorker
+from src.services.power_automate_service import auto_send_to_power_automate as _auto_send_to_power_automate
 from src.api.routers.admin import router as admin_router
 from src.api.routers.approvals import router as approvals_router
 from src.api.routers.approvals import TG_ROUTER as tg_router
@@ -728,113 +729,13 @@ async def receive_webhook(
 
 @app.post("/output/power-automate")
 async def send_to_power_automate(payload: OutputPayload):
-    if not settings.power_automate_webhook_url:
-        metrics.record_delivery_action("power_automate", "skipped")
-        return {"status": "skipped", "message": "Power Automate webhook not configured"}
-
-    import httpx
-    from tenacity import retry, stop_after_attempt, wait_exponential
-
-    @retry(stop=stop_after_attempt(2), wait=wait_exponential(multiplier=1, min=1, max=10))
-    async def _send():
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                settings.power_automate_webhook_url,
-                json=payload.model_dump(),
-                timeout=settings.webhook_timeout,
-            )
-            response.raise_for_status()
-            return response.status_code
-
+    from src.services.power_automate_service import send_to_power_automate as _send
+    
     try:
-        status_code = await _send()
-        metrics.record_request("POST", "/output/power-automate", status_code, 0)
-        metrics.record_delivery_action("power_automate", "sent")
-        return {"status": "sent", "response_code": status_code}
+        return await _send(payload)
     except httpx.HTTPError:
-        metrics.record_error("power_automate", "output/power-automate")
-        metrics.record_delivery_action("power_automate", "failed")
         raise HTTPException(status_code=502, detail="Failed to reach Power Automate")
-# NEW: Auto-send helper for integrated sending
-async def _auto_send_to_power_automate(payload: OutputPayload) -> bool:
-    """Auto-send response to Power Automate (called automatically after chat)"""
-    if not settings.power_automate_webhook_url:
-        metrics.record_delivery_action("power_automate", "skipped")
-        return False
 
-    import httpx
-    from tenacity import retry, stop_after_attempt, wait_exponential
-    
-    # Extract metadata for richer payload
-    meta = payload.metadata or {}
-    
-    # Extract conversation info from metadata
-    conversation_info = meta.get("conversation_summary") or meta.get("conversation_id", "")
-    
-    # Format payload for Power Automate with expanded fields
-    pa_payload = {
-        "request_id": getattr(payload, 'request_id', ''),
-        "message": payload.message.text if payload.message else "",
-        "answer": payload.answer,
-        "confidence": payload.confidence,
-        "intent": meta.get("intent", "unknown"),
-        "risk_level": payload.risk_level,
-        "agents_used": meta.get("agents_used", []),
-        "status": payload.status,
-        "processing_time_ms": meta.get("processing_time_ms", 0),
-        
-        # Conversation info for Power Automate
-        "conversation": {
-            "thread_id": meta.get("conversation_id", ""),
-            "message_id": meta.get("message_id", ""),
-            "summary": meta.get("conversation_summary"),
-            "unresolved_points": meta.get("unresolved_points", []),
-        },
-        
-        # KB related fields
-        "kb_hit": meta.get("kb_hit", False),
-        "kb_guides": meta.get("kb_guides", []),
-        "kb_sources": meta.get("kb_sources", []),
-        "kb_template": meta.get("kb_template", {}),
-        "knowledge_results": meta.get("knowledge_results", []),
-        
-        # ITC ticket related
-        "itc_ticket": meta.get("itc_ticket", False),
-        "itc_requestid": meta.get("itc_requestid"),
-        "ticket_id": meta.get("ticket_id"),
-        
-        # Approval related
-        "approval_id": meta.get("approval_id"),
-        "approval_required": meta.get("approval_required", False),
-        
-        # Full metadata for reference
-        "metadata": meta,
-    }
-
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=10))
-    async def _send():
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                settings.power_automate_webhook_url,
-                json=pa_payload,
-                timeout=settings.webhook_timeout,
-            )
-            response.raise_for_status()
-            return response.status_code
-
-    try:
-        status_code = await _send()
-        logger.info("Auto-sent to Power Automate", 
-                 request_id=getattr(payload, 'request_id', ''),
-                 status_code=status_code)
-        metrics.record_delivery_action("power_automate", "sent")
-        return True
-    except Exception as e:
-        logger.error("Auto-send to Power Automate failed", 
-                   request_id=getattr(payload, 'request_id', ''),
-                   error=str(e))
-        metrics.record_delivery_action("power_automate", "failed")
-        return False
 # =============================================================================
 # Agent Harness Integration - Supervisor wrapped by Harness
 # =============================================================================

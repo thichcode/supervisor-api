@@ -98,6 +98,8 @@ LLM_COST = Counter(
 # Rate Limiting Metrics
 RATE_LIMIT_EXCEEDED = Counter(
     'supervisor_rate_limit_exceeded_total',
+    'Number of rate limit exceeded events'
+)
 
 # ============================================================================
 # Connection Pool Metrics
@@ -175,15 +177,8 @@ def get_redis_pool_metrics() -> dict:
         "max_pool_size": REDIS_POOL_SIZE._value.get(),
         "creation_count": REDIS_POOL_CREATED._value.get(),
     }
-    'Rate limit exceeded count'
-)
 
-# Database Pool Metrics
-DB_POOL_SIZE = Gauge(
-    'supervisor_db_pool_size',
-    'Database connection pool size'
-)
-
+# Database Pool Metrics (legacy, defined above with label)
 DB_POOL_AVAILABLE = Gauge(
     'supervisor_db_pool_available',
     'Available database connections'
@@ -232,6 +227,12 @@ APPROVAL_ACTIONS = Counter(
     ['status']
 )
 
+KB_CACHE = Counter(
+    'supervisor_kb_cache_total',
+    'Knowledge base cache operations',
+    ['status']
+)
+
 DELIVERY_ACTIONS = Counter(
     'supervisor_delivery_actions_total',
     'Response delivery actions',
@@ -267,6 +268,9 @@ REASONING_LOOP_FALLBACKS = Counter(
     'Reasoning loop fallback events',
     ['reason']
 )
+
+
+_COUNTERS: dict = {}
 
 
 class MetricsCollector:
@@ -334,12 +338,29 @@ class MetricsCollector:
 
     @staticmethod
     def record_db_pool(size: int, available: int):
-        DB_POOL_SIZE.set(size)
+        DB_POOL_SIZE.labels('current').set(size)
         DB_POOL_AVAILABLE.set(available)
 
     @staticmethod
     def record_redis_error(error_type: str):
         REDIS_ERRORS.labels(error_type=error_type).inc()
+
+    @staticmethod
+    def record_db_connection_checkout():
+        DB_POOL_CHECKOUTS.inc()
+
+    @staticmethod
+    def record_db_connection_checkin():
+        DB_POOL_CHECKINS.inc()
+
+    @staticmethod
+    def record_db_connection_created():
+        DB_POOL_CONNECTIONS_CREATED.inc()
+
+    @staticmethod
+    def record_redis_pool_created(max_connections: int):
+        REDIS_POOL_SIZE.set(max_connections)
+        REDIS_POOL_CREATED.inc()
 
     @staticmethod
     def record_kb_search(search_type: str, outcome: str):
@@ -356,6 +377,24 @@ class MetricsCollector:
     @staticmethod
     def record_kb_fallback(search_type: str, reason: str):
         KB_FALLBACKS.labels(search_type=search_type, reason=reason).inc()
+
+    @staticmethod
+    def record_kb_cache(status: str):
+        KB_CACHE.labels(status=status).inc()
+
+    @staticmethod
+    def record_counter(name: str, value: float = 1, labels: dict = None):
+        if name not in _COUNTERS:
+            _COUNTERS[name] = Counter(
+                f'supervisor_{name}_total',
+                f'Dynamic counter: {name}',
+                list(labels.keys()) if labels else []
+            )
+        counter = _COUNTERS[name]
+        if labels:
+            counter.labels(**labels).inc(value)
+        else:
+            counter.inc(value)
 
     @staticmethod
     def record_kb_template(template_id: str, search_type: str, outcome: str):

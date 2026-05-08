@@ -116,12 +116,15 @@ class ApprovalService:
         request_id: str,
         user_id: str,
         display_name: str,
-        original_message: str,
-        ai_response: str,
-        confidence: float,
+        original_message: str = "",
+        original_customer_reply: str = None,
+        ai_response: str = "",
+        confidence: float = 0.0,
         action_type: str = "send_message",
         metadata: Optional[dict] = None,
     ) -> ApprovalRequest:
+        if original_customer_reply is not None:
+            original_message = original_customer_reply
         approval = ApprovalRequest(
             id=str(uuid.uuid4()),
             request_id=request_id,
